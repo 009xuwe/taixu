@@ -94,7 +94,11 @@ sealed interface AppDestination : NavKey
 @Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
 @Serializable data object BrowserDestination : AppDestination
-@Serializable data class WorkflowDestination(val projectName: String = "", val workflowId: String? = null) : AppDestination
+@Serializable data class WorkflowDestination(
+    val projectName: String = "",
+    val workflowId: String? = null,
+    val initialVariables: Map<String, String> = emptyMap(),
+) : AppDestination
 
 /**
  * 太墟核心导航分发系统
@@ -126,7 +130,7 @@ fun TaiXuNavHost(
     LaunchedEffect(chatViewModel) {
         chatViewModel.workflowLaunchRequests.collect { request ->
             selectedMain = MainDestination.Agent
-            agentStack.add(WorkflowDestination(request.projectName, request.workflowId))
+            agentStack.add(WorkflowDestination(request.projectName, request.workflowId, request.initialVariables))
         }
     }
 
@@ -261,6 +265,7 @@ fun TaiXuNavHost(
                     top.wkbin.taixu.ui.workflow.WorkflowScreen(
                         projectName = destination.projectName,
                         initialWorkflowId = destination.workflowId,
+                        initialVariables = destination.initialVariables,
                         onBack = ::popBack,
                     )
                 }

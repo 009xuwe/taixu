@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import top.wkbin.taixu.core.model.workflow.FailurePolicy
 import top.wkbin.taixu.core.model.workflow.NodeExecutionOutput
 import top.wkbin.taixu.core.model.workflow.NodeRunStatus
@@ -64,6 +64,13 @@ class WorkflowScheduler @Inject constructor(
             runWorkflow(executionId, definition, initialVariables, workspacePath, mutableState)
         }
         jobRef.set(job)
+        job.invokeOnCompletion { cause ->
+            approvalBroker.cancelExecution(executionId)
+            if (cause is CancellationException) mutableState.update { current ->
+                if (current.status in setOf(WorkflowRunStatus.SUCCESS, WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED)) current
+                else current.copy(status = WorkflowRunStatus.CANCELLED, finishedAt = System.currentTimeMillis())
+            }
+        }
         return WorkflowRunHandle(
             state = mutableState.asStateFlow(),
             approvalRequest = approvalBroker.currentRequest,
@@ -129,7 +136,12 @@ class WorkflowScheduler @Inject constructor(
                 if (ready.isEmpty()) continue
                 val waveContext = context
                 val results = coroutineScope {
-                    ready.map { node -> async { node.id to executeNode(node, waveContext, state) } }.awaitAll()
+                    ready.map { node -> async {
+                        val nodeContext = waveContext.copy(upstreamNodeIds = incoming[node.id].orEmpty()
+                            .filter { edge -> waveContext.nodeOutputs[edge.fromNodeId]?.let { WorkflowEdgeCondition.matches(edge, it) } == true }
+                            .map { it.fromNodeId }.distinct())
+                        node.id to executeNode(node, nodeContext, state)
+                    } }.awaitAll()
                 }
                 results.forEach { (nodeId, output) ->
                     context = context.withOutput(nodeId, output)
@@ -138,7 +150,7 @@ class WorkflowScheduler @Inject constructor(
                 state.update { it.copy(context = context) }
 
                 val abort = results.firstOrNull { (nodeId, output) ->
-                    output.status == NodeRunStatus.FAILED && nodesById[nodeId]?.failurePolicy == FailurePolicy.ABORT
+                    output.status == NodeRunStatus.FAILED && nodesById[nodeId]?.failurePolicy != FailurePolicy.CONTINUE
                 }
                 if (abort != null) {
                     pending.forEach { nodeId -> updateNode(state, nodeId, NodeRunStatus.CANCELLED, "因上游失败而取消") }
@@ -195,7 +207,7 @@ class WorkflowScheduler @Inject constructor(
             updateNode(state, node.id, NodeRunStatus.RUNNING, if (attempts > 1) "正在重试" else "正在执行")
             val started = System.nanoTime()
             output = try {
-                withTimeout(node.timeoutSeconds * 1_000L) {
+                withTimeoutOrNull(node.timeoutSeconds * 1_000L) {
                     executor.execute(node, context) { status, message ->
                         updateNode(state, node.id, status, message)
                         state.update { current ->
@@ -203,7 +215,7 @@ class WorkflowScheduler @Inject constructor(
                             current.copy(status = if (waiting) WorkflowRunStatus.WAITING_APPROVAL else WorkflowRunStatus.RUNNING)
                         }
                     }
-                }
+                } ?: NodeExecutionOutput(NodeRunStatus.FAILED, exitCode = 124, error = "节点超时（${node.timeoutSeconds} 秒）")
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {

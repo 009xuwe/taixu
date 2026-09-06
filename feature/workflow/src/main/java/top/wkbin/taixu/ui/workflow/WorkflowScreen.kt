@@ -1,5 +1,11 @@
 package top.wkbin.taixu.ui.workflow
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -19,6 +25,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,10 +62,16 @@ import top.wkbin.taixu.ui.components.RuntimeTopBar
 fun WorkflowScreen(
     projectName: String = "",
     initialWorkflowId: String? = null,
+    initialVariables: Map<String, String> = emptyMap(),
     onBack: () -> Unit,
     viewModel: WorkflowViewModel = hiltViewModel(),
 ) {
     val definitions by viewModel.definitions.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); viewModel.clearError() } }
+    var pendingRun by remember { mutableStateOf<WorkflowDefinition?>(null) }
     val activeState by viewModel.activeState.collectAsStateWithLifecycle()
     val approval by viewModel.approvalRequest.collectAsStateWithLifecycle()
     val editorState by viewModel.editorState.collectAsStateWithLifecycle()
@@ -67,11 +81,12 @@ fun WorkflowScreen(
         if (!autoStarted && initialWorkflowId != null) {
             definitions.firstOrNull { it.id == initialWorkflowId }?.let {
                 autoStarted = true
-                viewModel.start(it, projectName)
+                pendingRun = it
             }
         }
     }
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             RuntimeTopBar(
                 title = activeState?.definition?.name ?: editorState?.definition?.name ?: "太墟工作流",
@@ -104,11 +119,14 @@ fun WorkflowScreen(
                 onUndo = viewModel::undoEdit,
                 onRedo = viewModel::redoEdit,
                 onSave = viewModel::saveEditor,
+                onAutoLayout = viewModel::autoLayout,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
             activeState == null -> WorkflowCatalog(
                 definitions = definitions,
-                onRun = { viewModel.start(it, projectName) },
+                onRun = { pendingRun = it },
+                history = history,
+                onHistory = viewModel::showHistory,
                 onEdit = viewModel::edit,
                 onDelete = viewModel::deleteWorkflow,
                 onCreate = viewModel::createWorkflow,
@@ -123,6 +141,12 @@ fun WorkflowScreen(
     }
     approval?.let { request ->
         ApprovalDialog(request, onDecision = { approved, variables -> viewModel.decide(request.nodeId, approved, variables) })
+    }
+    pendingRun?.let { definition ->
+        WorkflowStartDialog(definition, initialVariables, onDismiss = { pendingRun = null }) { variables ->
+            pendingRun = null
+            viewModel.start(definition, projectName, variables)
+        }
     }
     if (discardRequested) {
         RuntimeAlertDialog(
@@ -144,6 +168,8 @@ private fun WorkflowCatalog(
     onEdit: (WorkflowDefinition) -> Unit,
     onDelete: (WorkflowDefinition) -> Unit,
     onCreate: () -> Unit,
+    history: List<WorkflowRuntimeState>,
+    onHistory: (WorkflowRuntimeState) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var deleteRequested by remember { mutableStateOf<WorkflowDefinition?>(null) }
@@ -197,12 +223,18 @@ private fun WorkflowCatalog(
                 }
             }
         }
+        if (history.isNotEmpty()) item { Text("最近运行（只读记录）", style = MaterialTheme.typography.titleMedium) }
+        items(history, key = { "history:${it.executionId}" }) { run ->
+            RuntimeOutlinedButton(onClick = { onHistory(run) }, modifier = Modifier.fillMaxWidth()) {
+                Text("${run.definition.name} · ${runStatusLabel(run.status)} · ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(run.startedAt ?: 0))}", maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
     deleteRequested?.let { workflow ->
         RuntimeAlertDialog(
             onDismissRequest = { deleteRequested = null },
             title = { Text("删除工作流？") },
-            text = { Text("“${workflow.name}”及其编辑内容将被永久删除。") },
+            text = { Text("“${workflow.name}”及其运行历史将被永久删除，无法撤销。") },
             dismissButton = { RuntimeOutlinedButton(onClick = { deleteRequested = null }) { Text("取消") } },
             confirmButton = {
                 RuntimeButton(
@@ -223,8 +255,20 @@ private fun WorkflowRunView(
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier) {
+        var selectedNode by remember(state.executionId) { mutableStateOf<String?>(null) }
         if (maxWidth >= 760.dp) {
-            WorkflowCanvas2D(state.definition, state, Modifier.fillMaxSize())
+            Row(Modifier.fillMaxSize()) {
+                WorkflowCanvas2D(state.definition, state, Modifier.weight(1f).fillMaxSize(), selectedNodeId = selectedNode, onNodeSelected = { selectedNode = it })
+                Column(Modifier.width(320.dp).verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    RunSummary(state)
+                    val node = state.definition.nodes.firstOrNull { it.id == selectedNode }
+                    if (node == null) Text("点选节点查看日志、错误与产物")
+                    else {
+                        Text(node.title, style = MaterialTheme.typography.titleMedium)
+                        WorkflowNodeDetails(state.nodeStates[node.id])
+                    }
+                }
+            }
         } else {
             WorkflowTimelineView(state, Modifier.fillMaxSize())
         }
@@ -246,19 +290,58 @@ fun WorkflowTimelineView(state: WorkflowRuntimeState, modifier: Modifier = Modif
         }
         items(state.definition.nodes, key = { it.id }) { node ->
             val run = state.nodeStates[node.id]
-            val color = statusColor(run?.status ?: NodeRunStatus.IDLE)
-            RuntimeCard(modifier = Modifier.fillMaxWidth(), borderColor = color.copy(alpha = 0.55f), contentPadding = PaddingValues(14.dp)) {
+            val status = run?.status ?: NodeRunStatus.IDLE
+            val isRunning = status == NodeRunStatus.RUNNING || status == NodeRunStatus.STREAMING
+            val isWaiting = status == NodeRunStatus.WAITING_APPROVAL
+            val color = statusColor(status)
+
+            val pulseAlpha = if (isRunning) {
+                val infiniteTransition = rememberInfiniteTransition(label = "pulse_${node.id}")
+                val alpha by infiniteTransition.animateFloat(
+                    initialValue = 0.40f,
+                    targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse,
+                    ),
+                    label = "pulseAlpha",
+                )
+                alpha
+            } else if (isWaiting) {
+                0.85f
+            } else {
+                0.55f
+            }
+
+            val cardContainerColor = if (isRunning) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f * pulseAlpha)
+            } else if (isWaiting) {
+                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.20f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLow
+            }
+
+            RuntimeCard(
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = cardContainerColor,
+                borderColor = color.copy(alpha = pulseAlpha),
+                contentPadding = PaddingValues(14.dp),
+            ) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        RuntimeIcon(statusIcon(run?.status ?: NodeRunStatus.IDLE), Modifier.size(18.dp), tint = color)
+                        RuntimeIcon(statusIcon(status), Modifier.size(18.dp), tint = color.copy(alpha = if (isRunning) pulseAlpha else 1f))
                         Spacer(Modifier.width(10.dp))
                         Text(node.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(statusLabel(run?.status ?: NodeRunStatus.IDLE), style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
+                        val duration = run?.output?.durationMs
+                        if (duration != null && duration > 0L) {
+                            Text("${duration}ms", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), modifier = Modifier.padding(end = 6.dp))
+                        }
+                        Text(statusLabel(status), style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1, fontWeight = if (isRunning || isWaiting) FontWeight.Bold else FontWeight.Normal)
                     }
-                    run?.progressMessage?.takeIf(String::isNotBlank)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis) }
-                    run?.output?.textOutput?.takeIf(String::isNotBlank)?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, maxLines = 5, overflow = TextOverflow.Ellipsis)
+                    run?.progressMessage?.takeIf(String::isNotBlank)?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
+                    WorkflowNodeDetails(run)
                 }
             }
         }
@@ -279,6 +362,7 @@ private fun RunSummary(state: WorkflowRuntimeState) {
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(runStatusLabel(state.status), fontWeight = FontWeight.SemiBold)
+                WorkflowElapsed(state)
                 state.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
         }
@@ -287,6 +371,10 @@ private fun RunSummary(state: WorkflowRuntimeState) {
 
 @Composable
 private fun ApprovalDialog(request: WorkflowApprovalRequest, onDecision: (Boolean, Map<String, String>) -> Unit) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    LaunchedEffect(request.executionId, request.nodeId) {
+        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+    }
     val values = remember(request) { mutableStateMapOf<String, String>().apply { request.requestedVariables.forEach { put(it, "") } } }
     RuntimeAlertDialog(
         onDismissRequest = { onDecision(false, emptyMap()) },

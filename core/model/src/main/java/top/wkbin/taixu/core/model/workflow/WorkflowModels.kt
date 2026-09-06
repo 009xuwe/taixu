@@ -112,7 +112,12 @@ data class WorkflowRuntimeContext(
     val workspacePath: String,
     val globalVariables: Map<String, String> = emptyMap(),
     val nodeOutputs: Map<String, NodeExecutionOutput> = emptyMap(),
+    val upstreamNodeIds: List<String>? = null,
 )
+
+fun WorkflowRuntimeContext.previousOutput(): String = upstreamNodeIds?.mapNotNull { nodeOutputs[it] }
+    ?.filter { it.status != NodeRunStatus.SKIPPED }?.joinToString("\n\n") { it.textOutput }
+    ?: nodeOutputs.values.lastOrNull()?.textOutput.orEmpty()
 
 @Serializable
 data class WorkflowNodeRunState(

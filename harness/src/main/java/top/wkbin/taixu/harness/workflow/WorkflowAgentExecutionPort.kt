@@ -88,7 +88,7 @@ class HarnessWorkflowAgentExecutionPort @Inject constructor(
     }
 
     private suspend fun ensureSession(request: WorkflowAgentRequest): HarnessSessionEntity {
-        val sessionId = "workflow:${request.executionId}"
+        val sessionId = "workflow:${request.executionId}:${request.nodeId}"
         return sessionCreationMutex.withLock {
             sessions.findById(sessionId) ?: run {
                 val now = System.currentTimeMillis()
@@ -100,7 +100,7 @@ class HarnessWorkflowAgentExecutionPort @Inject constructor(
                     updatedAt = now,
                     modelId = request.modelId ?: activeModel?.id,
                     modelVariant = request.modelVariant
-                        ?: activeModel?.model?.substringBefore(',')?.trim()?.takeIf(String::isNotBlank),
+                        ?: activeModel?.takeIf { request.modelId == null || request.modelId == it.id }?.model?.substringBefore(',')?.trim()?.takeIf(String::isNotBlank),
                     workspace = request.workspacePath,
                     approvalMode = ApprovalMode.ASSISTED.id,
                 ).also { sessions.upsert(it) }

@@ -66,6 +66,24 @@ class WorkflowRepositoryIntegrationTest {
     }
 
     @Test
+    fun `editing and reseeding preserve execution history`() = runBlocking {
+        val definition = BuiltinWorkflows.buildDoctor
+        repository.saveExecution(WorkflowRuntimeState.initial("preserved", definition).copy(status = WorkflowRunStatus.SUCCESS))
+        repository.ensureBuiltins()
+        repository.upsert(definition.copy(name = "new name"))
+        assertEquals("preserved", repository.observeHistory().first().single().executionId)
+    }
+
+    @Test
+    fun `saving old execution never overwrites edited definition`() = runBlocking {
+        val definition = BuiltinWorkflows.buildDoctor.copy(id = "custom", isBuiltin = false)
+        repository.upsert(definition.copy(name = "new name"))
+        repository.saveExecution(WorkflowRuntimeState.initial("old-run", definition).copy(status = WorkflowRunStatus.SUCCESS))
+        assertEquals("new name", repository.findById(definition.id)?.name)
+        assertEquals(definition.name, repository.observeHistory().first().single().definition.name)
+    }
+
+    @Test
     fun `custom workflow can be saved updated and deleted`() = runBlocking {
         val original = WorkflowDefinition(
             id = "custom-editor-test",

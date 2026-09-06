@@ -1,7 +1,15 @@
 package top.wkbin.taixu.ui.workflow
 
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
@@ -21,6 +30,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -30,8 +40,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import top.wkbin.taixu.core.model.workflow.FailurePolicy
 import top.wkbin.taixu.core.model.workflow.WorkflowEdge
@@ -60,16 +72,17 @@ fun WorkflowEditorView(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onSave: () -> Unit,
+    onAutoLayout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        EditorToolbar(state, onAddNode, onUndo, onRedo, onSave)
+        EditorToolbar(state, onAddNode, onUndo, onRedo, onSave, onAutoLayout)
         state.message?.let { message ->
             Text(
                 text = message,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (message == "已保存" || message == "请选择目标节点") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -100,16 +113,105 @@ fun WorkflowEditorView(
                 )
             }
             if (maxWidth >= 820.dp) {
+                // Wide screen: side-by-side layout (unchanged)
                 Row(Modifier.fillMaxSize()) {
                     canvas(Modifier.weight(1f).fillMaxSize())
                     VerticalDivider()
                     inspector(Modifier.width(360.dp).fillMaxSize())
                 }
             } else {
-                Column(Modifier.fillMaxSize()) {
-                    canvas(Modifier.weight(1f).fillMaxWidth())
-                    HorizontalDivider()
-                    inspector(Modifier.fillMaxWidth().height(310.dp))
+                // Narrow screen: canvas fills all space, inspector slides up from bottom
+                EditorBottomSheetLayout(
+                    maxHeight = maxHeight,
+                    selectedNodeTitle = state.definition.nodes
+                        .firstOrNull { it.id == state.selectedNodeId }?.title,
+                    canvas = canvas,
+                    inspector = inspector,
+                )
+            }
+        }
+    }
+}
+
+/** Peek height when inspector sheet is collapsed */
+private val SheetPeekHeight = 52.dp
+
+@Composable
+private fun EditorBottomSheetLayout(
+    maxHeight: Dp,
+    selectedNodeTitle: String?,
+    canvas: @Composable (Modifier) -> Unit,
+    inspector: @Composable (Modifier) -> Unit,
+) {
+    var sheetExpanded by remember { mutableStateOf(false) }
+    val expandedHeight = maxHeight * 0.62f
+    val sheetHeight by animateDpAsState(
+        targetValue = if (sheetExpanded) expandedHeight else SheetPeekHeight,
+        animationSpec = tween(durationMillis = 280),
+        label = "sheetHeight",
+    )
+
+    Box(Modifier.fillMaxSize()) {
+        // Canvas always fills the whole area behind the sheet
+        canvas(Modifier.fillMaxSize())
+
+        // Bottom sheet panel
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(sheetHeight)
+                .align(Alignment.BottomCenter)
+                .shadow(elevation = if (sheetExpanded) 8.dp else 2.dp, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = 2.dp,
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                // Drag handle pill
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 8.dp, bottom = 4.dp)
+                            .size(width = 36.dp, height = 4.dp)
+                            .background(
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                                RoundedCornerShape(2.dp),
+                            ),
+                    )
+                }
+                // Peek header row — tap to toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { sheetExpanded = !sheetExpanded }
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RuntimeIcon(
+                        name = if (sheetExpanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronUp,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = if (selectedNodeTitle != null) "节点：$selectedNodeTitle" else "检查面板",
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = if (sheetExpanded) "收起" else "展开",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                HorizontalDivider()
+                // Full inspector content — only rendered (and scrollable) when expanded
+                if (sheetExpanded) {
+                    inspector(Modifier.fillMaxSize())
                 }
             }
         }
@@ -123,10 +225,11 @@ private fun EditorToolbar(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onSave: () -> Unit,
+    onAutoLayout: () -> Unit,
 ) {
     var addExpanded by remember { mutableStateOf(false) }
     Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -146,6 +249,9 @@ private fun EditorToolbar(
                     )
                 }
             }
+        }
+        RuntimeOutlinedButton(onClick = onAutoLayout, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+            Text("自动排版", maxLines = 1)
         }
         RuntimeOutlinedButton(onClick = onUndo, enabled = state.canUndo, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
             Text("撤销", maxLines = 1)
@@ -236,7 +342,8 @@ private fun NodeInspectorCard(
     var title by remember(node.id, node.title) { mutableStateOf(node.title) }
     var description by remember(node.id, node.description) { mutableStateOf(node.description) }
     var timeout by remember(node.id, node.timeoutSeconds) { mutableStateOf(node.timeoutSeconds.toString()) }
-    var configText by remember(node.id, node.config) { mutableStateOf(node.config.entries.joinToString("\n") { "${it.key}=${it.value}" }) }
+    var configText by remember(node.id, node.config) { mutableStateOf(Json { prettyPrint = true }.encodeToString(node.config)) }
+    val parsedConfig = remember(configText) { runCatching { Json.decodeFromString<Map<String, String>>(configText) }.getOrNull() }
     var policy by remember(node.id, node.failurePolicy) { mutableStateOf(node.failurePolicy) }
     var policyExpanded by remember { mutableStateOf(false) }
     RuntimeCard(Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) {
@@ -256,7 +363,8 @@ private fun NodeInspectorCard(
             OutlinedTextField(
                 configText,
                 { configText = it },
-                label = { Text("配置（每行 key=value）") },
+                label = { Text("配置（JSON，换行使用 \\n）") },
+                isError = parsedConfig == null,
                 minLines = 3,
                 maxLines = 7,
                 modifier = Modifier.fillMaxWidth(),
@@ -283,11 +391,12 @@ private fun NodeInspectorCard(
                                 title = title.trim().ifBlank { node.title },
                                 description = description.trim(),
                                 timeoutSeconds = timeout.toIntOrNull()?.coerceIn(1, 3600) ?: node.timeoutSeconds,
-                                config = parseConfig(configText),
+                                config = parsedConfig ?: return@RuntimeButton,
                                 failurePolicy = policy,
                             ),
                         )
                     },
+                    enabled = parsedConfig != null,
                     modifier = Modifier.weight(1f),
                 ) { Text("应用", maxLines = 1) }
             }
@@ -379,12 +488,6 @@ private fun ConnectionEditor(
         }
     }
 }
-
-private fun parseConfig(raw: String): Map<String, String> = raw.lineSequence().mapNotNull { line ->
-    val trimmed = line.trim()
-    if (trimmed.isBlank() || trimmed.startsWith('#') || '=' !in trimmed) null
-    else trimmed.substringBefore('=').trim().takeIf(String::isNotBlank)?.let { it to trimmed.substringAfter('=').trim() }
-}.toMap()
 
 private fun WorkflowNodeType.editorLabel() = when (this) {
     WorkflowNodeType.TRIGGER -> "触发器"

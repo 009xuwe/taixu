@@ -3,12 +3,16 @@ package top.wkbin.taixu.harness.workflow
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import top.wkbin.taixu.core.model.workflow.NodeExecutionOutput
 import top.wkbin.taixu.core.model.workflow.NodeRunStatus
 import top.wkbin.taixu.core.model.workflow.WorkflowApprovalRequest
 import top.wkbin.taixu.core.model.workflow.WorkflowNode
 import top.wkbin.taixu.core.model.workflow.WorkflowNodeType
 import top.wkbin.taixu.core.model.workflow.WorkflowRuntimeContext
+import top.wkbin.taixu.core.model.workflow.previousOutput
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.shell.ShellCommand
@@ -25,10 +29,10 @@ class PassthroughNodeExecutor @Inject constructor() : NodeExecutor {
             ?.split(',')
             ?.map(String::trim)
             ?.filter(String::isNotEmpty)
-            ?.filterNot(context.globalVariables::containsKey)
+            ?.filter { context.globalVariables[it].isNullOrBlank() }
             .orEmpty()
         return if (missing.isEmpty()) {
-            NodeExecutionOutput(NodeRunStatus.SUCCESS, textOutput = node.description)
+            NodeExecutionOutput(NodeRunStatus.SUCCESS, textOutput = if (node.type == WorkflowNodeType.TERMINAL_OUTPUT) context.previousOutput().ifBlank { node.description } else node.description)
         } else {
             NodeExecutionOutput(NodeRunStatus.FAILED, exitCode = 2, error = "缺少变量：${missing.joinToString()}")
         }
@@ -51,7 +55,7 @@ class ApprovalNodeExecutor @Inject constructor(
                 executionId = context.executionId,
                 nodeId = node.id,
                 title = node.title,
-                description = node.description,
+                description = listOf(node.description, context.previousOutput().take(24_000)).filter(String::isNotBlank).joinToString("\n\n"),
                 requestedVariables = node.config["requestedVariables"]
                     ?.split(',')?.map(String::trim)?.filter(String::isNotEmpty).orEmpty(),
             ),
@@ -100,16 +104,28 @@ class LinuxNodeExecutor @Inject constructor(
         }
 
         val streamed = StringBuilder()
-        val result = linuxRuntime.execute(
+        val result = coroutineScope {
+            val reporter = launch {
+                while (true) {
+                    delay(300)
+                    val snapshot = synchronized(streamed) { streamed.toString().takeLast(24_000) }
+                    if (snapshot.isNotBlank()) onProgress(NodeRunStatus.STREAMING, snapshot)
+                }
+            }
+            try { linuxRuntime.execute(
             ShellCommand(
                 commandLine = commandLine,
                 workingDirectory = node.config["workingDirectory"]?.let { interpolate(it, context) }
                     ?: context.workspacePath,
                 timeoutMs = node.timeoutSeconds * 1_000L,
                 forcePty = node.type == WorkflowNodeType.TAIXU_BUILD,
-                onOutput = { line -> synchronized(streamed) { streamed.appendLine(line) } },
+                onOutput = { line -> synchronized(streamed) {
+                    streamed.appendLine(line)
+                    if (streamed.length > 2_000_000) streamed.delete(0, streamed.length - 2_000_000)
+                } },
             ),
-        )
+            ) } finally { reporter.cancel() }
+        }
         val combined = buildString {
             append(streamed.toString())
             if (result.stdout.isNotBlank() && result.stdout !in this) append(result.stdout)
@@ -145,12 +161,13 @@ class LinuxNodeExecutor @Inject constructor(
     }
 
     private fun previousOutput(context: WorkflowRuntimeContext): String =
-        context.nodeOutputs.values.lastOrNull()?.textOutput.orEmpty()
+        context.previousOutput()
 
     private fun interpolate(template: String, context: WorkflowRuntimeContext): String = VARIABLE.replace(template) { match ->
         val key = match.groupValues[1]
         val value = when {
             key == "WORKSPACE_PATH" -> context.workspacePath
+            key == "previous.output" -> context.previousOutput()
             key.endsWith(".output") -> context.nodeOutputs[key.removeSuffix(".output")]?.textOutput.orEmpty()
             else -> context.globalVariables[key].orEmpty()
         }
@@ -181,7 +198,7 @@ class AgentNodeExecutor @Inject constructor(
         val promptTemplate = node.config["prompt"]
             ?.takeIf(String::isNotBlank)
             ?: node.description.takeIf(String::isNotBlank)
-            ?: context.nodeOutputs.values.lastOrNull()?.textOutput?.takeIf(String::isNotBlank)
+            ?: context.previousOutput().takeIf(String::isNotBlank)
             ?: return NodeExecutionOutput(
                 status = NodeRunStatus.FAILED,
                 exitCode = 2,
@@ -232,7 +249,7 @@ internal fun interpolateAgentPrompt(template: String, context: WorkflowRuntimeCo
         val key = match.groupValues[1]
         when {
             key == "WORKSPACE_PATH" -> context.workspacePath
-            key == "previous.output" -> context.nodeOutputs.values.lastOrNull()?.textOutput.orEmpty()
+            key == "previous.output" -> context.previousOutput()
             key.endsWith(".output") -> context.nodeOutputs[key.removeSuffix(".output")]?.textOutput.orEmpty()
             else -> context.globalVariables[key].orEmpty()
         }

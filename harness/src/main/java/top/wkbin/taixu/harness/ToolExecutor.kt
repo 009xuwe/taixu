@@ -67,6 +67,7 @@ class ToolExecutor @Inject constructor(
     private val checkpointStore: top.wkbin.taixu.harness.checkpoint.CheckpointStore? = null,
     private val dualAgentCoordinator: top.wkbin.taixu.harness.dual.DualAgentCoordinator? = null,
     private val embeddedAdbManager: EmbeddedAdbManager? = null,
+    private val workflowSignals: top.wkbin.taixu.harness.workflow.WorkflowSignalBus? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -612,6 +613,19 @@ class ToolExecutor @Inject constructor(
         val stdout = result.stdout.trim()
         val stderr = result.stderr.trim()
         val isSuccess = result.isSuccess
+
+        // 🌟 AI 场景感知：构建失败或 APK 产物生成时主动通知工作流总线
+        val projectName = workspace.trim('/').substringAfterLast('/').ifBlank { "workspace" }
+        if (!isSuccess && isLikelyBuildCommand(command)) {
+            val buildError = (stderr.ifBlank { stdout }).take(4000)
+            workflowSignals?.emit(top.wkbin.taixu.harness.workflow.WorkflowSignal.BuildFailed(projectName, cwd, buildError))
+        }
+        val combinedOutput = stdout + "\n" + stderr
+        APK_PATH_REGEX.find(combinedOutput)?.let { match ->
+            val apkPath = match.value
+            workflowSignals?.emit(top.wkbin.taixu.harness.workflow.WorkflowSignal.ApkGenerated(projectName, cwd, apkPath))
+        }
+
         val body = buildString {
             append("exit ${result.exitCode} · ${result.durationMs} ms")
             if (stdout.isNotEmpty()) append("\n$stdout")
@@ -929,6 +943,12 @@ class ToolExecutor @Inject constructor(
         const val MAX_PROCESS_LOG_LINES = 500L
         const val AGENT_PROCESS_PREFIX = "agent-process:"
         val PROCESS_ID = Regex("[a-z0-9][a-z0-9._-]{0,63}")
+        private val APK_PATH_REGEX = Regex("""(?:\/[\w.\-]+)+\.apk""")
 
+        private fun isLikelyBuildCommand(cmd: String): Boolean {
+            val lower = cmd.lowercase()
+            return lower.contains("gradle") || lower.contains("assemble") || lower.contains("taixu-build") ||
+                lower.contains("cargo build") || lower.contains("make") || lower.contains("cmake")
+        }
     }
 }

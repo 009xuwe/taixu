@@ -80,6 +80,7 @@ object SlashCommands {
         ),
     )
 
+
     /** Resource-independent command metadata for filtering and JVM tests. */
     val presetCommands: List<SlashCommandItem> = presets.map { preset ->
         SlashCommandItem(preset.command, "", "", preset.template, preset.icon)
@@ -98,16 +99,23 @@ object SlashCommands {
     fun filterCommands(
         query: String,
         activeSkills: List<top.wkbin.taixu.core.model.AgentSkill> = emptyList(),
-    ): List<SlashCommandItem> = filterCommands(presetCommands, query, activeSkills)
+        workflows: List<top.wkbin.taixu.core.model.workflow.WorkflowDefinition> = emptyList(),
+    ): List<SlashCommandItem> = filterCommands(presetCommands, query, activeSkills, workflows)
 
-    fun filterCommands(context: Context, query: String, activeSkills: List<top.wkbin.taixu.core.model.AgentSkill> = emptyList()): List<SlashCommandItem> {
-        return filterCommands(presetCommands(context), query, activeSkills)
+    fun filterCommands(
+        context: Context,
+        query: String,
+        activeSkills: List<top.wkbin.taixu.core.model.AgentSkill> = emptyList(),
+        workflows: List<top.wkbin.taixu.core.model.workflow.WorkflowDefinition> = emptyList(),
+    ): List<SlashCommandItem> {
+        return filterCommands(presetCommands(context), query, activeSkills, workflows)
     }
 
     private fun filterCommands(
         presetItems: List<SlashCommandItem>,
         query: String,
         activeSkills: List<top.wkbin.taixu.core.model.AgentSkill>,
+        workflows: List<top.wkbin.taixu.core.model.workflow.WorkflowDefinition> = emptyList(),
     ): List<SlashCommandItem> {
         val skillItems = activeSkills.mapNotNull { skill ->
             val cmd = skill.triggerCommand ?: return@mapNotNull null
@@ -119,9 +127,32 @@ object SlashCommands {
                 icon = RuntimeIconName.Code,
             )
         }
-        val all = (skillItems + presetItems).distinctBy { it.command }
+        val workflowItems = workflows.map { wf ->
+            SlashCommandItem(
+                command = "/wf ${wf.id}",
+                label = wf.name,
+                description = "${wf.category} · ${wf.description}",
+                template = "/wf ${wf.id}",
+                icon = RuntimeIconName.Hub,
+            )
+        }
+        val all = (skillItems + presetItems + workflowItems).distinctBy { it.command }
         val q = query.trim().removePrefix("/").lowercase()
         if (q.isEmpty()) return all
+
+        if (q.startsWith("wf")) {
+            val subQuery = q.removePrefix("wf").trim()
+            if (subQuery.isEmpty()) {
+                val wfPreset = presetItems.firstOrNull { it.command == "/wf" }
+                return listOfNotNull(wfPreset) + workflowItems
+            }
+            return workflowItems.filter {
+                it.command.lowercase().contains(subQuery) ||
+                    it.label.lowercase().contains(subQuery) ||
+                    it.description.lowercase().contains(subQuery)
+            }
+        }
+
         return all.filter {
             it.command.removePrefix("/").contains(q) ||
                 it.label.lowercase().contains(q) ||

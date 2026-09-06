@@ -1,5 +1,14 @@
 package top.wkbin.taixu.ui.chat
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.text.style.TextOverflow
+import top.wkbin.taixu.harness.workflow.ProactiveWorkflowSuggestion
+import top.wkbin.taixu.ui.components.RuntimeIcon
+import top.wkbin.taixu.ui.components.RuntimeIconName
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -19,6 +28,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.isImeVisible
@@ -135,6 +145,7 @@ fun ChatScreen(
     val modelPickerProfileId by viewModel.modelPickerProfileId.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val mcpRecommendations by viewModel.mcpRecommendations.collectAsStateWithLifecycle()
+    val workflowSuggestions by viewModel.workflowSuggestions.collectAsStateWithLifecycle()
     val sessionProjectType by viewModel.projectType.collectAsStateWithLifecycle()
     val matchingCommands by viewModel.matchingCommands.collectAsStateWithLifecycle()
     val matchingMentions by viewModel.matchingMentions.collectAsStateWithLifecycle()
@@ -425,6 +436,9 @@ fun ChatScreen(
                     mcpRecommendations = mcpRecommendations,
                     onEnableMcpRecommendation = viewModel::enableMcpRecommendation,
                     onDismissMcpRecommendation = viewModel::dismissMcpRecommendation,
+                    workflowSuggestions = workflowSuggestions,
+                    onLaunchWorkflowSuggestion = viewModel::launchWorkflowSuggestion,
+                    onDismissWorkflowSuggestion = viewModel::dismissWorkflowSuggestion,
                     onViewSubagentLanes = { showBranches = true },
                     subagentBranches = branches,
                     onOpenSubagentBranch = viewModel::openSubagentResult,
@@ -862,6 +876,9 @@ private fun ChatPaneContent(
     mcpRecommendations: List<McpWorkspaceRecommender.Recommendation> = emptyList(),
     onEnableMcpRecommendation: (String) -> Unit = {},
     onDismissMcpRecommendation: (String) -> Unit = {},
+    workflowSuggestions: List<ProactiveWorkflowSuggestion> = emptyList(),
+    onLaunchWorkflowSuggestion: (ProactiveWorkflowSuggestion) -> Unit = {},
+    onDismissWorkflowSuggestion: (String) -> Unit = {},
     onResolveApproval: (String, Boolean) -> Unit = { _, _ -> },
     contextUsage: ContextUsage = ContextUsage(),
     quickPhrases: List<QuickPhrase> = emptyList(),
@@ -951,6 +968,12 @@ private fun ChatPaneContent(
             onDismiss = onDismissMcpRecommendation,
         )
 
+        ProactiveWorkflowBanner(
+            suggestions = workflowSuggestions,
+            onLaunch = onLaunchWorkflowSuggestion,
+            onDismiss = onDismissWorkflowSuggestion,
+        )
+
         ChatComposer(
             listState = listState,
             running = running,
@@ -1026,6 +1049,81 @@ private fun McpRecommendationBanner(
                 }
                 TextButton(onClick = { onDismiss(recommendation.presetId) }) {
                     Text(stringResource(R.string.chat_ignore), color = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+            }
+        }
+    }
+}
+
+/** Event-driven workflow actions shown directly above the composer as interactive pills. */
+@Composable
+private fun ProactiveWorkflowBanner(
+    suggestions: List<ProactiveWorkflowSuggestion>,
+    onLaunch: (ProactiveWorkflowSuggestion) -> Unit,
+    onDismiss: (String) -> Unit,
+) {
+    if (suggestions.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        suggestions.forEach { suggestion ->
+            Surface(
+                modifier = Modifier.clip(RoundedCornerShape(20.dp)),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.90f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)),
+                tonalElevation = 2.dp,
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Hub, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column(
+                        modifier = Modifier
+                            .clickable { onLaunch(suggestion) }
+                            .padding(end = 4.dp),
+                    ) {
+                        Text(
+                            text = if (suggestion.projectName.isNotBlank()) "${suggestion.projectName} · ${suggestion.title}" else suggestion.title,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            maxLines = 1,
+                        )
+                        if (suggestion.description.isNotBlank()) {
+                            Text(
+                                text = suggestion.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = { onLaunch(suggestion) },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(28.dp),
+                    ) {
+                        Text("运行", style = MaterialTheme.typography.labelSmall)
+                    }
+                    IconButton(
+                        onClick = { onDismiss(suggestion.workflowId) },
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        RuntimeIcon(
+                            RuntimeIconName.Close,
+                            Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.65f),
+                        )
+                    }
                 }
             }
         }

@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +36,11 @@ class WorkflowViewModel @Inject constructor(
 ) : ViewModel() {
     val definitions: StateFlow<List<WorkflowDefinition>> = repository.observeDefinitions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BuiltinWorkflows.all)
+    val history = repository.observeHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val _error = MutableStateFlow<String?>(null)
+    val error = _error.asStateFlow()
+    fun clearError() { _error.value = null }
 
     private val _activeState = MutableStateFlow<WorkflowRuntimeState?>(null)
     val activeState = _activeState.asStateFlow()
@@ -53,14 +61,34 @@ class WorkflowViewModel @Inject constructor(
         activeHandle?.cancel()
         observerJob?.cancel()
         val safeProject = projectName.trim().trim('/').takeIf { it.isNotEmpty() }
-        val workspace = safeProject?.let { "/workspace/$it" } ?: "/workspace"
+        val workspace = variables["TARGET_WORKSPACE"]?.takeIf { it.startsWith('/') }
+            ?: safeProject?.let { "/workspace/$it" } ?: "/workspace"
         val handle = scheduler.execute(definition, variables, workspace, viewModelScope)
         activeHandle = handle
+        // Persistence must outlive the UI observer when the user closes a run.
+        viewModelScope.launch {
+            var completed: WorkflowRuntimeState? = null
+            try {
+                completed = handle.state.first { it.status in TERMINAL }
+            } finally {
+                withContext(NonCancellable) {
+                    val snapshot = completed ?: handle.state.value.let {
+                        if (it.status in TERMINAL) it else it.copy(
+                            status = WorkflowRunStatus.CANCELLED,
+                            finishedAt = System.currentTimeMillis(),
+                            error = "执行页面已关闭，工作流已取消",
+                        )
+                    }
+                    runCatching { repository.saveExecution(snapshot) }.onFailure {
+                        _error.value = "运行历史保存失败：${it.message ?: "存储不可用"}"
+                    }
+                }
+            }
+        }
         observerJob = viewModelScope.launch {
             launch { handle.approvalRequest.collect { _approvalRequest.value = it?.takeIf { request -> request.executionId == handle.state.value.executionId } } }
             handle.state.collect { state ->
                 _activeState.value = state
-                if (state.status in TERMINAL) repository.saveExecution(state)
             }
         }
     }
@@ -70,6 +98,10 @@ class WorkflowViewModel @Inject constructor(
     }
 
     fun cancel() = activeHandle?.cancel()
+    fun showHistory(state: WorkflowRuntimeState) {
+        closeRun()
+        _activeState.value = state
+    }
     fun closeRun() {
         if (_activeState.value?.status !in TERMINAL) activeHandle?.cancel()
         observerJob?.cancel()
@@ -170,6 +202,8 @@ class WorkflowViewModel @Inject constructor(
     }
 
     fun updateNode(node: WorkflowNode) = mutate(selectedNodeId = node.id) { WorkflowGraphEditor.updateNode(it, node) }
+
+    fun autoLayout() = mutate { top.wkbin.taixu.core.model.workflow.WorkflowLayout.arrange(it) }
 
     fun moveNode(nodeId: String, x: Float, y: Float) = mutate(selectedNodeId = nodeId) { definition ->
         val node = definition.nodes.firstOrNull { it.id == nodeId } ?: return@mutate definition

@@ -9,6 +9,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -72,8 +73,11 @@ interface WorkflowDao {
     @Query("SELECT * FROM workflows WHERE slashCommand = :command LIMIT 1")
     suspend fun findBySlashCommand(command: String): WorkflowEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsert(entity: WorkflowEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfMissing(entity: WorkflowEntity)
 
     @Query("DELETE FROM workflows WHERE id = :id AND isBuiltin = 0")
     suspend fun deleteCustom(id: String): Int
@@ -85,6 +89,12 @@ interface WorkflowDao {
     suspend fun upsertExecution(entity: WorkflowExecutionLogEntity)
 
     @Transaction
+    suspend fun saveRun(parent: WorkflowEntity, log: WorkflowExecutionLogEntity) {
+        insertIfMissing(parent)
+        upsertExecution(log)
+    }
+
+    @Transaction
     suspend fun upsertAll(entities: List<WorkflowEntity>) {
         entities.forEach { upsert(it) }
     }
@@ -93,6 +103,10 @@ interface WorkflowDao {
 interface WorkflowRepository {
     fun observeDefinitions(): Flow<List<WorkflowDefinition>>
     fun observeRecentExecutions(limit: Int = 30): Flow<List<WorkflowExecutionLogEntity>>
+    fun observeHistory(): Flow<List<WorkflowRuntimeState>> = observeRecentExecutions().map { logs ->
+        val decoder = Json { ignoreUnknownKeys = true }
+        logs.mapNotNull { runCatching { decoder.decodeFromString<WorkflowRuntimeState>(it.finalContextJson) }.getOrNull() }
+    }
     suspend fun findById(id: String): WorkflowDefinition?
     suspend fun findBySlashCommand(command: String): WorkflowDefinition?
     suspend fun upsert(definition: WorkflowDefinition)
@@ -131,8 +145,8 @@ class RoomWorkflowRepository @Inject constructor(
     override suspend fun saveExecution(state: WorkflowRuntimeState) {
         // The catalog exposes built-ins optimistically before Room initialization finishes.
         // Ensure the parent exists so a very fast run cannot violate the execution FK.
-        dao.upsert(state.definition.toEntity())
-        dao.upsertExecution(
+        dao.saveRun(
+            state.definition.toEntity(),
             WorkflowExecutionLogEntity(
                 executionId = state.executionId,
                 workflowId = state.definition.id,
