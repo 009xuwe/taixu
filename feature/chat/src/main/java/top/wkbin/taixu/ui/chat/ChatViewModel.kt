@@ -79,6 +79,8 @@ data class SubagentResultUiState(
     val error: String? = null,
 )
 
+data class WorkflowLaunchRequest(val workflowId: String?, val projectName: String)
+
 /** 空会话首屏的权限感知引导档位；决定开场提示卡的文案与色调。 */
 enum class OnboardingPrivilege { SANDBOX, SANDBOX_UNLOCKABLE, SHIZUKU_READY, ROOT_READY }
 
@@ -109,6 +111,8 @@ class ChatViewModel @Inject constructor(
     private val privilegeManager: top.wkbin.taixu.runtime.privilege.PrivilegeManager,
     private val pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
 ) : ViewModel() {
+    private val _workflowLaunchRequests = kotlinx.coroutines.flow.MutableSharedFlow<WorkflowLaunchRequest>(extraBufferCapacity = 2)
+    val workflowLaunchRequests: kotlinx.coroutines.flow.SharedFlow<WorkflowLaunchRequest> = _workflowLaunchRequests
 
     /**
      * 模型回复里引用的沙箱绝对路径（如 /workspace/xxx.jpg）到宿主真实目录的映射，
@@ -685,6 +689,12 @@ class ChatViewModel @Inject constructor(
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
         val rawText = (customText ?: _input.value).trim()
         if (rawText.isBlank() && imageUrls.isEmpty()) return
+        WORKFLOW_COMMAND.matchEntire(rawText)?.let { match ->
+            setInput("")
+            val projectName = workspace.value.trim('/').removePrefix("workspace/").substringBefore('/').takeIf(String::isNotBlank).orEmpty()
+            _workflowLaunchRequests.tryEmit(WorkflowLaunchRequest(match.groupValues[1].takeIf(String::isNotBlank), projectName))
+            return
+        }
         setInput("")
 
         val pinnedIds = _pinnedMentionIds.value
@@ -710,6 +720,10 @@ class ChatViewModel @Inject constructor(
                 ComposerSendMode.NEXT_RUN -> harnessLoop.send(effectiveText, imageUrls = imageUrls)
             }
         }
+    }
+
+    private companion object {
+        val WORKFLOW_COMMAND = Regex("^/wf(?:\\s+([A-Za-z0-9_.-]+))?$")
     }
 
     /** 创建针对工具安装或沙箱异常的专属自愈会话并立即启动诊断 */

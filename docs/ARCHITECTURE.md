@@ -48,6 +48,7 @@ LinuxAIRuntime/
     ├── chat/            # 智枢 Agent 对话界面、TaskPlanCard 任务拆解卡片、宽屏双栏布局
     ├── terminal/        # 终端 Compose UI 与触觉按键条；会话/VT100 状态机位于 runtime
     ├── workspace/       # 工作区管理器：创建/ZIP/GitHub 导入、导出、代码浏览、后台构建
+    ├── workflow/        # 工作流目录、DAG 画布、执行时间线与人工审批界面
     ├── settings/        # 设置中心：模型档案、Agent 超时、工具/本地插件、存储挂载、外观与诊断
     ├── developer/       # 开发者原生沙箱与诊断面板
     ├── onboarding/      # 首次启动引导与 RootFS 解压就绪流程

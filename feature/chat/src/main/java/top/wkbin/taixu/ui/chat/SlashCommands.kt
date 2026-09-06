@@ -23,6 +23,13 @@ object SlashCommands {
 
     private val presets = listOf(
         Preset(
+            command = "/wf",
+            labelRes = R.string.chat_command_workflow,
+            descriptionRes = R.string.chat_command_workflow_description,
+            template = "/wf ",
+            icon = RuntimeIconName.Hub,
+        ),
+        Preset(
             command = "/run",
             labelRes = R.string.chat_command_run,
             descriptionRes = R.string.chat_command_run_description,

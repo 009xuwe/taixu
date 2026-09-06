@@ -1,5 +1,6 @@
 package top.wkbin.taixu.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,12 +8,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
+import androidx.core.content.ContextCompat
 import top.wkbin.taixu.R
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.model.SessionRunState
@@ -350,10 +353,18 @@ class AgentForegroundService : Service() {
         private const val NOTIFICATION_REFRESH_INTERVAL_MS = 2_000L
 
         fun start(context: Context, sessionId: String? = null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(TAG, "通知权限未授权，跳过 Agent 前台保活服务")
+                return
+            }
             val intent = Intent(context, AgentForegroundService::class.java)
                 .setAction(ACTION_START)
             sessionId?.let { intent.putExtra(EXTRA_SESSION_ID, it) }
-            context.startForegroundService(intent)
+            runCatching { context.startForegroundService(intent) }
+                .onFailure { Log.w(TAG, "启动 Agent 前台服务失败", it) }
         }
 
         fun startFromReply(context: Context, sessionId: String? = null) {

@@ -94,6 +94,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
 @Serializable data object BrowserDestination : AppDestination
+@Serializable data class WorkflowDestination(val projectName: String = "", val workflowId: String? = null) : AppDestination
 
 /**
  * 太墟核心导航分发系统
@@ -121,6 +122,13 @@ fun TaiXuNavHost(
     val settingsStack = rememberNavBackStack(SettingsDestination)
     var pendingHealingTask by remember { mutableStateOf<HealingTask?>(null) }
     var selectedMain by rememberSaveable { mutableStateOf(MainDestination.Home) } // 默认进入太墟开辟主界
+
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.workflowLaunchRequests.collect { request ->
+            selectedMain = MainDestination.Agent
+            agentStack.add(WorkflowDestination(request.projectName, request.workflowId))
+        }
+    }
 
     LaunchedEffect(globalNavigationBus) {
         globalNavigationBus?.events?.collect { target ->
@@ -244,6 +252,16 @@ fun TaiXuNavHost(
                         onOpenTerminal = { project -> workspaceStack.push(WorkspaceDestination, TerminalDestination(project = project)) },
                         onOpenToolCenter = { workspaceStack.push(WorkspaceDestination, ToolCenterDestination) },
                         onOpenWorkshopSettings = { workspaceStack.push(WorkspaceDestination, WorkshopSettingsDestination) },
+                        onOpenWorkflows = { projectName -> workspaceStack.push(WorkspaceDestination, WorkflowDestination(projectName)) },
+                    )
+                }
+            }
+            entry<WorkflowDestination> { destination ->
+                GuardedEntry(destination) {
+                    top.wkbin.taixu.ui.workflow.WorkflowScreen(
+                        projectName = destination.projectName,
+                        initialWorkflowId = destination.workflowId,
+                        onBack = ::popBack,
                     )
                 }
             }

@@ -256,3 +256,18 @@ val MIGRATION_45_46 = object : Migration(45, 46) {
     }
 }
 
+/** Adds durable workflow definitions and restart-visible execution history. */
+val MIGRATION_46_47 = object : Migration(46, 47) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS `workflows` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `description` TEXT NOT NULL, `category` TEXT NOT NULL, `isBuiltin` INTEGER NOT NULL, `slashCommand` TEXT, `jsonContent` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))""",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workflows_slashCommand` ON `workflows` (`slashCommand`)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS `workflow_execution_logs` (`executionId` TEXT NOT NULL, `workflowId` TEXT NOT NULL, `startTime` INTEGER NOT NULL, `endTime` INTEGER, `status` TEXT NOT NULL, `finalContextJson` TEXT NOT NULL, PRIMARY KEY(`executionId`), FOREIGN KEY(`workflowId`) REFERENCES `workflows`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )""",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workflow_execution_logs_workflowId` ON `workflow_execution_logs` (`workflowId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workflow_execution_logs_startTime` ON `workflow_execution_logs` (`startTime`)")
+    }
+}
+
