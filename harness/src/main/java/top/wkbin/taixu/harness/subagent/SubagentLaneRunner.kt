@@ -21,6 +21,7 @@ import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.ProviderClient
 import top.wkbin.taixu.harness.ToolCall
+import top.wkbin.taixu.harness.ToolCallIdNormalizer
 import top.wkbin.taixu.harness.ToolExecutor
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.TextToolCallCodec
@@ -155,10 +156,11 @@ class SubagentLaneRunner @Inject constructor(
 
                 for (spec in roundCalls) {
                     toolCalls++
+                    val callId = ToolCallIdNormalizer.normalize(spec.id)
                     val rawName = spec.name.trim()
                     val tool = HarnessApiMapper.toolByName(rawName)
                     val args = runCatching { json.parseToJsonElement(spec.argumentsJson) as JsonObject }.getOrElse {
-                        val invalidCall = ToolCall(spec.id, now(), tool, JsonObject(emptyMap()), result.reasoningContent, rawName)
+                        val invalidCall = ToolCall(callId, now(), tool, JsonObject(emptyMap()), result.reasoningContent, rawName)
                         operations.toolIntent(
                             operationId,
                             invalidCall,
@@ -166,16 +168,16 @@ class SubagentLaneRunner @Inject constructor(
                             ToolReplayPolicy.forTool(tool, rawName),
                             round,
                         )
-                        val failed = ToolResult(UUID.randomUUID().toString(), now(), spec.id, false, "工具参数不是 JSON 对象：${it.message}")
+                        val failed = ToolResult(UUID.randomUUID().toString(), now(), callId, false, "工具参数不是 JSON 对象：${it.message}")
                         operations.toolSettled(operationId, failed, round, toolName = rawName)
                         continue
                     }
-                    val call = ToolCall(spec.id, now(), tool, args, result.reasoningContent, rawName)
+                    val call = ToolCall(callId, now(), tool, args, result.reasoningContent, rawName)
                     val schemaProblems = ToolSchemaValidator.problemsFor(rawName, args, model.dynamicMcpTools)
                     if (schemaProblems.isNotEmpty()) {
                         operations.toolIntent(operationId, call, spec.argumentsJson, ToolReplayPolicy.forTool(tool, rawName), round)
                         val rejected = ToolResult(
-                            UUID.randomUUID().toString(), now(), spec.id, false,
+                            UUID.randomUUID().toString(), now(), callId, false,
                             "工具参数校验未通过：${schemaProblems.joinToString("；")}。请修正参数后重新调用。",
                         )
                         operations.toolSettled(operationId, rejected, round, toolName = rawName)
@@ -185,7 +187,7 @@ class SubagentLaneRunner @Inject constructor(
                     if (loopVerdict is ToolCallLoopDetector.LoopVerdict.Block) {
                         operations.toolIntent(operationId, call, spec.argumentsJson, ToolReplayPolicy.forTool(tool, rawName), round)
                         val blocked = ToolResult(
-                            UUID.randomUUID().toString(), now(), spec.id, false,
+                            UUID.randomUUID().toString(), now(), callId, false,
                             "${loopVerdict.reason}\n\n${loopVerdict.guidance}",
                         )
                         operations.toolSettled(operationId, blocked, round, toolName = rawName)
