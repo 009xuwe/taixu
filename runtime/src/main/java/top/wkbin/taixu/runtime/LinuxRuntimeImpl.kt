@@ -559,6 +559,17 @@ class LinuxRuntimeImpl @Inject constructor(
     override suspend fun startSession(config: SessionConfig, distroId: String?): LinuxSession {
         ensureReady()
         val safeDistro = distroId?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: _activeDistroId.value
+        val effectiveConfig = if (config.commandLine == "/bin/bash -i") {
+            val rootfs = pathManager.rootfsDir(safeDistro)
+            val hasBash = File(rootfs, "bin/bash").exists() || File(rootfs, "usr/bin/bash").exists()
+            if (!hasBash) {
+                config.copy(commandLine = "/bin/sh -i", allowSttyResize = true)
+            } else {
+                config
+            }
+        } else {
+            config
+        }
         val markerId = UUID.randomUUID().toString()
         val markerFile = File(pathManager.taixuRootDir(safeDistro), ".pty-$markerId")
         val markerPath = "/opt/taixu/.pty-$markerId"
@@ -572,7 +583,7 @@ class LinuxRuntimeImpl @Inject constructor(
         }.onFailure {
             logger.w("同步宿主补充组到 /etc/group 失败，登录时可能出现 groups 警告", it)
         }
-        if (config.showBanner) {
+        if (effectiveConfig.showBanner) {
             runCatching {
                 File(pathManager.taixuRootDir(safeDistro), "motd").writeText(terminalBanner())
             }.onFailure {
@@ -590,12 +601,12 @@ class LinuxRuntimeImpl @Inject constructor(
                         optDir = pathManager.taixuRootDir(safeDistro),
                         tmpDir = pathManager.tmpDir,
                         attachmentsDir = pathManager.attachmentsDir,
-                        config = config,
+                        config = effectiveConfig,
                         nativePty = true,
                         mounts = mounts,
                     ),
                     hostEnvironment = pathManager.hostProcessEnvironment(safeDistro),
-                    config = config,
+                    config = effectiveConfig,
                     cleanup = { markerFile.delete() },
                 )
             } else {
@@ -608,12 +619,12 @@ class LinuxRuntimeImpl @Inject constructor(
                         optDir = pathManager.taixuRootDir(safeDistro),
                         tmpDir = pathManager.tmpDir,
                         attachmentsDir = pathManager.attachmentsDir,
-                        config = config,
+                        config = effectiveConfig,
                         ptyMarker = markerPath,
                         mounts = mounts,
                     ),
                     hostEnvironment = pathManager.hostProcessEnvironment(safeDistro),
-                    config = config,
+                    config = effectiveConfig,
                     resize = { columns, rows ->
                         resizePty(markerPath, columns, rows, safeDistro)
                     },
