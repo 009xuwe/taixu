@@ -35,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import top.wkbin.taixu.core.model.workflow.FailurePolicy
+import top.wkbin.taixu.core.model.workflow.NodeRunStatus
 import top.wkbin.taixu.core.model.workflow.WorkflowEdge
 import top.wkbin.taixu.core.model.workflow.WorkflowNode
 import top.wkbin.taixu.core.model.workflow.WorkflowNodeType
@@ -77,6 +82,10 @@ fun WorkflowEditorView(
     onUpdateNode: (WorkflowNode) -> Unit,
     onUpdateMetadata: (String, String, String) -> Unit,
     onRemoveNode: () -> Unit,
+    onRemoveNodeById: (String) -> Unit = {},
+    onConnectNodes: (String, String, String, String?) -> Unit = { _, _, _, _ -> },
+    onDisconnectNodes: (String, String) -> Unit = { _, _ -> },
+    onDisconnectAllForNode: (String) -> Unit = {},
     onUpdateEdge: (WorkflowEdge) -> Unit,
     onRemoveEdge: (String) -> Unit,
     onUndo: () -> Unit,
@@ -86,19 +95,38 @@ fun WorkflowEditorView(
     modifier: Modifier = Modifier,
 ) {
     val isRunning = activeRunState?.status in setOf(WorkflowRunStatus.RUNNING, WorkflowRunStatus.WAITING_APPROVAL)
+    var sheetExpanded by remember { mutableStateOf(false) }
+    var showRunConsole by remember { mutableStateOf(false) }
+    var nodePendingDelete by remember { mutableStateOf<WorkflowNode?>(null) }
+
+    // 选中节点时自动展开调参面板
+    LaunchedEffect(state.selectedNodeId) {
+        if (state.selectedNodeId != null) {
+            sheetExpanded = true
+        }
+    }
 
     Column(modifier) {
         EditorToolbar(
             state = state,
             activeRunState = activeRunState,
             onAddNode = onAddNode,
+            onDeleteSelectedNode = {
+                val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+                if (selected != null) nodePendingDelete = selected
+            },
+            onToggleConsole = { showRunConsole = true },
             onUndo = onUndo,
             onRedo = onRedo,
             onSave = onSave,
             onAutoLayout = onAutoLayout,
-            onRun = onRun,
+            onRun = {
+                onRun()
+                showRunConsole = true
+            },
             onCancelRun = onCancelRun,
         )
+
         state.message?.let { message ->
             Text(
                 text = message,
@@ -107,6 +135,7 @@ fun WorkflowEditorView(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
+
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val canvas: @Composable (Modifier) -> Unit = { canvasModifier ->
                 WorkflowCanvas2D(
@@ -118,6 +147,15 @@ fun WorkflowEditorView(
                     onNodeSelected = onSelectNode,
                     onNodeMoved = onMoveNode,
                     onConnectionRequested = { _, target -> onConnect(target) },
+                    onBeginConnection = onBeginConnection,
+                    onRemoveNode = { nodeId ->
+                        val target = state.definition.nodes.firstOrNull { it.id == nodeId }
+                        if (target != null) nodePendingDelete = target
+                    },
+                    onConfigureNode = { nodeId ->
+                        onSelectNode(nodeId)
+                        sheetExpanded = true
+                    },
                     modifier = canvasModifier,
                 )
             }
@@ -129,25 +167,31 @@ fun WorkflowEditorView(
                     onUpdateMetadata = onUpdateMetadata,
                     onBeginConnection = onBeginConnection,
                     onCancelConnection = onCancelConnection,
-                    onRemoveNode = onRemoveNode,
+                    onRemoveNode = {
+                        val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+                        if (selected != null) nodePendingDelete = selected
+                    },
+                    onConnectNodes = onConnectNodes,
+                    onDisconnectAllForNode = onDisconnectAllForNode,
                     onUpdateEdge = onUpdateEdge,
                     onRemoveEdge = onRemoveEdge,
+                    onOpenConsole = { showRunConsole = true },
                     modifier = inspectorModifier,
                 )
             }
+
             if (maxWidth >= 820.dp) {
-                // Wide screen: side-by-side layout
                 Row(Modifier.fillMaxSize()) {
                     canvas(Modifier.weight(1f).fillMaxSize())
                     VerticalDivider()
-                    inspector(Modifier.width(380.dp).fillMaxSize())
+                    inspector(Modifier.width(400.dp).fillMaxSize())
                 }
             } else {
-                // Narrow screen: canvas fills all space, inspector slides up from bottom
                 EditorBottomSheetLayout(
                     maxHeight = maxHeight,
-                    selectedNodeTitle = state.definition.nodes
-                        .firstOrNull { it.id == state.selectedNodeId }?.title,
+                    selectedNodeTitle = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }?.title,
+                    sheetExpanded = sheetExpanded,
+                    onSheetExpandedChange = { sheetExpanded = it },
                     isRunning = isRunning,
                     canvas = canvas,
                     inspector = inspector,
@@ -155,20 +199,65 @@ fun WorkflowEditorView(
             }
         }
     }
+
+    // 节点删除确认弹窗
+    nodePendingDelete?.let { target ->
+        RuntimeAlertDialog(
+            onDismissRequest = { nodePendingDelete = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RuntimeIcon(RuntimeIconName.Trash, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+                    Text("确认删除节点", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Text(
+                    text = "是否确定删除「${target.title}」？\n与该节点相连的所有输入和输出连线也将被一并断开移除。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                RuntimeButton(
+                    onClick = {
+                        val id = target.id
+                        nodePendingDelete = null
+                        if (state.selectedNodeId == id) onRemoveNode() else onRemoveNodeById(id)
+                    },
+                ) {
+                    Text("确认删除")
+                }
+            },
+            dismissButton = {
+                RuntimeOutlinedButton(onClick = { nodePendingDelete = null }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+
+    // 运行日志与控制台弹窗
+    if (showRunConsole && activeRunState != null) {
+        RunConsoleModal(
+            activeRunState = activeRunState,
+            onDismiss = { showRunConsole = false },
+            onCancelRun = onCancelRun,
+            onRerun = onRun,
+        )
+    }
 }
 
-/** Peek height when inspector sheet is collapsed */
 private val SheetPeekHeight = 56.dp
 
 @Composable
 private fun EditorBottomSheetLayout(
     maxHeight: Dp,
     selectedNodeTitle: String?,
+    sheetExpanded: Boolean,
+    onSheetExpandedChange: (Boolean) -> Unit,
     isRunning: Boolean,
     canvas: @Composable (Modifier) -> Unit,
     inspector: @Composable (Modifier) -> Unit,
 ) {
-    var sheetExpanded by remember { mutableStateOf(false) }
     val expandedHeight = maxHeight * 0.65f
     val sheetHeight by animateDpAsState(
         targetValue = if (sheetExpanded) expandedHeight else SheetPeekHeight,
@@ -177,10 +266,8 @@ private fun EditorBottomSheetLayout(
     )
 
     Box(Modifier.fillMaxSize()) {
-        // Canvas fills the area with bottom padding for the sheet peek height, so nodes/hints are never obscured
         canvas(Modifier.fillMaxSize().padding(bottom = SheetPeekHeight))
 
-        // Bottom sheet panel
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -192,7 +279,6 @@ private fun EditorBottomSheetLayout(
             tonalElevation = 2.dp,
         ) {
             Column(Modifier.fillMaxSize()) {
-                // Drag handle pill
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center,
@@ -207,11 +293,11 @@ private fun EditorBottomSheetLayout(
                             ),
                     )
                 }
-                // Peek header row — tap to toggle
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { sheetExpanded = !sheetExpanded }
+                        .clickable { onSheetExpandedChange(!sheetExpanded) }
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -224,8 +310,8 @@ private fun EditorBottomSheetLayout(
                     Text(
                         text = when {
                             isRunning && selectedNodeTitle != null -> "● 正在运行 · 节点：$selectedNodeTitle"
-                            selectedNodeTitle != null -> "节点参数配置：$selectedNodeTitle"
-                            else -> "属性检查面板"
+                            selectedNodeTitle != null -> "节点参数与连线：$selectedNodeTitle"
+                            else -> "工作流属性检查面板"
                         },
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
@@ -246,7 +332,7 @@ private fun EditorBottomSheetLayout(
                     }
                 }
                 HorizontalDivider()
-                // Full inspector content — only rendered (and scrollable) when expanded
+
                 if (sheetExpanded) {
                     inspector(Modifier.fillMaxSize())
                 }
@@ -260,6 +346,8 @@ private fun EditorToolbar(
     state: WorkflowEditorUiState,
     activeRunState: WorkflowRuntimeState?,
     onAddNode: (WorkflowNodeType) -> Unit,
+    onDeleteSelectedNode: () -> Unit,
+    onToggleConsole: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onSave: () -> Unit,
@@ -275,7 +363,6 @@ private fun EditorToolbar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 添加节点按钮（弹窗展示各节点详细功能与作用）
         RuntimeButton(
             onClick = { addDialogVisible = true },
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
@@ -284,7 +371,6 @@ private fun EditorToolbar(
             Text("添加节点", maxLines = 1)
         }
 
-        // 运行 / 调试 按钮
         if (isRunning) {
             RuntimeOutlinedButton(
                 onClick = onCancelRun,
@@ -303,6 +389,32 @@ private fun EditorToolbar(
             }
         }
 
+        if (activeRunState != null) {
+            RuntimeOutlinedButton(
+                onClick = onToggleConsole,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (isRunning) MaterialTheme.colorScheme.primary else runStatusColor(activeRunState.status),
+                    modifier = Modifier.size(8.dp),
+                ) {}
+                Spacer(Modifier.width(6.dp))
+                RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(15.dp))
+                Text(if (isRunning) "控制台 (运行中)" else "执行日志", maxLines = 1)
+            }
+        }
+
+        if (state.selectedNodeId != null && !isRunning) {
+            RuntimeOutlinedButton(
+                onClick = onDeleteSelectedNode,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.error)
+                Text("删除节点", color = MaterialTheme.colorScheme.error, maxLines = 1)
+            }
+        }
+
         RuntimeOutlinedButton(onClick = onAutoLayout, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
             Text("自动排版", maxLines = 1)
         }
@@ -312,7 +424,7 @@ private fun EditorToolbar(
         RuntimeOutlinedButton(onClick = onRedo, enabled = state.canRedo && !isRunning, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
             Text("重做", maxLines = 1)
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
         Text(
             if (isRunning) "● 正在运行…" else if (state.isDirty) "未保存" else "已保存",
             style = MaterialTheme.typography.labelSmall,
@@ -340,9 +452,193 @@ private fun EditorToolbar(
     }
 }
 
-/**
- * 节点类型选择弹窗：清晰展示各节点名称、语义图标与作用描述
- */
+@Composable
+private fun RunConsoleModal(
+    activeRunState: WorkflowRuntimeState,
+    onDismiss: () -> Unit,
+    onCancelRun: () -> Unit,
+    onRerun: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val isRunning = activeRunState.status in setOf(WorkflowRunStatus.RUNNING, WorkflowRunStatus.WAITING_APPROVAL)
+    val startedAt = activeRunState.startedAt ?: 0L
+    val finishedAt = activeRunState.finishedAt ?: 0L
+    val durationMs = if (finishedAt > 0L && startedAt > 0L) {
+        finishedAt - startedAt
+    } else if (startedAt > 0L) {
+        (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+    } else {
+        0L
+    }
+
+    val consoleOutput = remember(activeRunState) {
+        buildString {
+            appendLine("=== 太墟工作流「${activeRunState.definition.name}」控制台输出 ===")
+            appendLine("全局状态: ${runStatusLabel(activeRunState.status)}  |  执行耗时: ${durationMs}ms")
+            activeRunState.error?.let {
+                appendLine("❌ 异常信息: $it")
+            }
+            appendLine()
+            activeRunState.definition.nodes.forEach { node ->
+                val run = activeRunState.nodeStates[node.id]
+                val status = run?.status ?: NodeRunStatus.PENDING
+                appendLine("--------------------------------------------------")
+                appendLine("[${statusLabel(status)}] 节点: ${node.title} (${node.id})")
+                val progress = run?.progressMessage
+                val textOutput = run?.output?.textOutput
+                val errorOutput = run?.output?.error
+                if (!progress.isNullOrBlank()) {
+                    appendLine("进度: $progress")
+                }
+                if (!textOutput.isNullOrBlank()) {
+                    appendLine(textOutput)
+                }
+                if (!errorOutput.isNullOrBlank()) {
+                    appendLine("stderr: $errorOutput")
+                }
+            }
+            appendLine("--------------------------------------------------")
+            appendLine("=== 执行输出结束 ===")
+        }
+    }
+
+    val scrollState = rememberScrollState()
+    LaunchedEffect(consoleOutput) {
+        scrollState.animateScrollTo(scrollState.maxValue)
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Text("运行调试控制台", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Surface(
+                    color = runStatusColor(activeRunState.status).copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(50),
+                ) {
+                    Text(
+                        text = runStatusLabel(activeRunState.status),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = runStatusColor(activeRunState.status),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    activeRunState.definition.nodes.forEach { node ->
+                        val nodeRun = activeRunState.nodeStates[node.id]
+                        val st = nodeRun?.status ?: NodeRunStatus.PENDING
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = statusColor(st).copy(alpha = 0.14f),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = statusIconText(st),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = statusColor(st),
+                                )
+                                Text(
+                                    text = node.title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = statusColor(st),
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Surface(
+                    color = Color(0xFF0F172A),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp),
+                ) {
+                    Box(Modifier.fillMaxSize().padding(10.dp)) {
+                        Text(
+                            text = consoleOutput,
+                            color = Color(0xFFE2E8F0),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                            modifier = Modifier.verticalScroll(scrollState),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeOutlinedButton(onClick = {
+                    clipboard.setText(AnnotatedString(consoleOutput))
+                }) {
+                    Text("复制日志")
+                }
+                if (isRunning) {
+                    RuntimeOutlinedButton(onClick = onCancelRun) {
+                        Text("停止运行", color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    RuntimeButton(onClick = onRerun) {
+                        Text("重新运行")
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            RuntimeOutlinedButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
+private fun statusIconText(status: NodeRunStatus) = when (status) {
+    NodeRunStatus.SUCCESS -> "✔"
+    NodeRunStatus.FAILED -> "✘"
+    NodeRunStatus.RUNNING, NodeRunStatus.STREAMING -> "●"
+    NodeRunStatus.SKIPPED -> "↷"
+    NodeRunStatus.CANCELLED -> "⊘"
+    NodeRunStatus.WAITING_APPROVAL -> "🛡"
+    NodeRunStatus.IDLE, NodeRunStatus.PENDING -> "⌛"
+}
+
+@Composable
+private fun runStatusColor(status: WorkflowRunStatus): Color = when (status) {
+    WorkflowRunStatus.SUCCESS -> Color(0xFF2E7D32)
+    WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED -> MaterialTheme.colorScheme.error
+    WorkflowRunStatus.RUNNING, WorkflowRunStatus.WAITING_APPROVAL -> MaterialTheme.colorScheme.primary
+    WorkflowRunStatus.IDLE -> MaterialTheme.colorScheme.outline
+}
+
+private fun runStatusLabel(status: WorkflowRunStatus): String = when (status) {
+    WorkflowRunStatus.IDLE -> "未运行"
+    WorkflowRunStatus.RUNNING -> "运行中"
+    WorkflowRunStatus.WAITING_APPROVAL -> "等待审批"
+    WorkflowRunStatus.SUCCESS -> "执行成功"
+    WorkflowRunStatus.FAILED -> "执行失败"
+    WorkflowRunStatus.CANCELLED -> "已取消"
+}
+
+
 @Composable
 private fun NodePickerModal(
     onDismiss: () -> Unit,
@@ -361,7 +657,7 @@ private fun NodePickerModal(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "点击即可将节点加入画布，选中后可在检查面板配置专属参数：",
+                    text = "选择要加入画布的节点类型，创建后可在检查面板配置参数：",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -416,8 +712,11 @@ private fun EditorInspector(
     onBeginConnection: (String) -> Unit,
     onCancelConnection: () -> Unit,
     onRemoveNode: () -> Unit,
+    onConnectNodes: (String, String, String, String?) -> Unit,
+    onDisconnectAllForNode: (String) -> Unit,
     onUpdateEdge: (WorkflowEdge) -> Unit,
     onRemoveEdge: (String) -> Unit,
+    onOpenConsole: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
@@ -426,12 +725,12 @@ private fun EditorInspector(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         WorkflowMetadataCard(state, onUpdateMetadata)
+
         if (selected == null) {
             RuntimeCard(Modifier.fillMaxWidth(), contentPadding = PaddingValues(16.dp)) {
-                Text("点击画布中的节点以配置参数或查看调试日志", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("请点击画布中的节点以配置参数、管理连线或查看执行日志", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            // 如果选中节点有实时/历史执行数据，优先展示调试结果与输出
             val nodeRun = activeRunState?.nodeStates?.get(selected.id)
             if (nodeRun != null) {
                 RuntimeCard(
@@ -441,7 +740,7 @@ private fun EditorInspector(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("调试运行状态", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            Text("调试运行状态", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             Surface(
                                 color = statusColor(nodeRun.status).copy(alpha = 0.16f),
                                 shape = RoundedCornerShape(50),
@@ -455,21 +754,36 @@ private fun EditorInspector(
                             }
                         }
                         WorkflowNodeDetails(nodeRun)
+                        RuntimeOutlinedButton(onClick = onOpenConsole, modifier = Modifier.fillMaxWidth()) {
+                            RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(16.dp))
+                            Text("打开完整终端控制台日志", maxLines = 1)
+                        }
                     }
                 }
             }
 
             NodeInspectorCard(
+                state = state,
                 node = selected,
                 isConnecting = state.connectionSourceId == selected.id,
                 onApply = onUpdateNode,
                 onBeginConnection = { onBeginConnection(selected.id) },
                 onCancelConnection = onCancelConnection,
                 onRemove = onRemoveNode,
+                onConnectNodes = onConnectNodes,
+                onRemoveEdge = onRemoveEdge,
             )
-            ConnectionList(state, selected.id, onUpdateEdge, onRemoveEdge)
+
+            NodeConnectionsCard(
+                state = state,
+                node = selected,
+                onConnectNodes = onConnectNodes,
+                onDisconnectAll = onDisconnectAllForNode,
+                onUpdateEdge = onUpdateEdge,
+                onRemoveEdge = onRemoveEdge,
+            )
         }
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(28.dp))
     }
 }
 
@@ -478,25 +792,50 @@ private fun WorkflowMetadataCard(state: WorkflowEditorUiState, onApply: (String,
     var name by remember(state.definition.id, state.definition.name) { mutableStateOf(state.definition.name) }
     var description by remember(state.definition.id, state.definition.description) { mutableStateOf(state.definition.description) }
     var category by remember(state.definition.id, state.definition.category) { mutableStateOf(state.definition.category) }
+    var expanded by remember { mutableStateOf(false) }
+
     RuntimeCard(Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("工作流信息", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            OutlinedTextField(name, { name = it }, label = { Text("工作流名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(category, { category = it }, label = { Text("分类") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(description, { description = it }, label = { Text("说明") }, minLines = 2, maxLines = 3, modifier = Modifier.fillMaxWidth())
-            RuntimeOutlinedButton(onClick = { onApply(name, description, category) }, modifier = Modifier.align(Alignment.End)) { Text("应用信息") }
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("工作流信息", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(
+                    text = if (expanded) "收起" else "修改",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (expanded) {
+                OutlinedTextField(name, { name = it }, label = { Text("工作流名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(category, { category = it }, label = { Text("分类") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(description, { description = it }, label = { Text("说明") }, minLines = 2, maxLines = 3, modifier = Modifier.fillMaxWidth())
+                RuntimeOutlinedButton(onClick = { onApply(name, description, category) }, modifier = Modifier.align(Alignment.End)) { Text("应用信息") }
+            } else {
+                Text(
+                    text = "${name} · [${category}] - ${description.ifBlank { "暂无说明" }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun NodeInspectorCard(
+    state: WorkflowEditorUiState,
     node: WorkflowNode,
     isConnecting: Boolean,
     onApply: (WorkflowNode) -> Unit,
     onBeginConnection: () -> Unit,
     onCancelConnection: () -> Unit,
     onRemove: () -> Unit,
+    onConnectNodes: (String, String, String, String?) -> Unit,
+    onRemoveEdge: (String) -> Unit,
 ) {
     val meta = node.type.metadata()
     var title by remember(node.id, node.title) { mutableStateOf(node.title) }
@@ -505,7 +844,6 @@ private fun NodeInspectorCard(
     var policy by remember(node.id, node.failurePolicy) { mutableStateOf(node.failurePolicy) }
     var policyExpanded by remember { mutableStateOf(false) }
 
-    // 结构化配置映射状态（避免手写 raw JSON）
     val configMap = remember(node.id, node.config) {
         mutableStateMapOf<String, String>().apply { putAll(node.config) }
     }
@@ -519,7 +857,6 @@ private fun NodeInspectorCard(
 
     RuntimeCard(Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // 节点标题与类型 Badge
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
@@ -531,7 +868,7 @@ private fun NodeInspectorCard(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         RuntimeIcon(meta.icon, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-                        Text(meta.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Text(meta.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                 }
                 Text(
@@ -542,15 +879,21 @@ private fun NodeInspectorCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                RuntimeOutlinedButton(
+                    onClick = onRemove,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Trash, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error)
+                    Text("删除", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
             }
 
-            // 💡 节点作用与数据流说明卡片（解决不知道节点是干嘛的问题）
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.55f),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         text = "💡 节点作用：${meta.summary}",
                         style = MaterialTheme.typography.labelMedium,
@@ -565,7 +908,6 @@ private fun NodeInspectorCard(
                 }
             }
 
-            // 基础属性
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
@@ -576,34 +918,78 @@ private fun NodeInspectorCard(
             OutlinedTextField(
                 value = description,
                 onValueChange = { description = it },
-                label = { Text("节点说明 / 备注") },
+                label = { Text("节点备注 / 说明") },
                 minLines = 1,
                 maxLines = 2,
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // ⚙️ 专属可视化表单参数区（解决没有调参数的地方的问题）
-            Text("参数配置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("核心参数配置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
 
             when (node.type) {
                 WorkflowNodeType.BASH_COMMAND -> {
-                    OutlinedTextField(
-                        value = configMap["command"].orEmpty(),
-                        onValueChange = { configMap["command"] = it },
-                        label = { Text("Shell 命令行（必填）") },
-                        placeholder = { Text("例如：git status --short && git diff") },
-                        supportingText = { Text("可使用 \${WORKSPACE_PATH}、\${previous.output} 等变量") },
-                        minLines = 2,
-                        maxLines = 5,
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color(0xFF06B6D4).copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = configMap["workingDirectory"].orEmpty(),
-                        onValueChange = { configMap["workingDirectory"] = it },
-                        label = { Text("工作目录（可选）") },
-                        placeholder = { Text("留空默认为工程根目录") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(16.dp), tint = Color(0xFF06B6D4))
+                                Text("终端 Shell 命令行（在沙箱环境中执行）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4))
+                            }
+                            OutlinedTextField(
+                                value = configMap["command"].orEmpty(),
+                                onValueChange = { configMap["command"] = it },
+                                label = { Text("Bash 命令（在此输入执行的命令）") },
+                                placeholder = { Text("例如：git status --short && git diff") },
+                                supportingText = { Text("支持引用上游输出：\${previous.output}、工作区：\${WORKSPACE_PATH}") },
+                                minLines = 3,
+                                maxLines = 6,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text("常用命令预设（点击直接填入）：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(
+                                    "系统内核" to "echo '=== 系统内核 ===' && uname -a && cat /etc/os-release | head -n 8",
+                                    "内存磁盘" to "echo '=== 资源使用 ===' && free -h && df -h /",
+                                    "Git 状态" to "git status --short && git diff --stat",
+                                    "测试网络" to "curl -I -s -m 5 https://www.baidu.com | head -n 4",
+                                    "工具排查" to "for cmd in git python3 curl make; do which \$cmd && echo \"✔ \$cmd\" || echo \"✘ \$cmd\"; done",
+                                ).forEach { (name, cmd) ->
+                                    Surface(
+                                        onClick = { configMap["command"] = cmd },
+                                        shape = RoundedCornerShape(50),
+                                        color = Color(0xFF06B6D4).copy(alpha = 0.14f),
+                                    ) {
+                                        Text(
+                                            text = "+ $name",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF06B6D4),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        )
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = configMap["workingDirectory"].orEmpty(),
+                                onValueChange = { configMap["workingDirectory"] = it },
+                                label = { Text("工作目录（可选）") },
+                                placeholder = { Text("留空默认为当前工程根目录") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+
+                WorkflowNodeType.CONDITION_BRANCH -> {
+                    BranchRouterCard(
+                        state = state,
+                        node = node,
+                        onConnectNodes = onConnectNodes,
+                        onRemoveEdge = onRemoveEdge,
                     )
                 }
 
@@ -647,14 +1033,6 @@ private fun NodeInspectorCard(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = configMap["modelId"].orEmpty(),
-                        onValueChange = { configMap["modelId"] = it },
-                        label = { Text("指定模型 ID（可选）") },
-                        placeholder = { Text("留空使用默认模型") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
                 }
 
                 WorkflowNodeType.SUBAGENT_DELEGATE -> {
@@ -672,14 +1050,6 @@ private fun NodeInspectorCard(
                         onValueChange = { configMap["role"] = it },
                         label = { Text("子智能体角色（可选）") },
                         placeholder = { Text("例如：测试修复助手") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = configMap["taskName"].orEmpty(),
-                        onValueChange = { configMap["taskName"] = it },
-                        label = { Text("任务标识（可选）") },
-                        placeholder = { Text("例如：unit-test-fixer") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -737,16 +1107,6 @@ private fun NodeInspectorCard(
                             }
                         }
                     }
-                    if (currentAction == "install-apk") {
-                        OutlinedTextField(
-                            value = configMap["artifactFrom"].orEmpty(),
-                            onValueChange = { configMap["artifactFrom"] = it },
-                            label = { Text("APK 来源节点 ID（可选）") },
-                            placeholder = { Text("留空自动从上游节点中查找 APK") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
                 }
 
                 WorkflowNodeType.HUMAN_APPROVAL -> {
@@ -759,27 +1119,11 @@ private fun NodeInspectorCard(
                         maxLines = 4,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = configMap["requestedVariables"].orEmpty(),
-                        onValueChange = { configMap["requestedVariables"] = it },
-                        label = { Text("需用户填写的变量（可选）") },
-                        placeholder = { Text("多个以逗号分隔，如：TARGET_BRANCH, TOKEN") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-
-                WorkflowNodeType.CONDITION_BRANCH -> {
-                    Text(
-                        text = "本节点将上游数据向下透传。具体分支路由请点击画布上的各条连线，在连线上设置条件表达式（如 exitCode == 0）。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
 
                 WorkflowNodeType.TRIGGER -> {
                     Text(
-                        text = "工作流的启动入口节点，支持手动触发或外部事件触发。",
+                        text = "工作流启动入口。在顶部点击“运行调试”即可从此处触发整个 DAG 流程。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -787,14 +1131,13 @@ private fun NodeInspectorCard(
 
                 WorkflowNodeType.TERMINAL_OUTPUT -> {
                     Text(
-                        text = "工作流的终点节点，将自动收集并归档上游所有步骤的控制台输出、错误日志与产物文件。",
+                        text = "工作流终点节点。将自动收集并归档上游所有步骤的标准输出、错误日志与产物文件。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
 
-            // 高级配置 (JSON) 折叠项
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -832,7 +1175,6 @@ private fun NodeInspectorCard(
                 )
             }
 
-            // 运行时策略与超时
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = timeout,
@@ -844,7 +1186,7 @@ private fun NodeInspectorCard(
                 )
                 Column(Modifier.weight(1.2f)) {
                     RuntimeOutlinedButton(onClick = { policyExpanded = true }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Text("失败策略：${policy.editorLabel()}", maxLines = 1)
+                        Text("策略：${policy.editorLabel()}", maxLines = 1)
                     }
                     DropdownMenu(expanded = policyExpanded, onDismissRequest = { policyExpanded = false }) {
                         FailurePolicy.entries.forEach { item ->
@@ -854,12 +1196,13 @@ private fun NodeInspectorCard(
                 }
             }
 
-            // 操作按钮
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RuntimeOutlinedButton(
                     onClick = if (isConnecting) onCancelConnection else onBeginConnection,
                     modifier = Modifier.weight(1f),
-                ) { Text(if (isConnecting) "取消连线" else "连接到…", maxLines = 1) }
+                ) {
+                    Text(if (isConnecting) "取消连线" else "在画布连线…", maxLines = 1)
+                }
                 RuntimeButton(
                     onClick = {
                         val finalConfig = if (showAdvancedJson && parsedConfig != null) parsedConfig else configMap.toMap()
@@ -874,94 +1217,373 @@ private fun NodeInspectorCard(
                         )
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("应用参数更改", maxLines = 1) }
-            }
-            RuntimeOutlinedButton(onClick = onRemove, modifier = Modifier.fillMaxWidth()) {
-                RuntimeIcon(RuntimeIconName.Trash, Modifier.size(16.dp))
-                Text("删除此节点", maxLines = 1)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConnectionList(
-    state: WorkflowEditorUiState,
-    nodeId: String,
-    onUpdate: (WorkflowEdge) -> Unit,
-    onRemove: (String) -> Unit,
-) {
-    val edges = state.definition.edges.filter { it.fromNodeId == nodeId || it.toNodeId == nodeId }
-    RuntimeCard(Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("节点连线 (${edges.size})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            if (edges.isEmpty()) Text("暂无连接到其他节点的连线", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            edges.forEachIndexed { index, edge ->
-                if (index > 0) HorizontalDivider()
-                ConnectionEditor(edge, onUpdate, onRemove)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConnectionEditor(
-    edge: WorkflowEdge,
-    onUpdate: (WorkflowEdge) -> Unit,
-    onRemove: (String) -> Unit,
-) {
-    var port by remember(edge.id, edge.fromPort) { mutableStateOf(edge.fromPort.lowercase()) }
-    var condition by remember(edge.id, edge.conditionExpression) { mutableStateOf(edge.conditionExpression.orEmpty()) }
-    var portExpanded by remember(edge.id) { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "${edge.fromNodeId} → ${edge.toNodeId}",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Column {
-            RuntimeOutlinedButton(onClick = { portExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("输出端口：${port.portLabel()}", maxLines = 1)
-            }
-            DropdownMenu(expanded = portExpanded, onDismissRequest = { portExpanded = false }) {
-                EdgePorts.forEach { item ->
-                    DropdownMenuItem(
-                        text = { Text(item.portLabel()) },
-                        onClick = { port = item; portExpanded = false },
-                    )
+                ) {
+                    Text("应用参数更改", maxLines = 1)
                 }
             }
         }
-        OutlinedTextField(
-            value = condition,
-            onValueChange = { condition = it },
-            label = { Text("分支条件表达式（可选）") },
-            supportingText = { Text("例如：exitCode == 0、output contains 'OK'，或正则") },
-            minLines = 1,
-            maxLines = 2,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RuntimeOutlinedButton(
-                onClick = { onRemove(edge.id) },
-                modifier = Modifier.weight(1f),
-            ) {
-                RuntimeIcon(RuntimeIconName.Close, Modifier.size(15.dp))
-                Text("删除连线")
+    }
+}
+
+@Composable
+private fun BranchRouterCard(
+    state: WorkflowEditorUiState,
+    node: WorkflowNode,
+    onConnectNodes: (String, String, String, String?) -> Unit,
+    onRemoveEdge: (String) -> Unit,
+) {
+    val branchEdges = state.definition.edges.filter { it.fromNodeId == node.id }
+    val otherNodes = state.definition.nodes.filter { it.id != node.id }
+
+    val successEdge = branchEdges.firstOrNull { it.conditionExpression?.contains("exitCode == 0") == true || it.fromPort == "success" }
+    val failureEdge = branchEdges.firstOrNull { it.conditionExpression?.contains("exitCode !=") == true || it.fromPort == "failure" }
+
+    var successTargetId by remember(otherNodes) { mutableStateOf(otherNodes.firstOrNull()?.id.orEmpty()) }
+    var failureTargetId by remember(otherNodes) { mutableStateOf(otherNodes.getOrNull(1)?.id ?: otherNodes.firstOrNull()?.id.orEmpty()) }
+    var successExpanded by remember { mutableStateOf(false) }
+    var failureExpanded by remember { mutableStateOf(false) }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFFEAB308).copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                RuntimeIcon(RuntimeIconName.Link, Modifier.size(16.dp), tint = Color(0xFFEAB308))
+                Text("可视化条件分支路由器", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFFEAB308))
             }
-            RuntimeButton(
-                onClick = {
-                    onUpdate(
-                        edge.copy(
-                            fromPort = port,
-                            conditionExpression = condition.trim().ifBlank { null },
-                        ),
-                    )
-                },
-                modifier = Modifier.weight(1f),
-            ) { Text("应用条件") }
+
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "💡 路由规则：上游节点执行完毕后，根据退出码分流：\n  • exitCode == 0 走向【成功分支】\n  • exitCode != 0 走向【失败分支】",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(8.dp),
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Surface(shape = RoundedCornerShape(50), color = Color(0xFF10B981).copy(alpha = 0.18f)) {
+                    Text("✔ 成功分支 (exitCode == 0)", style = MaterialTheme.typography.labelSmall, color = Color(0xFF10B981), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+                if (successEdge != null) {
+                    val target = state.definition.nodes.firstOrNull { it.id == successEdge.toNodeId }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(8.dp)).padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("已连接至: ${target?.title ?: successEdge.toNodeId}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        RuntimeOutlinedButton(
+                            onClick = { onRemoveEdge(successEdge.id) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        ) {
+                            Text("断开", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else if (otherNodes.isNotEmpty()) {
+                    val currentSuccessNode = otherNodes.firstOrNull { it.id == successTargetId } ?: otherNodes.first()
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.weight(1f)) {
+                            RuntimeOutlinedButton(onClick = { successExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("目标: ${currentSuccessNode.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            DropdownMenu(expanded = successExpanded, onDismissRequest = { successExpanded = false }) {
+                                otherNodes.forEach { target ->
+                                    DropdownMenuItem(
+                                        text = { Text(target.title) },
+                                        onClick = { successTargetId = target.id; successExpanded = false },
+                                    )
+                                }
+                            }
+                        }
+                        RuntimeButton(
+                            onClick = { onConnectNodes(node.id, currentSuccessNode.id, "output", "exitCode == 0") },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text("连接", maxLines = 1)
+                        }
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Surface(shape = RoundedCornerShape(50), color = Color(0xFFF43F5E).copy(alpha = 0.18f)) {
+                    Text("✘ 失败分支 (exitCode != 0)", style = MaterialTheme.typography.labelSmall, color = Color(0xFFF43F5E), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+                if (failureEdge != null) {
+                    val target = state.definition.nodes.firstOrNull { it.id == failureEdge.toNodeId }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(8.dp)).padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("已连接至: ${target?.title ?: failureEdge.toNodeId}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        RuntimeOutlinedButton(
+                            onClick = { onRemoveEdge(failureEdge.id) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        ) {
+                            Text("断开", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else if (otherNodes.isNotEmpty()) {
+                    val currentFailureNode = otherNodes.firstOrNull { it.id == failureTargetId } ?: otherNodes.first()
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.weight(1f)) {
+                            RuntimeOutlinedButton(onClick = { failureExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("目标: ${currentFailureNode.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            DropdownMenu(expanded = failureExpanded, onDismissRequest = { failureExpanded = false }) {
+                                otherNodes.forEach { target ->
+                                    DropdownMenuItem(
+                                        text = { Text(target.title) },
+                                        onClick = { failureTargetId = target.id; failureExpanded = false },
+                                    )
+                                }
+                            }
+                        }
+                        RuntimeButton(
+                            onClick = { onConnectNodes(node.id, currentFailureNode.id, "output", "exitCode != 0") },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text("连接", maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NodeConnectionsCard(
+    state: WorkflowEditorUiState,
+    node: WorkflowNode,
+    onConnectNodes: (String, String, String, String?) -> Unit,
+    onDisconnectAll: (String) -> Unit,
+    onUpdateEdge: (WorkflowEdge) -> Unit,
+    onRemoveEdge: (String) -> Unit,
+) {
+    val outgoingEdges = state.definition.edges.filter { it.fromNodeId == node.id }
+    val incomingEdges = state.definition.edges.filter { it.toNodeId == node.id }
+    val allConnected = outgoingEdges + incomingEdges
+
+    val otherNodes = remember(state.definition.nodes, node.id) {
+        state.definition.nodes.filter { it.id != node.id }
+    }
+
+    var selectedTargetId by remember(otherNodes) { mutableStateOf(otherNodes.firstOrNull()?.id.orEmpty()) }
+    var selectedPort by remember { mutableStateOf("output") }
+    var conditionText by remember { mutableStateOf("") }
+    var targetExpanded by remember { mutableStateOf(false) }
+    var portExpanded by remember { mutableStateOf(false) }
+
+    RuntimeCard(Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RuntimeIcon(RuntimeIconName.Link, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(6.dp))
+                Text("节点连线与拓扑 (${allConnected.size})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                if (allConnected.isNotEmpty()) {
+                    Surface(
+                        onClick = { onDisconnectAll(node.id) },
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
+                    ) {
+                        Text(
+                            text = "一键断开全部",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+            }
+
+            Text("传出连线（连向后续节点）：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            if (outgoingEdges.isEmpty()) {
+                Text("暂无传出连线", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                outgoingEdges.forEach { edge ->
+                    val targetNode = state.definition.nodes.firstOrNull { it.id == edge.toNodeId }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(50),
+                                    ) {
+                                        Text(
+                                            text = edge.fromPort.portLabel(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        )
+                                    }
+                                    Text("──►", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        text = targetNode?.title ?: edge.toNodeId,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                if (!edge.conditionExpression.isNullOrBlank()) {
+                                    Text(
+                                        text = "条件: ${edge.conditionExpression}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                            RuntimeOutlinedButton(
+                                onClick = { onRemoveEdge(edge.id) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                RuntimeIcon(RuntimeIconName.Close, Modifier.size(12.dp), tint = MaterialTheme.colorScheme.error)
+                                Text("断开", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text("传入连线（来自前序节点）：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            if (incomingEdges.isEmpty()) {
+                Text("暂无传入连线", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                incomingEdges.forEach { edge ->
+                    val sourceNode = state.definition.nodes.firstOrNull { it.id == edge.fromNodeId }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = sourceNode?.title ?: edge.fromNodeId,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text("──►", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("本节点", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                }
+                                if (!edge.conditionExpression.isNullOrBlank()) {
+                                    Text(
+                                        text = "条件: ${edge.conditionExpression}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                            RuntimeOutlinedButton(
+                                onClick = { onRemoveEdge(edge.id) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                RuntimeIcon(RuntimeIconName.Close, Modifier.size(12.dp), tint = MaterialTheme.colorScheme.error)
+                                Text("断开", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
+            Text("➕ 添加连线到其他节点：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            if (otherNodes.isEmpty()) {
+                Text("画布中尚无其他可用节点", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                val currentTargetNode = otherNodes.firstOrNull { it.id == selectedTargetId } ?: otherNodes.first()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box {
+                        RuntimeOutlinedButton(
+                            onClick = { targetExpanded = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("目标: ${currentTargetNode.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        DropdownMenu(expanded = targetExpanded, onDismissRequest = { targetExpanded = false }) {
+                            otherNodes.forEach { target ->
+                                DropdownMenuItem(
+                                    text = { Text("${target.title} (${target.type.editorLabel()})") },
+                                    onClick = {
+                                        selectedTargetId = target.id
+                                        targetExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f)) {
+                            RuntimeOutlinedButton(
+                                onClick = { portExpanded = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("端口: ${selectedPort.portLabel()}", maxLines = 1)
+                            }
+                            DropdownMenu(expanded = portExpanded, onDismissRequest = { portExpanded = false }) {
+                                EdgePorts.forEach { port ->
+                                    DropdownMenuItem(
+                                        text = { Text(port.portLabel()) },
+                                        onClick = {
+                                            selectedPort = port
+                                            portExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = conditionText,
+                            onValueChange = { conditionText = it },
+                            label = { Text("条件（可选）") },
+                            placeholder = { Text("如 exitCode == 0") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1.5f),
+                        )
+                    }
+
+                    RuntimeButton(
+                        onClick = {
+                            onConnectNodes(node.id, currentTargetNode.id, selectedPort, conditionText.trim().ifBlank { null })
+                            conditionText = ""
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp))
+                        Text("立即建立连线", maxLines = 1)
+                    }
+                }
+            }
         }
     }
 }
@@ -1022,7 +1644,7 @@ fun WorkflowNodeType.metadata(): NodeTypeMeta = when (this) {
         label = "条件分支路由",
         icon = RuntimeIconName.Link,
         summary = "透传上游输出，结合引出连线上的条件表达式进行分支跳转",
-        guide = "条件分支节点将上游输出原样透传。具体的条件跳转逻辑由从本节点引出的各条连线定义（请在连线上配置 exitCode 或 output 条件）。",
+        guide = "条件分支节点根据上游执行的退出码 (exitCode) 或输出内容进行分流跳转，支持可视化配置成功与失败分支。",
     )
     WorkflowNodeType.HUMAN_APPROVAL -> NodeTypeMeta(
         type = this,
@@ -1057,9 +1679,9 @@ private fun FailurePolicy.editorLabel() = when (this) {
 }
 
 private fun String.portLabel() = when (lowercase()) {
-    "success" -> "成功"
-    "failure" -> "失败"
-    else -> "任意输出"
+    "success" -> "成功 (success)"
+    "failure" -> "失败 (failure)"
+    else -> "任意输出 (output)"
 }
 
 private val EdgePorts = listOf("output", "success", "failure")

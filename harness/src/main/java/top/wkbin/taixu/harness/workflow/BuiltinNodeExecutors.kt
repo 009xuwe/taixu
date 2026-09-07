@@ -85,7 +85,12 @@ class LinuxNodeExecutor @Inject constructor(
         onProgress: suspend (NodeRunStatus, String) -> Unit,
     ): NodeExecutionOutput = withContext(Dispatchers.IO) {
         if (node.type == WorkflowNodeType.CONDITION_BRANCH) {
-            return@withContext NodeExecutionOutput(NodeRunStatus.SUCCESS, textOutput = previousOutput(context))
+            val upstream = context.upstreamNodeIds?.lastOrNull()?.let { context.nodeOutputs[it] }
+            return@withContext NodeExecutionOutput(
+                status = upstream?.status ?: NodeRunStatus.SUCCESS,
+                exitCode = upstream?.exitCode ?: 0,
+                textOutput = upstream?.textOutput ?: previousOutput(context),
+            )
         }
         val commandLine = commandFor(node, context)
             ?: return@withContext NodeExecutionOutput(NodeRunStatus.FAILED, exitCode = 2, error = "节点缺少可执行配置")

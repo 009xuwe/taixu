@@ -2,13 +2,151 @@ package top.wkbin.taixu.core.model.workflow
 
 object BuiltinWorkflows {
     val all: List<WorkflowDefinition>
-        get() = listOf(releaseApk, installGeneratedApk, buildDoctor, buildRepair, reverseAudit, atomicCommit).map(WorkflowLayout::arrange)
+        get() = listOf(
+            systemHealth,
+            conditionBranchDemo,
+            networkDiagnostic,
+            releaseApk,
+            installGeneratedApk,
+            buildDoctor,
+            buildRepair,
+            reverseAudit,
+            atomicCommit,
+        ).map(WorkflowLayout::arrange)
 
     fun find(id: String): WorkflowDefinition? = all.firstOrNull { it.id == id }
 
     private fun chain(vararg ids: String): List<WorkflowEdge> = ids.toList().zipWithNext().mapIndexed { index, pair ->
         WorkflowEdge("edge_$index", pair.first, "success", pair.second)
     }
+
+    val systemHealth = WorkflowDefinition(
+        id = "linux_system_health",
+        name = "Linux 沙箱环境与硬件体检",
+        description = "零配置一键体检：全面检查沙箱 Linux 发行版内核、架构、CPU、内存、磁盘及常用工具链状态。",
+        category = "体检",
+        isBuiltin = true,
+        trigger = WorkflowTrigger.Manual("/wf linux_system_health"),
+        nodes = listOf(
+            WorkflowNode("start", WorkflowNodeType.TRIGGER, "开始体检", canvasX = 40f, canvasY = 120f),
+            WorkflowNode(
+                "os_kernel",
+                WorkflowNodeType.BASH_COMMAND,
+                "系统与内核检测",
+                config = mapOf("command" to "echo '=== 1. 内核与架构 ===' && uname -a && echo '' && echo '=== 2. 发行版信息 ===' && (cat /etc/os-release | head -n 8 || cat /etc/issue || echo '未知发行版')"),
+                canvasX = 280f,
+                canvasY = 120f,
+            ),
+            WorkflowNode(
+                "hardware",
+                WorkflowNodeType.BASH_COMMAND,
+                "内存与存储状态",
+                config = mapOf("command" to "echo '=== 1. 内存使用情况 ===' && (free -h || cat /proc/meminfo | head -n 4) && echo '' && echo '=== 2. 根目录磁盘空间 ===' && df -h /"),
+                canvasX = 520f,
+                canvasY = 120f,
+            ),
+            WorkflowNode(
+                "toolchain",
+                WorkflowNodeType.BASH_COMMAND,
+                "核心工具链排查",
+                config = mapOf("command" to "echo '=== 核心命令行工具排查 ===' && for cmd in bash sh git python3 python curl wget make gcc tar find grep awk sed; do which \$cmd 2>/dev/null && echo \"  ✔ \$cmd: 可用 (\$(which \$cmd))\" || echo \"  ✘ \$cmd: 未安装\"; done"),
+                canvasX = 760f,
+                canvasY = 120f,
+            ),
+            WorkflowNode("done", WorkflowNodeType.TERMINAL_OUTPUT, "体检报告生成", canvasX = 1000f, canvasY = 120f),
+        ),
+        edges = chain("start", "os_kernel", "hardware", "toolchain", "done"),
+    )
+
+    val conditionBranchDemo = WorkflowDefinition(
+        id = "condition_branch_demo",
+        name = "条件分支逻辑测试 (Demo)",
+        description = "检测沙箱基础环境，通过条件分支分别走向【分支 A：环境正常】或【分支 B：环境异常】。",
+        category = "示例",
+        isBuiltin = true,
+        trigger = WorkflowTrigger.Manual("/wf condition_branch_demo"),
+        nodes = listOf(
+            WorkflowNode("start", WorkflowNodeType.TRIGGER, "启动测试", canvasX = 40f, canvasY = 160f),
+            WorkflowNode(
+                "check_env",
+                WorkflowNodeType.BASH_COMMAND,
+                "检测沙箱基础环境",
+                config = mapOf("command" to "echo '=== 正在检测 Linux 沙箱根目录 ===' && test -d /etc && echo '✔ /etc 目录存在'"),
+                canvasX = 280f,
+                canvasY = 160f,
+            ),
+            WorkflowNode(
+                "branch",
+                WorkflowNodeType.CONDITION_BRANCH,
+                "条件分支分流",
+                description = "根据上游检测结果将流程分流至不同处理分支",
+                failurePolicy = FailurePolicy.CONTINUE,
+                canvasX = 520f,
+                canvasY = 160f,
+            ),
+            WorkflowNode(
+                "branch_success",
+                WorkflowNodeType.BASH_COMMAND,
+                "【分支 A】环境完好",
+                config = mapOf("command" to "echo '==============================' && echo '🎉【分支 A 触发成功】' && echo '沙箱基础配置完全正常，继续执行业务操作。' && echo '=============================='"),
+                canvasX = 780f,
+                canvasY = 80f,
+            ),
+            WorkflowNode(
+                "branch_failure",
+                WorkflowNodeType.BASH_COMMAND,
+                "【分支 B】环境异常告警",
+                config = mapOf("command" to "echo '==============================' && echo '⚠️【分支 B 触发成功】' && echo '检测到沙箱缺少必要目录，进入降级与告警流程。' && echo '=============================='"),
+                canvasX = 780f,
+                canvasY = 240f,
+            ),
+            WorkflowNode(
+                "done",
+                WorkflowNodeType.TERMINAL_OUTPUT,
+                "测试汇总完成",
+                canvasX = 1040f,
+                canvasY = 160f,
+            ),
+        ),
+        edges = listOf(
+            WorkflowEdge("edge_demo_1", "start", "output", "check_env"),
+            WorkflowEdge("edge_demo_2", "check_env", "output", "branch"),
+            WorkflowEdge("edge_demo_3", "branch", "output", "branch_success", conditionExpression = "exitCode == 0"),
+            WorkflowEdge("edge_demo_4", "branch", "output", "branch_failure", conditionExpression = "exitCode != 0"),
+            WorkflowEdge("edge_demo_5", "branch_success", "output", "done"),
+            WorkflowEdge("edge_demo_6", "branch_failure", "output", "done"),
+        ),
+    )
+
+    val networkDiagnostic = WorkflowDefinition(
+        id = "network_dns_diagnostic",
+        name = "网络连通与 DNS 诊断",
+        description = "零配置网络体检：测试容器内 DNS 配置文件、域名解析能力以及公网 HTTP 服务连通性。",
+        category = "网络",
+        isBuiltin = true,
+        trigger = WorkflowTrigger.Manual("/wf network_dns_diagnostic"),
+        nodes = listOf(
+            WorkflowNode("start", WorkflowNodeType.TRIGGER, "启动诊断", canvasX = 40f, canvasY = 120f),
+            WorkflowNode(
+                "dns_conf",
+                WorkflowNodeType.BASH_COMMAND,
+                "查看 DNS 配置",
+                config = mapOf("command" to "echo '=== /etc/resolv.conf ===' && (cat /etc/resolv.conf || echo '无 resolv.conf') && echo '' && echo '=== /etc/hosts ===' && head -n 10 /etc/hosts"),
+                canvasX = 280f,
+                canvasY = 120f,
+            ),
+            WorkflowNode(
+                "http_ping",
+                WorkflowNodeType.BASH_COMMAND,
+                "公网 HTTP 请求测试",
+                config = mapOf("command" to "echo '=== 测试公网连通性 (HTTP HEAD) ===' && (curl -I -s -m 5 https://www.baidu.com | head -n 4 || curl -I -s -m 5 https://www.qq.com | head -n 4 || curl -I -s -m 5 https://www.bilibili.com | head -n 4 || echo 'curl 测试完成')"),
+                canvasX = 520f,
+                canvasY = 120f,
+            ),
+            WorkflowNode("done", WorkflowNodeType.TERMINAL_OUTPUT, "网络诊断完成", canvasX = 760f, canvasY = 120f),
+        ),
+        edges = chain("start", "dns_conf", "http_ping", "done"),
+    )
 
     val releaseApk = WorkflowDefinition(
         id = "release_apk_direct_install",

@@ -12,15 +12,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontFamily
+import top.wkbin.taixu.ui.components.RuntimeIcon
+import top.wkbin.taixu.ui.components.RuntimeIconName
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,8 +73,8 @@ import top.wkbin.taixu.core.model.workflow.WorkflowNode
 import top.wkbin.taixu.core.model.workflow.WorkflowNodeType
 import top.wkbin.taixu.core.model.workflow.WorkflowRuntimeState
 
-private val NodeWidth = 208.dp
-private val NodeHeight = 104.dp
+private val NodeWidth = 228.dp
+private val NodeHeight = 118.dp
 private val GridSize = 32.dp
 private const val MinScale = 0.30f
 private const val MaxScale = 2.40f
@@ -86,9 +93,12 @@ fun WorkflowCanvas2D(
     editable: Boolean = false,
     selectedNodeId: String? = null,
     connectionSourceId: String? = null,
-    onNodeSelected: (String) -> Unit = {},
+    onNodeSelected: (String?) -> Unit = {},
     onNodeMoved: (String, Float, Float) -> Unit = { _, _, _ -> },
     onConnectionRequested: (String, String) -> Unit = { _, _ -> },
+    onBeginConnection: (String) -> Unit = {},
+    onRemoveNode: (String) -> Unit = {},
+    onConfigureNode: (String) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val nodeWidthPx = with(density) { NodeWidth.toPx() }
@@ -209,6 +219,9 @@ fun WorkflowCanvas2D(
                     progress = run?.progressMessage.orEmpty(),
                     selected = node.id == selectedNodeId,
                     connecting = node.id == connectionSourceId,
+                    onConfigure = { onConfigureNode(node.id) },
+                    onBeginConnection = { onBeginConnection(node.id) },
+                    onRemove = { onRemoveNode(node.id) },
                     modifier = Modifier
                         .offset {
                             val worldPos = positions[node.id]
@@ -378,9 +391,68 @@ private fun WorkflowEdges(
     }
 }
 
+data class NodeVisualTheme(
+    val accentColor: Color,
+    val icon: RuntimeIconName,
+    val tag: String,
+)
+
+fun WorkflowNodeType.visualTheme(): NodeVisualTheme = when (this) {
+    WorkflowNodeType.TRIGGER -> NodeVisualTheme(
+        accentColor = Color(0xFF10B981), // 翡翠绿
+        icon = RuntimeIconName.Play,
+        tag = "触发器",
+    )
+    WorkflowNodeType.BASH_COMMAND -> NodeVisualTheme(
+        accentColor = Color(0xFF06B6D4), // 终端青
+        icon = RuntimeIconName.Terminal,
+        tag = "Shell 命令",
+    )
+    WorkflowNodeType.PROCESS_SERVICE -> NodeVisualTheme(
+        accentColor = Color(0xFF818CF8), // 守护紫
+        icon = RuntimeIconName.Settings,
+        tag = "常驻服务",
+    )
+    WorkflowNodeType.AGENT_INFERENCE -> NodeVisualTheme(
+        accentColor = Color(0xFFA855F7), // 智能紫
+        icon = RuntimeIconName.Sparkles,
+        tag = "AI 推理",
+    )
+    WorkflowNodeType.SUBAGENT_DELEGATE -> NodeVisualTheme(
+        accentColor = Color(0xFF3B82F6), // 协同蓝
+        icon = RuntimeIconName.Hub,
+        tag = "子智能体",
+    )
+    WorkflowNodeType.TAIXU_BUILD -> NodeVisualTheme(
+        accentColor = Color(0xFFF59E0B), // 构建琥珀
+        icon = RuntimeIconName.Package,
+        tag = "离线构建",
+    )
+    WorkflowNodeType.CONDITION_BRANCH -> NodeVisualTheme(
+        accentColor = Color(0xFFEAB308), // 分支黄
+        icon = RuntimeIconName.Link,
+        tag = "条件分支",
+    )
+    WorkflowNodeType.HUMAN_APPROVAL -> NodeVisualTheme(
+        accentColor = Color(0xFFF43F5E), // 审批红
+        icon = RuntimeIconName.Alert,
+        tag = "人工把关",
+    )
+    WorkflowNodeType.HOST_ACTION -> NodeVisualTheme(
+        accentColor = Color(0xFF14B8A6), // 宿主青
+        icon = RuntimeIconName.Android,
+        tag = "宿主系统",
+    )
+    WorkflowNodeType.TERMINAL_OUTPUT -> NodeVisualTheme(
+        accentColor = Color(0xFF0EA5E9), // 归档天蓝
+        icon = RuntimeIconName.Check,
+        tag = "结果输出",
+    )
+}
+
 /**
- * 节点卡片：采用原生 Material 3 Surface 实体呈现，高对比度容器背景与阴影，
- * 彻底消除背景流光折射失效导致的透明不可见问题。
+ * 节点卡片：专属色彩识别系统、左侧色彩状态条、动态代码/分流胶囊预览，
+ * 并在选中时呈现 [调参 / 连线 / 删除] 快捷操作条。
  */
 @Composable
 private fun WorkflowNodeCard(
@@ -389,66 +461,154 @@ private fun WorkflowNodeCard(
     progress: String,
     selected: Boolean,
     connecting: Boolean,
+    onConfigure: () -> Unit = {},
+    onBeginConnection: () -> Unit = {},
+    onRemove: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val color = statusColor(status)
+    val theme = node.type.visualTheme()
+    val statusClr = statusColor(status)
     val borderColor = when {
         connecting -> MaterialTheme.colorScheme.tertiary
-        selected -> MaterialTheme.colorScheme.primary
-        else -> color.copy(alpha = if (status == NodeRunStatus.IDLE) 0.38f else 0.85f)
+        selected -> theme.accentColor
+        status != NodeRunStatus.IDLE -> statusClr
+        else -> theme.accentColor.copy(alpha = 0.38f)
     }
-    val borderWidth = if (selected || connecting) 2.dp else 1.dp
-    val shape = RoundedCornerShape(16.dp)
+    val borderWidth = if (selected || connecting) 2.5.dp else 1.2.dp
+    val shape = RoundedCornerShape(14.dp)
 
     Surface(
         modifier = modifier.size(NodeWidth, NodeHeight),
         shape = shape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = BorderStroke(borderWidth, borderColor),
-        tonalElevation = if (selected) 6.dp else 2.dp,
-        shadowElevation = if (selected) 4.dp else 1.dp,
+        tonalElevation = if (selected) 8.dp else 2.dp,
+        shadowElevation = if (selected) 5.dp else 1.5.dp,
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Row(Modifier.fillMaxSize()) {
+            // 左侧专属颜色状态条
+            Box(
+                Modifier
+                    .width(5.dp)
+                    .fillMaxHeight()
+                    .background(theme.accentColor)
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                Surface(
-                    color = color.copy(alpha = 0.16f),
-                    shape = RoundedCornerShape(50),
+                // 顶部行：类型图标 + 类型 Tag + 运行状态 Pill
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    Surface(
+                        color = theme.accentColor.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.size(20.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            RuntimeIcon(theme.icon, Modifier.size(12.dp), tint = theme.accentColor)
+                        }
+                    }
                     Text(
-                        text = node.type.displayName(),
+                        text = theme.tag,
                         style = MaterialTheme.typography.labelSmall,
-                        color = color,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        color = theme.accentColor,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                     )
+                    Spacer(Modifier.weight(1f))
+                    Surface(
+                        color = statusClr.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(50),
+                    ) {
+                        Text(
+                            text = statusLabel(status),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = statusClr,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            maxLines = 1,
+                        )
+                    }
                 }
+
+                // 节点标题
                 Text(
-                    text = statusLabel(status),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = color,
+                    text = node.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+
+                // 底部展示区：选中时展现快捷操作条；未选中时展现动态代码/路由胶囊预览
+                if (selected) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            onClick = onConfigure,
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text("⚙ 调参", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                            }
+                        }
+                        Surface(
+                            onClick = onBeginConnection,
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text("🔗 连线", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                            }
+                        }
+                        Surface(
+                            onClick = onRemove,
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.18f),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text("🗑 删除", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
+                            }
+                        }
+                    }
+                } else {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.65f),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        val previewText = when (node.type) {
+                            WorkflowNodeType.BASH_COMMAND -> ">_ ${node.config["command"]?.trim() ?: "待配置命令"}"
+                            WorkflowNodeType.CONDITION_BRANCH -> "🔀 exitCode == 0 ? 分支A : 分支B"
+                            WorkflowNodeType.AGENT_INFERENCE -> "✨ ${node.config["prompt"]?.trim()?.take(20) ?: "AI 提示词"}"
+                            WorkflowNodeType.TAIXU_BUILD -> "📦 ${node.config["projectType"] ?: "android"} · ${node.config["task"] ?: "assemble"}"
+                            WorkflowNodeType.HUMAN_APPROVAL -> "🛡️ 需要人工确认"
+                            else -> progress.ifBlank { node.description.ifBlank { node.id } }
+                        }
+                        Text(
+                            text = previewText,
+                            style = if (node.type == WorkflowNodeType.BASH_COMMAND) MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
             }
-            Text(
-                text = node.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = progress.ifBlank { node.description.ifBlank { node.id } },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }

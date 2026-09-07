@@ -196,7 +196,7 @@ class WorkflowViewModel @Inject constructor(
             canvasX = nextX,
             canvasY = nextY,
             config = type.defaultConfig(),
-            failurePolicy = FailurePolicy.ABORT,
+            failurePolicy = if (type == WorkflowNodeType.CONDITION_BRANCH) FailurePolicy.CONTINUE else FailurePolicy.ABORT,
         )
         mutate(selectedNodeId = node.id) { WorkflowGraphEditor.addNode(it, node) }
     }
@@ -217,6 +217,37 @@ class WorkflowViewModel @Inject constructor(
     fun removeSelectedNode() {
         val nodeId = _editorState.value?.selectedNodeId ?: return
         mutate(selectedNodeId = null) { WorkflowGraphEditor.removeNode(it, nodeId) }
+    }
+
+    fun removeNode(nodeId: String) {
+        mutate(selectedNodeId = if (_editorState.value?.selectedNodeId == nodeId) null else _editorState.value?.selectedNodeId) {
+            WorkflowGraphEditor.removeNode(it, nodeId)
+        }
+    }
+
+    fun connectNodes(fromNodeId: String, toNodeId: String, port: String = "output", condition: String? = null) {
+        val edge = WorkflowEdge(
+            id = "edge_${UUID.randomUUID().toString().take(8)}",
+            fromNodeId = fromNodeId,
+            fromPort = port,
+            toNodeId = toNodeId,
+            conditionExpression = condition?.trim()?.ifBlank { null },
+        )
+        mutate { WorkflowGraphEditor.connect(it, edge) }
+    }
+
+    fun disconnectNodes(fromNodeId: String, toNodeId: String) {
+        mutate { definition ->
+            val toRemove = definition.edges.filter { it.fromNodeId == fromNodeId && it.toNodeId == toNodeId }
+            toRemove.fold(definition) { acc, edge -> WorkflowGraphEditor.removeEdge(acc, edge.id) }
+        }
+    }
+
+    fun disconnectAllForNode(nodeId: String) {
+        mutate { definition ->
+            val toRemove = definition.edges.filter { it.fromNodeId == nodeId || it.toNodeId == nodeId }
+            toRemove.fold(definition) { acc, edge -> WorkflowGraphEditor.removeEdge(acc, edge.id) }
+        }
     }
 
     fun updateEdge(edge: WorkflowEdge) = mutate { WorkflowGraphEditor.updateEdge(it, edge) }
