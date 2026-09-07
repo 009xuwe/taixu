@@ -108,9 +108,9 @@ class ContextWindowPolicyTest {
     }
 
     @Test
-    fun `large context models still keep only the newest detailed user turns`() {
+    fun `large context models keep all history that fits the token budget`() {
         val messages = buildList<HarnessMessage> {
-            repeat(ContextWindowPolicy.MAX_DETAILED_USER_TURNS + 6) { index ->
+            repeat(30) { index ->
                 add(UserMessage("u-$index", index * 2L, "request $index"))
                 add(AssistantText("a-$index", index * 2L + 1, "answer $index"))
             }
@@ -122,9 +122,7 @@ class ContextWindowPolicyTest {
             systemTokens = 0,
         )
 
-        assertEquals(12, keepFrom)
-        assertTrue(messages[keepFrom] is UserMessage)
-        assertEquals(ContextWindowPolicy.MAX_DETAILED_USER_TURNS, messages.drop(keepFrom).count { it is UserMessage })
+        assertEquals(0, keepFrom)
     }
 
     @Test

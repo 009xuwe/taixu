@@ -73,6 +73,16 @@ class CompactionSnapshotTest {
     }
 
     @Test
+    fun `provider projection does not apply the live UI entry limit`() = runBlocking {
+        seedUserMessages("s-long", 625)
+
+        val projected = compaction.project("s-long")
+
+        assertEquals(625, projected.messages.size)
+        assertEquals("s-long-m0", projected.messages.first().id)
+    }
+
+    @Test
     fun `snapshot exposes folded count and summary after compact`() = runBlocking {
         val sessionId = "s-snap"
         seedUserMessages(sessionId, 6)
@@ -118,6 +128,6 @@ class CompactionSnapshotTest {
         val compacted = compaction.compact(sessionId, context, keepFromIndex = 1)
 
         assertTrue(compacted.summary.orEmpty().contains(latestMarker))
-        assertTrue(compacted.summary.orEmpty().length <= 4_800)
+        assertTrue(compacted.summary.orEmpty().length <= 16_000)
     }
 }

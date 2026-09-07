@@ -80,7 +80,8 @@ class ApiContextAssembler @Inject constructor(
                 ContextWindowPolicy.computeKeepFromIndex(
                     msgs,
                     budgetTokens,
-                    ContextWindowPolicy.estimateTokens(systemPrompt),
+                    ContextWindowPolicy.estimateTokens(systemPrompt) +
+                        ContextWindowPolicy.estimateTokens(compactedContext.summary.orEmpty()),
                 )
             } else {
                 0
@@ -89,17 +90,7 @@ class ApiContextAssembler @Inject constructor(
                 compactedContext = compactionManager.compact(sessId, compactedContext, computedKeepFromIndex)
                 msgs = compactedContext.messages
             }
-            val shouldCompact = !compactedContext.summary.isNullOrBlank()
-            // Compute the message index at which "recent" history begins. Messages before this
-            // boundary are either in the global compaction summary zone (shouldCompact) or subject
-            // to turn-end capping for large tool results. Either way they get compacted.
-            //
-            // recentTurnCutoffIndex is the index of the oldest user message within the last
-            // RECENT_TURNS_FULL_DETAIL user turns — messages before it are "historical" for the
-            // purpose of capping. The value is now a real boundary, not zero.
-            val recentTurnCutoffIndex = computeRecentTurnCutoffIndex(msgs, RECENT_TURNS_FULL_DETAIL)
-
-            if (shouldCompact) {
+            if (!compactedContext.summary.isNullOrBlank()) {
                 add(
                     ApiMessage(
                         role = "system",
@@ -119,13 +110,8 @@ class ApiContextAssembler @Inject constructor(
                     arguments = tc.args.toString(),
                 ),
             )
-            val isCollapsed = { index: Int -> shouldCompact && index < recentTurnCutoffIndex }
             while (i < msgs.size) {
                 val message = msgs[i]
-                if (isCollapsed(i)) {
-                    i++
-                    continue
-                }
                 if (message is CapabilityEvent) {
                     i++
                     continue
@@ -139,46 +125,13 @@ class ApiContextAssembler @Inject constructor(
                         is ToolResult -> {
                             val name = toolNames[message.toolCallId] ?: "工具"
                             val status = if (message.success) "成功" else "失败"
-                            val args = toolCallDetails[message.toolCallId]?.second
-                            val content = when {
-                                isCollapsed(i) && message.output.length > ContextWindowPolicy.compactThresholdFor(name) ->
-                                    ContextWindowPolicy.compactToolOutput(name, args, message.output, message.success)
-                                // Turn-end capping for JSON_TEXT mode: same policy as NATIVE.
-                                i < recentTurnCutoffIndex && message.output.length > TURN_END_RESULT_CAP_CHARS ->
-                                    "【工具 $name 执行结果·$status】\n${capToolResultForHistory(message.output)}"
-                                else ->
-                                    "【工具 $name 执行结果·$status】\n${message.output}"
-                            }
+                            val content = "【工具 $name 执行结果·$status】\n${message.output}"
                             add(ApiMessage(role = "user", content = content))
                             i++
                         }
                         else -> {
-                            val mapped = when {
-                                isCollapsed(i) && message is AssistantText && message.text.length > 120 ->
-                                    ApiMessage(
-                                        role = "assistant",
-                                        content = ContextWindowPolicy.foldMessageText(
-                                            "助手",
-                                            ContextWindowPolicy.assistantTextForContext(
-                                                ProviderClient.stripThinkTags(message.text) ?: message.text,
-                                            ),
-                                        ),
-                                        reasoning_content = null,
-                                    )
-                                isCollapsed(i) && message is UserMessage && message.text.length > 120 ->
-                                    ApiMessage(
-                                        role = "user",
-                                        content = ContextWindowPolicy.foldMessageText("用户", message.text),
-                                        imageUrls = message.imageUrls,
-                                    )
-                                isCollapsed(i) && message is AssistantText ->
-                                    HarnessApiMapper.toApiMessage(message).copy(
-                                        content = ContextWindowPolicy.assistantTextForContext(
-                                            ProviderClient.stripThinkTags(message.text) ?: message.text,
-                                        ),
-                                        reasoning_content = null,
-                                    )
-                                message is AssistantText ->
+                            val mapped = when (message) {
+                                is AssistantText ->
                                     HarnessApiMapper.toApiMessage(message).copy(
                                         content = ContextWindowPolicy.assistantTextForContext(
                                             ProviderClient.stripThinkTags(message.text) ?: message.text,
@@ -198,18 +151,8 @@ class ApiContextAssembler @Inject constructor(
                         i++
                         continue
                     }
-                    // 预算折叠态：早期 assistant 文本压缩为一行占位，避免撑爆上下文。
-                    val text = if (isCollapsed(i) && message is AssistantText && message.text.length > 120) {
-                        ContextWindowPolicy.foldMessageText(
-                            "助手",
-                            ContextWindowPolicy.assistantTextForContext(
-                                ProviderClient.stripThinkTags(message.text) ?: message.text,
-                            ),
-                        )
-                    } else {
-                        (message as? AssistantText)?.text?.let {
-                            ContextWindowPolicy.assistantTextForContext(ProviderClient.stripThinkTags(it) ?: it)
-                        }
+                    val text = (message as? AssistantText)?.text?.let {
+                        ContextWindowPolicy.assistantTextForContext(ProviderClient.stripThinkTags(it) ?: it)
                     }
                     val toolCalls = mutableListOf<ApiToolCall>()
                     if (message is ToolCall) toolCalls.add(apiToolCall(message))
@@ -240,19 +183,7 @@ class ApiContextAssembler @Inject constructor(
                     )
                     i = j
                 } else if (message is ToolResult) {
-                    val detail = toolCallDetails[message.toolCallId]
-                    val content = when {
-                        isCollapsed(i) && message.output.length > ContextWindowPolicy.compactThresholdFor(detail?.first) ->
-                            ContextWindowPolicy.compactToolOutput(detail?.first, detail?.second, message.output, message.success)
-                        // Turn-end capping: historic results (before the recent-turns boundary)
-                        // that exceed the cap are trimmed to head + ellipsis + tail.
-                        // This runs independently from global compaction (isCollapsed) and fires
-                        // even when shouldCompact is false — preventing a single large read from
-                        // occupying full tokens across dozens of subsequent rounds.
-                        i < recentTurnCutoffIndex && message.output.length > TURN_END_RESULT_CAP_CHARS ->
-                            capToolResultForHistory(message.output)
-                        else -> message.output
-                    }
+                    val content = message.output
                     add(
                         ApiMessage(
                             role = "tool",
@@ -262,68 +193,12 @@ class ApiContextAssembler @Inject constructor(
                     )
                     i++
                 } else {
-                    // 用户消息在早期历史中同样折叠，仅保留极简占位。
-                    val folded = if (isCollapsed(i) && message is UserMessage && message.text.length > 120) {
-                        ContextWindowPolicy.foldMessageText("用户", message.text)
-                    } else {
-                        null
-                    }
-                    if (folded != null) {
-                        add(ApiMessage(role = "user", content = folded))
-                    } else {
-                        val mapped = HarnessApiMapper.toApiMessage(message)
-                        add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
-                    }
+                    val mapped = HarnessApiMapper.toApiMessage(message)
+                    add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
                     i++
                 }
             }
         }
     }
 
-    companion object {
-        /**
-         * Maximum character length for a ToolResult that occurred before the recent-turns
-         * boundary. Outputs exceeding this length are capped to head + ellipsis + tail.
-         * ~4096 chars ≈ ~1024 tokens — generous enough for typical tool outputs; small
-         * enough to prevent a single 15 KB `read` from consuming context across 40 rounds.
-         */
-        const val TURN_END_RESULT_CAP_CHARS = 4_096
-
-        /** Number of user-turn boundaries that define "recent" history. */
-        const val RECENT_TURNS_FULL_DETAIL = 3
-
-        /** Head size preserved during turn-end capping. */
-        private const val CAP_HEAD_CHARS = 2_048
-
-        /** Tail size preserved during turn-end capping. */
-        private const val CAP_TAIL_CHARS = 512
-
-        /**
-         * Return the message index of the oldest UserMessage within the last [n] user turns.
-         * If there are fewer than [n] user turns the whole history is "recent" and 0 is returned.
-         */
-        fun computeRecentTurnCutoffIndex(messages: List<top.wkbin.taixu.harness.HarnessMessage>, n: Int): Int {
-            var remaining = n
-            for (index in messages.indices.reversed()) {
-                if (messages[index] is top.wkbin.taixu.harness.UserMessage) {
-                    remaining--
-                    if (remaining == 0) return index
-                }
-            }
-            return 0
-        }
-
-        /**
-         * Trim a historic tool output to [CAP_HEAD_CHARS] head + ellipsis + [CAP_TAIL_CHARS]
-         * tail. Called only when the output exceeds [TURN_END_RESULT_CAP_CHARS] and the message
-         * is outside the recent-turns boundary — never applied to recent turns.
-         */
-        fun capToolResultForHistory(output: String): String {
-            if (output.length <= TURN_END_RESULT_CAP_CHARS) return output
-            val head = output.take(CAP_HEAD_CHARS)
-            val tail = output.takeLast(CAP_TAIL_CHARS)
-            val omitted = output.length - CAP_HEAD_CHARS - CAP_TAIL_CHARS
-            return "$head\n…[历史工具结果中段已裁剪 $omitted 字节，仅保留首尾]…\n$tail"
-        }
-    }
 }

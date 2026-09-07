@@ -271,6 +271,21 @@ class ApiContextAssemblerTest {
     }
 
     @Test
+    fun `persisted summary does not hide retained turns that still fit the model window`() = runBlocking {
+        val sessionId = "s-retained"
+        repeat(6) { index ->
+            push(sessionId, UserMessage("u$index", index.toLong(), "retained request $index"))
+        }
+        val context = compactionManager.project(sessionId)
+        compactionManager.compact(sessionId, context, keepFromIndex = 1)
+
+        val out = assembler.assemble(sessionId, nativeModel(tokens = 200_000), "")
+        val providerUsers = out.filter { it.role == "user" }.map { it.content }
+
+        assertEquals((1..5).map { "retained request $it" }, providerUsers)
+    }
+
+    @Test
     fun `pure chat skips even persisted history system prompts`() = runBlocking {
         push("s-pure2", UserMessage("u1", 1L, "你好"))
         val out = assembler.assemble("s-pure2", nativeModel().copy(pureChatMode = true), "/ws")

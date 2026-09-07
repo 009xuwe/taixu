@@ -564,9 +564,11 @@ class ToolExecutor @Inject constructor(
         val messageId = args["message_id"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotBlank() }
         val index = args["index"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
         require(messageId != null || index != null) { "history.read 需要 message_id 或 index" }
-        val message = messageStore?.read(sessionId, messageId, index)
-            ?: return false to "未找到指定历史消息"
-        return true to historyLabel(message, full = true).take(MAX_HISTORY_READ_OUTPUT)
+        val messages = messageStore?.readWithRelated(sessionId, messageId, index).orEmpty()
+        if (messages.isEmpty()) return false to "未找到指定历史消息"
+        return true to messages.joinToString("\n\n") { message ->
+            "id=${message.id}\n${historyLabel(message, full = true)}"
+        }.take(MAX_HISTORY_READ_OUTPUT)
     }
 
     private fun historyLabel(message: HarnessMessage, full: Boolean = false): String = when (message) {

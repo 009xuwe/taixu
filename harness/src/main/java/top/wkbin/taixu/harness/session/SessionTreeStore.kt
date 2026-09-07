@@ -69,21 +69,58 @@ class SessionTreeStore @Inject constructor(
         val needle = query.trim()
         if (needle.isBlank()) return emptyList()
         val lane = repository.ensureLane(sessionId, MAIN_LANE)
-        return repository.searchBranch(sessionId, lane.leafId, needle, limit.coerceIn(1, 20))
-            .mapNotNull(::decode)
+        val messages = repository.branch(sessionId, lane.leafId).mapNotNull(::decode)
+        val resultsByCallId = messages.filterIsInstance<ToolResult>().groupBy { it.toolCallId }
+        val callsById = messages.filterIsInstance<ToolCall>().associateBy { it.id }
+        val terms = needle.split(SEARCH_TERM_SEPARATOR).filter { it.isNotBlank() }
+
+        return messages.withIndex().mapNotNull { (index, message) ->
+            val relatedText = when (message) {
+                is ToolCall -> resultsByCallId[message.id].orEmpty().joinToString("\n") { searchableText(it) }
+                is ToolResult -> callsById[message.toolCallId]?.let(::searchableText).orEmpty()
+                else -> ""
+            }
+            val haystack = searchableText(message) + "\n" + relatedText
+            val exactMatch = haystack.contains(needle, ignoreCase = true)
+            val matchedTerms = terms.count { haystack.contains(it, ignoreCase = true) }
+            if (!exactMatch && (terms.isEmpty() || matchedTerms != terms.size)) null
+            else SearchMatch(message, index, if (exactMatch) matchedTerms + 2 else matchedTerms)
+        }.sortedWith(compareByDescending<SearchMatch> { it.score }.thenByDescending { it.index })
+            .take(limit.coerceIn(1, 20))
+            .map { it.message }
     }
 
     suspend fun read(sessionId: String, messageId: String? = null, index: Int? = null): HarnessMessage? {
+        val lane = repository.ensureLane(sessionId, MAIN_LANE)
+        val messages = repository.branch(sessionId, lane.leafId).mapNotNull(::decode)
         return when {
-            !messageId.isNullOrBlank() -> {
-                repository.findEntry(sessionId, messageId)?.let(::decode)
-            }
-            index != null && index >= 0 -> {
-                val lane = repository.ensureLane(sessionId, MAIN_LANE)
-                repository.branchEntryAt(sessionId, lane.leafId, index)?.let(::decode)
-            }
+            !messageId.isNullOrBlank() -> messages.firstOrNull { it.id == messageId }
+            index != null && index >= 0 -> messages.getOrNull(index)
             else -> null
         }
+    }
+
+    /** Read one active-branch message and keep a tool call/result exchange together. */
+    suspend fun readWithRelated(
+        sessionId: String,
+        messageId: String? = null,
+        index: Int? = null,
+    ): List<HarnessMessage> {
+        val lane = repository.ensureLane(sessionId, MAIN_LANE)
+        val messages = repository.branch(sessionId, lane.leafId).mapNotNull(::decode)
+        val selected = when {
+            !messageId.isNullOrBlank() -> messages.firstOrNull { it.id == messageId }
+            index != null && index >= 0 -> messages.getOrNull(index)
+            else -> null
+        } ?: return emptyList()
+        val relatedIds = when (selected) {
+            is ToolCall -> messages.filterIsInstance<ToolResult>()
+                .filter { it.toolCallId == selected.id }
+                .mapTo(mutableSetOf(selected.id)) { it.id }
+            is ToolResult -> mutableSetOf(selected.id, selected.toolCallId)
+            else -> mutableSetOf(selected.id)
+        }
+        return messages.filter { it.id in relatedIds }
     }
 
     internal fun decode(entity: HarnessEntryEntity): HarnessMessage? {
@@ -113,5 +150,8 @@ class SessionTreeStore @Inject constructor(
         const val MAIN_LANE = "main"
         /** Maximum decoded messages retained per live UI/session projection. */
         const val MAX_LIVE_ENTRIES = 600
+        private val SEARCH_TERM_SEPARATOR = Regex("[\\s,，;；|]+")
     }
+
+    private data class SearchMatch(val message: HarnessMessage, val index: Int, val score: Int)
 }

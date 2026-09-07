@@ -19,7 +19,12 @@ import top.wkbin.taixu.core.common.logging.SensitiveDataRedactor
 import top.wkbin.taixu.core.database.AppDatabase
 import top.wkbin.taixu.core.database.RoomHarnessRuntimeRepository
 import top.wkbin.taixu.harness.AssistantText
+import top.wkbin.taixu.harness.HarnessTool
+import top.wkbin.taixu.harness.ToolCall
+import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import top.wkbin.taixu.harness.session.SessionTreeStore
 
 /**
@@ -141,5 +146,46 @@ class SessionMessageProjectorTest {
         assertEquals(SessionTreeStore.MAX_LIVE_ENTRIES, live.size)
         assertEquals("m25", live.first().id)
         assertEquals(SessionTreeStore.MAX_LIVE_ENTRIES + 25, database.harnessRuntimeDao().listEntries("long").size)
+    }
+
+    @Test
+    fun `history search matches unordered terms across a tool exchange`() = runBlocking {
+        store.append("history", ToolCall(
+            id = "call-install",
+            createdAt = 1L,
+            tool = HarnessTool.BASE,
+            args = buildJsonObject { put("command", "adb install RelayG.apk") },
+        ))
+        store.append("history", ToolResult(
+            id = "result-install",
+            createdAt = 2L,
+            toolCallId = "call-install",
+            success = true,
+            output = "Performing Streamed Install\nSuccess",
+        ))
+
+        val matches = store.search("history", "Success RelayG", limit = 8)
+
+        assertTrue(matches.any { it.id == "call-install" })
+        assertTrue(matches.any { it.id == "result-install" })
+    }
+
+    @Test
+    fun `history read of a tool call also returns its result`() = runBlocking {
+        store.append("read-related", ToolCall(
+            id = "call",
+            createdAt = 1L,
+            tool = HarnessTool.BASE,
+            args = buildJsonObject { put("command", "adb install app.apk") },
+        ))
+        store.append("read-related", ToolResult(
+            id = "result",
+            createdAt = 2L,
+            toolCallId = "call",
+            success = true,
+            output = "Success",
+        ))
+
+        assertEquals(listOf("call", "result"), store.readWithRelated("read-related", messageId = "call").map { it.id })
     }
 }
