@@ -53,4 +53,49 @@ class WorkflowCanvasTransformTest {
         assertTrue(resolved.getValue("new") != Offset.Zero)
         assertEquals(Offset(340f, 120f), resolved.getValue("new"))
     }
+
+    @Test
+    fun `calculateNextNodePosition handles empty, selected, and unselected graphs`() {
+        // Empty graph
+        val emptyPos = WorkflowGraphEditor.calculateNextNodePosition(emptyList())
+        assertEquals(80f to 160f, emptyPos)
+
+        val start = WorkflowNode("start", WorkflowNodeType.TRIGGER, "Start", canvasX = 80f, canvasY = 160f)
+        val done = WorkflowNode("done", WorkflowNodeType.TERMINAL_OUTPUT, "Done", canvasX = 420f, canvasY = 160f)
+        val nodes = listOf(start, done)
+
+        // No selection: placed to the right of the rightmost node
+        val (noSelX, noSelY) = WorkflowGraphEditor.calculateNextNodePosition(nodes, selectedNodeId = null)
+        assertEquals(680f, noSelX)
+        assertEquals(160f, noSelY)
+
+        // Start selected: candidate (340, 160) collides with done at (420, 160), so it cascades down
+        val (selX, selY) = WorkflowGraphEditor.calculateNextNodePosition(nodes, selectedNodeId = "start")
+        assertEquals(340f, selX)
+        assertEquals(300f, selY)
+    }
+
+    @Test
+    fun `fitTransform projects all nodes within viewport after adding new node`() {
+        val viewport = IntSize(1080, 1920)
+        val padding = 110f // 40.dp at 2.75x density
+
+        // Content bounds including newly added node at (680, 160) with NodeWidth 208 and NodeHeight 104
+        val bounds = CanvasContentBounds(
+            minX = 80f * 2.75f,
+            minY = 160f * 2.75f,
+            maxX = (680f + 208f) * 2.75f,
+            maxY = (160f + 104f) * 2.75f,
+        )
+
+        val transform = fitTransform(bounds, viewport, padding, minScale = 0.3f, maxScale = 1.35f)!!
+
+        val projectedMin = Offset(bounds.minX, bounds.minY) * transform.scale + transform.pan
+        val projectedMax = Offset(bounds.maxX, bounds.maxY) * transform.scale + transform.pan
+
+        assertTrue("minX must be >= padding", projectedMin.x >= padding - 1f)
+        assertTrue("maxX must be <= viewport width - padding", projectedMax.x <= viewport.width - padding + 1f)
+        assertTrue("minY must be >= padding", projectedMin.y >= padding - 1f)
+        assertTrue("maxY must be <= viewport height - padding", projectedMax.y <= viewport.height - padding + 1f)
+    }
 }

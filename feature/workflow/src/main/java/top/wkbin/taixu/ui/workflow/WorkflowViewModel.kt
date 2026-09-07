@@ -185,12 +185,16 @@ class WorkflowViewModel @Inject constructor(
     fun addNode(type: WorkflowNodeType) {
         val state = _editorState.value ?: return
         val suffix = UUID.randomUUID().toString().take(8)
+        val (nextX, nextY) = WorkflowGraphEditor.calculateNextNodePosition(
+            existingNodes = state.definition.nodes,
+            selectedNodeId = state.selectedNodeId,
+        )
         val node = WorkflowNode(
             id = "node_$suffix",
             type = type,
             title = type.defaultTitle(),
-            canvasX = 120f + (state.definition.nodes.size % 4) * 260f,
-            canvasY = 120f + (state.definition.nodes.size / 4) * 160f,
+            canvasX = nextX,
+            canvasY = nextY,
             config = type.defaultConfig(),
             failurePolicy = FailurePolicy.ABORT,
         )

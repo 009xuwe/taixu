@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -133,20 +134,13 @@ fun WorkflowCanvas2D(
         if (viewportSize != IntSize.Zero) fitToContent()
     }
 
-    // When a new node is added, pan the viewport so it is visible in the upper-left quadrant.
-    // We track the previous count via a remembered int so that delete does NOT trigger a pan.
+    // When nodes are added, refit the viewport so all nodes (including the new one) remain comfortably visible.
+    // We track the previous count via a remembered int so that delete does NOT trigger an automatic refit.
     var prevNodeCount by remember(definition.id) { mutableStateOf(definition.nodes.size) }
     LaunchedEffect(definition.nodes.size) {
         val currentCount = definition.nodes.size
         if (currentCount > prevNodeCount && viewportSize != IntSize.Zero) {
-            val newest = definition.nodes.lastOrNull()
-            if (newest != null) {
-                val pos = resolvedPositions[newest.id] ?: nodePosition(newest, currentCount - 1, density.density)
-                // Place the new node near the center of the viewport with some top/left margin
-                val targetPanX = viewportSize.width * 0.25f - pos.x * scale
-                val targetPanY = viewportSize.height * 0.25f - pos.y * scale
-                pan = Offset(targetPanX, targetPanY)
-            }
+            fitToContent()
         }
         prevNodeCount = currentCount
     }
@@ -213,46 +207,48 @@ fun WorkflowCanvas2D(
             )
 
             definition.nodes.forEachIndexed { index, node ->
-                val position = positions[node.id]
-                    ?: resolvedPositions[node.id]
-                    ?: nodePosition(node, index, density.density)
-                val run = state?.nodeStates?.get(node.id)
-                WorkflowNodeCard(
-                    node = node,
-                    status = run?.status ?: NodeRunStatus.IDLE,
-                    progress = run?.progressMessage.orEmpty(),
-                    selected = node.id == selectedNodeId,
-                    connecting = node.id == connectionSourceId,
-                    modifier = Modifier
-                        .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
-                        .size(NodeWidth, NodeHeight)
-                        .pointerInput(node.id, editable, scale) {
-                            if (!editable) return@pointerInput
-                            detectDragGestures(
-                                onDragStart = {
-                                    positions[node.id] = position
-                                    onNodeSelected(node.id)
-                                },
-                                onDragEnd = {
-                                    val current = positions[node.id] ?: return@detectDragGestures
-                                    val snapped = Offset(
-                                        (current.x / gridSizePx).roundToInt() * gridSizePx,
-                                        (current.y / gridSizePx).roundToInt() * gridSizePx,
-                                    )
-                                    positions[node.id] = snapped
-                                    onNodeMoved(node.id, snapped.x / density.density, snapped.y / density.density)
-                                },
-                            ) { change, amount ->
-                                change.consume()
-                                positions[node.id] = (positions[node.id] ?: position) + amount / scale
+                key(node.id) {
+                    val position = positions[node.id]
+                        ?: resolvedPositions[node.id]
+                        ?: nodePosition(node, index, density.density)
+                    val run = state?.nodeStates?.get(node.id)
+                    WorkflowNodeCard(
+                        node = node,
+                        status = run?.status ?: NodeRunStatus.IDLE,
+                        progress = run?.progressMessage.orEmpty(),
+                        selected = node.id == selectedNodeId,
+                        connecting = node.id == connectionSourceId,
+                        modifier = Modifier
+                            .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
+                            .size(NodeWidth, NodeHeight)
+                            .pointerInput(node.id, editable, scale) {
+                                if (!editable) return@pointerInput
+                                detectDragGestures(
+                                    onDragStart = {
+                                        positions[node.id] = position
+                                        onNodeSelected(node.id)
+                                    },
+                                    onDragEnd = {
+                                        val current = positions[node.id] ?: return@detectDragGestures
+                                        val snapped = Offset(
+                                            (current.x / gridSizePx).roundToInt() * gridSizePx,
+                                            (current.y / gridSizePx).roundToInt() * gridSizePx,
+                                        )
+                                        positions[node.id] = snapped
+                                        onNodeMoved(node.id, snapped.x / density.density, snapped.y / density.density)
+                                    },
+                                ) { change, amount ->
+                                    change.consume()
+                                    positions[node.id] = (positions[node.id] ?: position) + amount / scale
+                                }
                             }
-                        }
-                        .clickable {
-                            val source = connectionSourceId
-                            if (source != null && source != node.id) onConnectionRequested(source, node.id)
-                            else onNodeSelected(node.id)
-                        },
-                )
+                            .clickable {
+                                val source = connectionSourceId
+                                if (source != null && source != node.id) onConnectionRequested(source, node.id)
+                                else onNodeSelected(node.id)
+                            },
+                    )
+                }
             }
         }
 

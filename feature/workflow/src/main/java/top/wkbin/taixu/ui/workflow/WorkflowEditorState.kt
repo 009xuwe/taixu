@@ -62,6 +62,29 @@ internal class WorkflowEditHistory(
 }
 
 internal object WorkflowGraphEditor {
+    fun calculateNextNodePosition(
+        existingNodes: List<WorkflowNode>,
+        selectedNodeId: String? = null,
+    ): Pair<Float, Float> {
+        if (existingNodes.isEmpty()) return 80f to 160f
+        val selectedNode = existingNodes.firstOrNull { it.id == selectedNodeId }
+        val baseX = selectedNode?.canvasX ?: (existingNodes.maxOfOrNull { it.canvasX } ?: 80f)
+        val baseY = selectedNode?.canvasY ?: (existingNodes.lastOrNull()?.canvasY ?: 160f)
+
+        var targetX = baseX + 260f
+        var targetY = baseY
+
+        fun overlaps(x: Float, y: Float): Boolean = existingNodes.any { node ->
+            kotlin.math.abs(node.canvasX - x) < 220f && kotlin.math.abs(node.canvasY - y) < 120f
+        }
+
+        while (overlaps(targetX, targetY)) {
+            targetY += 140f
+        }
+
+        return targetX to targetY
+    }
+
     fun addNode(definition: WorkflowDefinition, node: WorkflowNode): WorkflowDefinition {
         require(definition.nodes.none { it.id == node.id }) { "节点 ID 已存在" }
         return definition.copy(nodes = definition.nodes + node, updatedAt = System.currentTimeMillis())

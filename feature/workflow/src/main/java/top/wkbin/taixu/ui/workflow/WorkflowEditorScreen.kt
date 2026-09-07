@@ -152,8 +152,8 @@ private fun EditorBottomSheetLayout(
     )
 
     Box(Modifier.fillMaxSize()) {
-        // Canvas always fills the whole area behind the sheet
-        canvas(Modifier.fillMaxSize())
+        // Canvas fills the area with bottom padding for the sheet peek height, so nodes/hints are never obscured
+        canvas(Modifier.fillMaxSize().padding(bottom = SheetPeekHeight))
 
         // Bottom sheet panel
         Surface(
