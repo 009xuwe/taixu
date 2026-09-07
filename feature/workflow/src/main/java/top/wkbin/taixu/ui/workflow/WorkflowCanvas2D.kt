@@ -1,6 +1,7 @@
 package top.wkbin.taixu.ui.workflow
 
 import android.graphics.Paint
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,12 +11,10 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.IconButton
@@ -43,10 +42,10 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -66,7 +65,6 @@ import top.wkbin.taixu.core.model.workflow.WorkflowDefinition
 import top.wkbin.taixu.core.model.workflow.WorkflowNode
 import top.wkbin.taixu.core.model.workflow.WorkflowNodeType
 import top.wkbin.taixu.core.model.workflow.WorkflowRuntimeState
-import top.wkbin.taixu.ui.components.RuntimeCard
 
 private val NodeWidth = 208.dp
 private val NodeHeight = 104.dp
@@ -74,7 +72,12 @@ private val GridSize = 32.dp
 private const val MinScale = 0.30f
 private const val MaxScale = 2.40f
 
-/** Nodes and edges share one world-space layer, guaranteeing identical pan/zoom transforms. */
+/**
+ * 2D 工作流画布。
+ * 使用基于视口的安全投影变换（Viewport Screen-Space Projection）：
+ * 不为整张无限世界分配超大 RenderNode（避免超过移动端 GPU GL_MAX_TEXTURE_SIZE 4096px 导致 HWUI 丢弃图层），
+ * 节点与连线均在视口坐标系内精确计算与布局，手势捕获范围严格契合卡片，支持流畅缩放平移。
+ */
 @Composable
 fun WorkflowCanvas2D(
     definition: WorkflowDefinition,
@@ -99,19 +102,18 @@ fun WorkflowCanvas2D(
             }
         }
     }
-    LaunchedEffect(definition.nodes, density) {
-        positions.keys.retainAll(definition.nodes.mapTo(mutableSetOf()) { it.id })
-        definition.nodes.forEachIndexed { index, node ->
+    // 同步保证 positions 包含当前 definition 中的所有节点（无需等待异步 LaunchedEffect）
+    definition.nodes.forEachIndexed { index, node ->
+        if (!positions.containsKey(node.id)) {
             positions[node.id] = nodePosition(node, index, density.density)
         }
     }
-    // definition changes synchronously, while LaunchedEffect synchronizes the mutable drag map
-    // on the following frame. Resolve a complete render snapshot now so newly added nodes can
-    // never be looked up from an incomplete map.
+    LaunchedEffect(definition.nodes, density) {
+        positions.keys.retainAll(definition.nodes.mapTo(mutableSetOf()) { it.id })
+    }
+
     val resolvedPositions = resolveNodePositions(definition.nodes, positions, density.density)
     val bounds = contentBounds(resolvedPositions.values, nodeWidthPx, nodeHeightPx)
-    val worldWidth = max(2400f, bounds.maxX / density.density + 360f).dp
-    val worldHeight = max(1600f, bounds.maxY / density.density + 280f).dp
 
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     var scale by remember(definition.id) { mutableFloatStateOf(1f) }
@@ -134,8 +136,7 @@ fun WorkflowCanvas2D(
         if (viewportSize != IntSize.Zero) fitToContent()
     }
 
-    // When nodes are added, refit the viewport so all nodes (including the new one) remain comfortably visible.
-    // We track the previous count via a remembered int so that delete does NOT trigger an automatic refit.
+    // 当添加节点时，重新适配视口，确保新加入的节点完整呈现在可视区域中
     var prevNodeCount by remember(definition.id) { mutableStateOf(definition.nodes.size) }
     LaunchedEffect(definition.nodes.size) {
         val currentCount = definition.nodes.size
@@ -167,6 +168,7 @@ fun WorkflowCanvas2D(
                 detectTapGestures(onDoubleTap = { fitToContent() })
             },
     ) {
+        // 背景点阵
         Canvas(Modifier.fillMaxSize()) {
             val spacing = gridSizePx * scale
             if (spacing >= 8f) {
@@ -182,73 +184,85 @@ fun WorkflowCanvas2D(
             }
         }
 
-        // The complete graph is transformed exactly once around the world origin.
-        Box(
-            modifier = Modifier
-                .requiredSize(worldWidth, worldHeight)
-                .graphicsLayer {
-                    transformOrigin = TransformOrigin(0f, 0f)
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = pan.x
-                    translationY = pan.y
-                },
-        ) {
-            WorkflowEdges(
-                definition = definition,
-                state = state,
-                positions = resolvedPositions,
-                nodeWidthPx = nodeWidthPx,
-                nodeHeightPx = nodeHeightPx,
-                labelBackground = labelBackground,
-                labelTextColor = labelTextColor,
-                inactiveColor = inactiveEdgeColor,
-                modifier = Modifier.fillMaxSize(),
-            )
+        // 连线层：在视口屏幕坐标系中渲染，绝无纹理尺寸超限问题
+        WorkflowEdges(
+            definition = definition,
+            state = state,
+            positions = resolvedPositions,
+            scale = scale,
+            pan = pan,
+            nodeWidthPx = nodeWidthPx,
+            nodeHeightPx = nodeHeightPx,
+            labelBackground = labelBackground,
+            labelTextColor = labelTextColor,
+            inactiveColor = inactiveEdgeColor,
+            modifier = Modifier.fillMaxSize(),
+        )
 
-            definition.nodes.forEachIndexed { index, node ->
-                key(node.id) {
-                    val position = positions[node.id]
-                        ?: resolvedPositions[node.id]
-                        ?: nodePosition(node, index, density.density)
-                    val run = state?.nodeStates?.get(node.id)
-                    WorkflowNodeCard(
-                        node = node,
-                        status = run?.status ?: NodeRunStatus.IDLE,
-                        progress = run?.progressMessage.orEmpty(),
-                        selected = node.id == selectedNodeId,
-                        connecting = node.id == connectionSourceId,
-                        modifier = Modifier
-                            .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
-                            .size(NodeWidth, NodeHeight)
-                            .pointerInput(node.id, editable, scale) {
-                                if (!editable) return@pointerInput
-                                detectDragGestures(
-                                    onDragStart = {
-                                        positions[node.id] = position
-                                        onNodeSelected(node.id)
-                                    },
-                                    onDragEnd = {
-                                        val current = positions[node.id] ?: return@detectDragGestures
-                                        val snapped = Offset(
-                                            (current.x / gridSizePx).roundToInt() * gridSizePx,
-                                            (current.y / gridSizePx).roundToInt() * gridSizePx,
-                                        )
-                                        positions[node.id] = snapped
-                                        onNodeMoved(node.id, snapped.x / density.density, snapped.y / density.density)
-                                    },
-                                ) { change, amount ->
-                                    change.consume()
-                                    positions[node.id] = (positions[node.id] ?: position) + amount / scale
+        // 节点层：卡片在视口屏幕坐标系中精确定位与缩放
+        definition.nodes.forEachIndexed { index, node ->
+            key(node.id) {
+                val run = state?.nodeStates?.get(node.id)
+                WorkflowNodeCard(
+                    node = node,
+                    status = run?.status ?: NodeRunStatus.IDLE,
+                    progress = run?.progressMessage.orEmpty(),
+                    selected = node.id == selectedNodeId,
+                    connecting = node.id == connectionSourceId,
+                    modifier = Modifier
+                        .offset {
+                            val worldPos = positions[node.id]
+                                ?: resolvedPositions[node.id]
+                                ?: nodePosition(node, index, density.density)
+                            val screenPos = worldPos * scale + pan
+                            IntOffset(screenPos.x.roundToInt(), screenPos.y.roundToInt())
+                        }
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            layout(
+                                (placeable.width * scale).roundToInt(),
+                                (placeable.height * scale).roundToInt(),
+                            ) {
+                                placeable.placeRelativeWithLayer(0, 0) {
+                                    scaleX = scale
+                                    scaleY = scale
+                                    transformOrigin = TransformOrigin(0f, 0f)
                                 }
                             }
-                            .clickable {
-                                val source = connectionSourceId
-                                if (source != null && source != node.id) onConnectionRequested(source, node.id)
-                                else onNodeSelected(node.id)
-                            },
-                    )
-                }
+                        }
+                        .pointerInput(node.id, editable, scale) {
+                            if (!editable) return@pointerInput
+                            detectDragGestures(
+                                onDragStart = {
+                                    val current = positions[node.id]
+                                        ?: resolvedPositions[node.id]
+                                        ?: nodePosition(node, index, density.density)
+                                    positions[node.id] = current
+                                    onNodeSelected(node.id)
+                                },
+                                onDragEnd = {
+                                    val current = positions[node.id] ?: return@detectDragGestures
+                                    val snapped = Offset(
+                                        (current.x / gridSizePx).roundToInt() * gridSizePx,
+                                        (current.y / gridSizePx).roundToInt() * gridSizePx,
+                                    )
+                                    positions[node.id] = snapped
+                                    onNodeMoved(node.id, snapped.x / density.density, snapped.y / density.density)
+                                },
+                            ) { change, amount ->
+                                change.consume()
+                                val current = positions[node.id]
+                                    ?: resolvedPositions[node.id]
+                                    ?: nodePosition(node, index, density.density)
+                                positions[node.id] = current + amount / scale
+                            }
+                        }
+                        .clickable {
+                            val source = connectionSourceId
+                            if (source != null && source != node.id) onConnectionRequested(source, node.id)
+                            else onNodeSelected(node.id)
+                        },
+                )
             }
         }
 
@@ -274,38 +288,48 @@ private fun WorkflowEdges(
     definition: WorkflowDefinition,
     state: WorkflowRuntimeState?,
     positions: Map<String, Offset>,
+    scale: Float,
+    pan: Offset,
     nodeWidthPx: Float,
     nodeHeightPx: Float,
     labelBackground: Color,
     labelTextColor: Color,
     inactiveColor: Color,
-    modifier: Modifier,
+    modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val labelPaint = remember(labelTextColor, density) {
+    val labelPaint = remember(labelTextColor, density, scale) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = labelTextColor.toArgb()
-            textSize = with(density) { 12.dp.toPx() }
+            textSize = with(density) { (11.dp.toPx() * scale).coerceIn(8.dp.toPx(), 14.dp.toPx()) }
             textAlign = Paint.Align.CENTER
         }
     }
     val statusColors = NodeRunStatus.entries.associateWith { statusColor(it) }
+
     Canvas(modifier) {
         definition.edges.forEach { edge ->
-            val source = positions[edge.fromNodeId] ?: return@forEach
-            val target = positions[edge.toNodeId] ?: return@forEach
-            val sourceCenter = source + Offset(nodeWidthPx / 2f, nodeHeightPx / 2f)
-            val targetCenter = target + Offset(nodeWidthPx / 2f, nodeHeightPx / 2f)
-            val delta = targetCenter - sourceCenter
-            val distance = sqrt(delta.x * delta.x + delta.y * delta.y)
-            if (distance < 1f) return@forEach
-            val direction = delta / distance
-            val start = rectangleEdge(sourceCenter, direction, nodeWidthPx, nodeHeightPx)
-            val end = rectangleEdge(targetCenter, -direction, nodeWidthPx, nodeHeightPx)
-            val bend = max(abs(end.x - start.x) * 0.42f, 56.dp.toPx())
-            val directionSign = if (end.x >= start.x) 1f else -1f
-            val control1 = Offset(start.x + bend * directionSign, start.y)
-            val control2 = Offset(end.x - bend * directionSign, end.y)
+            val sourceWorld = positions[edge.fromNodeId] ?: return@forEach
+            val targetWorld = positions[edge.toNodeId] ?: return@forEach
+            val sourceCenterWorld = sourceWorld + Offset(nodeWidthPx / 2f, nodeHeightPx / 2f)
+            val targetCenterWorld = targetWorld + Offset(nodeWidthPx / 2f, nodeHeightPx / 2f)
+            val deltaWorld = targetCenterWorld - sourceCenterWorld
+            val distanceWorld = sqrt(deltaWorld.x * deltaWorld.x + deltaWorld.y * deltaWorld.y)
+            if (distanceWorld < 1f) return@forEach
+            val direction = deltaWorld / distanceWorld
+            val startWorld = rectangleEdge(sourceCenterWorld, direction, nodeWidthPx, nodeHeightPx)
+            val endWorld = rectangleEdge(targetCenterWorld, -direction, nodeWidthPx, nodeHeightPx)
+            val bendWorld = max(abs(endWorld.x - startWorld.x) * 0.42f, 56.dp.toPx())
+            val directionSign = if (endWorld.x >= startWorld.x) 1f else -1f
+            val control1World = Offset(startWorld.x + bendWorld * directionSign, startWorld.y)
+            val control2World = Offset(endWorld.x - bendWorld * directionSign, endWorld.y)
+
+            // 投影至屏幕视口坐标
+            val start = startWorld * scale + pan
+            val end = endWorld * scale + pan
+            val control1 = control1World * scale + pan
+            val control2 = control2World * scale + pan
+
             val path = Path().apply {
                 moveTo(start.x, start.y)
                 cubicTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y)
@@ -314,16 +338,17 @@ private fun WorkflowEdges(
             val sourceStatus = state?.nodeStates?.get(edge.fromNodeId)?.status ?: NodeRunStatus.IDLE
             val active = sourceStatus in setOf(NodeRunStatus.RUNNING, NodeRunStatus.STREAMING, NodeRunStatus.WAITING_APPROVAL, NodeRunStatus.SUCCESS)
             val color = if (active) (statusColors[sourceStatus] ?: inactiveColor) else inactiveColor
-            val dash = if (active) null else PathEffect.dashPathEffect(floatArrayOf(10.dp.toPx(), 7.dp.toPx()))
+            val dash = if (active) null else PathEffect.dashPathEffect(floatArrayOf(10.dp.toPx() * scale.coerceIn(0.6f, 1.4f), 7.dp.toPx() * scale.coerceIn(0.6f, 1.4f)))
+            val strokeWidth = (2.4.dp.toPx() * scale).coerceIn(1.6f, 3.2f)
 
-            drawPath(path, Color.Black.copy(alpha = 0.12f), style = Stroke(4.5.dp.toPx(), cap = StrokeCap.Round, pathEffect = dash))
-            drawPath(path, color, style = Stroke(2.4.dp.toPx(), cap = StrokeCap.Round, pathEffect = dash))
-            drawCircle(color, radius = 4.5.dp.toPx(), center = start)
-            drawCircle(labelBackground, radius = 5.5.dp.toPx(), center = end)
-            drawCircle(color, radius = 4.2.dp.toPx(), center = end)
+            drawPath(path, Color.Black.copy(alpha = 0.12f), style = Stroke(strokeWidth + 2f, cap = StrokeCap.Round, pathEffect = dash))
+            drawPath(path, color, style = Stroke(strokeWidth, cap = StrokeCap.Round, pathEffect = dash))
+            drawCircle(color, radius = (4.5.dp.toPx() * scale).coerceIn(3f, 6f), center = start)
+            drawCircle(labelBackground, radius = (5.5.dp.toPx() * scale).coerceIn(4f, 7.5f), center = end)
+            drawCircle(color, radius = (4.2.dp.toPx() * scale).coerceIn(2.8f, 5.5f), center = end)
 
             val endAngle = atan2(end.y - control2.y, end.x - control2.x)
-            val arrowSize = 9.dp.toPx()
+            val arrowSize = (9.dp.toPx() * scale).coerceIn(6f, 12f)
             val arrow = Path().apply {
                 moveTo(end.x, end.y)
                 lineTo(end.x - arrowSize * cos(endAngle - 0.48f), end.y - arrowSize * sin(endAngle - 0.48f))
@@ -334,8 +359,8 @@ private fun WorkflowEdges(
 
             edgeLabel(edge.fromPort, edge.conditionExpression)?.let { label ->
                 val midpoint = cubicPoint(start, control1, control2, end, 0.5f)
-                val width = labelPaint.measureText(label) + 16.dp.toPx()
-                val height = 24.dp.toPx()
+                val width = labelPaint.measureText(label) + 14.dp.toPx() * scale.coerceIn(0.7f, 1.2f)
+                val height = 22.dp.toPx() * scale.coerceIn(0.7f, 1.2f)
                 drawRoundRect(
                     color = labelBackground.copy(alpha = 0.96f),
                     topLeft = Offset(midpoint.x - width / 2f, midpoint.y - height / 2f),
@@ -353,6 +378,10 @@ private fun WorkflowEdges(
     }
 }
 
+/**
+ * 节点卡片：采用原生 Material 3 Surface 实体呈现，高对比度容器背景与阴影，
+ * 彻底消除背景流光折射失效导致的透明不可见问题。
+ */
 @Composable
 private fun WorkflowNodeCard(
     node: WorkflowNode,
@@ -360,21 +389,37 @@ private fun WorkflowNodeCard(
     progress: String,
     selected: Boolean,
     connecting: Boolean,
-    modifier: Modifier,
+    modifier: Modifier = Modifier,
 ) {
     val color = statusColor(status)
-    RuntimeCard(
-        modifier = modifier,
-        borderColor = when {
-            connecting -> MaterialTheme.colorScheme.tertiary
-            selected -> MaterialTheme.colorScheme.primary
-            else -> color.copy(alpha = if (status == NodeRunStatus.IDLE) 0.34f else 0.82f)
-        },
-        contentPadding = PaddingValues(14.dp),
+    val borderColor = when {
+        connecting -> MaterialTheme.colorScheme.tertiary
+        selected -> MaterialTheme.colorScheme.primary
+        else -> color.copy(alpha = if (status == NodeRunStatus.IDLE) 0.38f else 0.85f)
+    }
+    val borderWidth = if (selected || connecting) 2.dp else 1.dp
+    val shape = RoundedCornerShape(16.dp)
+
+    Surface(
+        modifier = modifier.size(NodeWidth, NodeHeight),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(borderWidth, borderColor),
+        tonalElevation = if (selected) 6.dp else 2.dp,
+        shadowElevation = if (selected) 4.dp else 1.dp,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Surface(color = color.copy(alpha = 0.14f), shape = RoundedCornerShape(50)) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Surface(
+                    color = color.copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(50),
+                ) {
                     Text(
                         text = node.type.displayName(),
                         style = MaterialTheme.typography.labelSmall,
@@ -383,9 +428,20 @@ private fun WorkflowNodeCard(
                         maxLines = 1,
                     )
                 }
-                Text(statusLabel(status), style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
+                Text(
+                    text = statusLabel(status),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = color,
+                    maxLines = 1,
+                )
             }
-            Text(node.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = node.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Text(
                 text = progress.ifBlank { node.description.ifBlank { node.id } },
                 style = MaterialTheme.typography.labelSmall,
@@ -498,6 +554,15 @@ internal fun resolveNodePositions(
     node.id to (current[node.id] ?: nodePosition(node, index, density))
 }.toMap()
 
-private fun WorkflowNodeType.displayName(): String = name.lowercase().split('_').joinToString(" ") {
-    it.replaceFirstChar(Char::uppercase)
+private fun WorkflowNodeType.displayName(): String = when (this) {
+    WorkflowNodeType.TRIGGER -> "触发器"
+    WorkflowNodeType.BASH_COMMAND -> "命令"
+    WorkflowNodeType.PROCESS_SERVICE -> "后台服务"
+    WorkflowNodeType.AGENT_INFERENCE -> "智能体推理"
+    WorkflowNodeType.SUBAGENT_DELEGATE -> "子智能体"
+    WorkflowNodeType.TAIXU_BUILD -> "太墟构建"
+    WorkflowNodeType.CONDITION_BRANCH -> "条件分支"
+    WorkflowNodeType.HUMAN_APPROVAL -> "人工审批"
+    WorkflowNodeType.HOST_ACTION -> "宿主动作"
+    WorkflowNodeType.TERMINAL_OUTPUT -> "输出"
 }
