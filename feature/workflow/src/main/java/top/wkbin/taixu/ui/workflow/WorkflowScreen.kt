@@ -105,6 +105,14 @@ fun WorkflowScreen(
         when {
             editorState != null -> WorkflowEditorView(
                 state = editorState!!,
+                activeRunState = activeState,
+                onRun = {
+                    if (editorState!!.isDirty) {
+                        viewModel.saveEditor()
+                    }
+                    pendingRun = editorState!!.definition
+                },
+                onCancelRun = viewModel::cancel,
                 onSelectNode = viewModel::selectNode,
                 onMoveNode = viewModel::moveNode,
                 onBeginConnection = viewModel::beginConnection,
