@@ -253,4 +253,47 @@ class HarnessRuntimeRepositoryIntegrationTest {
         repository.deleteSessionData(sessionId)
         assertTrue(repository.listEntries(sessionId).isEmpty())
     }
+
+    @Test
+    fun `duplicate entry id does not throw UNIQUE constraint exception and safely resolves unique id`() = runBlocking {
+        val sessionId = "session-duplicate-id-test"
+        repository.ensureLane(sessionId, "main")
+
+        // 第一次追加 ID 为 "call_0" 的 entry
+        val entry1 = entry("call_0", sessionId, null).copy(payloadJson = "{\"call\":\"first\"}")
+        repository.appendToLane(sessionId, "main", entry1)
+
+        val laneAfterFirst = repository.findLane(sessionId, "main")!!
+        assertEquals("call_0", laneAfterFirst.leafId)
+
+        // 模拟另一轮再次生成同名 ID "call_0"，内容不同
+        val entry2 = entry("call_0", sessionId, laneAfterFirst.leafId).copy(payloadJson = "{\"call\":\"second\"}")
+        repository.appendToLane(sessionId, "main", entry2)
+
+        val laneAfterSecond = repository.findLane(sessionId, "main")!!
+        assertTrue("Second entry must have acquired a unique suffix", laneAfterSecond.leafId!!.startsWith("call_0_"))
+
+        // 两条记录均成功安全落库，树链接不断裂
+        val entries = repository.listEntries(sessionId)
+        assertEquals(2, entries.size)
+        assertEquals("call_0", entries[0].id)
+        assertEquals(laneAfterSecond.leafId, entries[1].id)
+        assertEquals("call_0", entries[1].parentId)
+    }
+
+    @Test
+    fun `idempotent identical entry write safely preserves single entry without crash`() = runBlocking {
+        val sessionId = "session-idempotent-test"
+        repository.ensureLane(sessionId, "main")
+
+        val entry = entry("idempotent_1", sessionId, null).copy(payloadJson = "{\"text\":\"hello\"}")
+        repository.appendToLane(sessionId, "main", entry)
+
+        // 重复插入完全相同的 entry（如恢复重试场景）
+        repository.appendToLane(sessionId, "main", entry)
+
+        val entries = repository.listEntries(sessionId)
+        assertEquals(1, entries.size)
+        assertEquals("idempotent_1", entries.first().id)
+    }
 }

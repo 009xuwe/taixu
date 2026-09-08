@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.rootfs
+package top.wkbin.taixu.runtime.rootfs
 
 import top.wkbin.taixu.runtime.ElfInspector
 import top.wkbin.taixu.runtime.ElfInspectorTest
@@ -22,6 +22,26 @@ class RootfsValidatorTest {
         assertEquals("/usr/bin/bash", validation.bashPath)
         assertEquals("/bin/sh", validation.posixShellPath)
         assertEquals("/lib/ld-linux-aarch64.so.1", validation.interpreterPath)
+    }
+
+    @Test
+    fun validatesPosixShellFallbackWhenBashIsMissing() {
+        val rootfs = temporaryFolder.newFolder("rootfs-alpine")
+        File(rootfs, "etc").mkdirs()
+        File(rootfs, "etc/os-release").writeText("ID=alpine\n")
+        File(rootfs, "bin").mkdirs()
+        File(rootfs, "lib").mkdirs()
+        ElfInspectorTest.writeElf(
+            File(rootfs, "bin/sh"),
+            interpreter = "/lib/ld-musl-aarch64.so.1",
+        )
+        ElfInspectorTest.writeElf(File(rootfs, "lib/ld-musl-aarch64.so.1"))
+
+        val validation = RootfsValidator(ElfInspector()).validate(rootfs)
+
+        assertEquals("/bin/sh", validation.bashPath)
+        assertEquals("/bin/sh", validation.posixShellPath)
+        assertEquals("/lib/ld-musl-aarch64.so.1", validation.interpreterPath)
     }
 
     @Test

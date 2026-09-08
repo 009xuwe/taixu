@@ -14,8 +14,6 @@ object ContextWindowPolicy {
     private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
     private const val MIN_SYSTEM_PROMPT_TOKENS = 512
     private const val APPROX_CHARS_PER_TOKEN = 4
-    /** Detailed provider history is bounded by user turns even on very large-context models. */
-    const val MAX_DETAILED_USER_TURNS = 24
 
     /**
      * Compaction threshold (in characters) per tool type. `read`/`base` commonly
@@ -111,11 +109,7 @@ object ContextWindowPolicy {
         return (cjk / 1.8f + ascii / 2.5f + punctuation / 2.8f).toInt().coerceAtLeast(1)
     }
 
-    /**
-     * Estimate the payload after the same historical folding used by [HarnessLoop].
-     * The transcript remains complete for the user, while this value represents the
-     * next request's effective context and therefore must not sum the raw transcript.
-     */
+    /** Estimate the payload after the same token-budget compaction used by [HarnessLoop]. */
     fun estimateEffectiveUsage(
         messages: List<HarnessMessage>,
         budget: Int,
@@ -128,7 +122,7 @@ object ContextWindowPolicy {
             0
         }
         var conversationTokens = if (keepFrom > 0) {
-            minOf(600, keepFrom * 30)
+            estimateTokens(buildHistorySummary(messages.take(keepFrom)))
         } else {
             0
         }
@@ -161,14 +155,13 @@ object ContextWindowPolicy {
 
     fun computeKeepFromIndex(messages: List<HarnessMessage>, budget: Int, systemTokens: Int): Int {
         if (messages.size <= 1) return 0
-        val roundBoundary = recentTurnKeepFromIndex(messages)
         if (budget <= 0) {
-            return alignKeepFromIndex(messages, maxOf(roundBoundary, minimalKeepFromIndex(messages)))
+            return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
         val limit = (budget * INPUT_BUDGET_FRACTION).toInt() -
             systemTokens - RESERVED_OUTPUT_TOKENS - TOOL_SCHEMA_RESERVE_TOKENS
         if (limit <= 0) {
-            return alignKeepFromIndex(messages, maxOf(roundBoundary, minimalKeepFromIndex(messages)))
+            return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
         var used = 0
         for (index in messages.indices.reversed()) {
@@ -182,21 +175,9 @@ object ContextWindowPolicy {
             }
             if (used + tokens > limit) {
                 val tokenBoundary = alignKeepFromIndex(messages, (index + 1).coerceIn(0, messages.lastIndex))
-                return alignKeepFromIndex(messages, maxOf(roundBoundary, tokenBoundary))
+                return tokenBoundary
             }
             used += tokens
-        }
-        return alignKeepFromIndex(messages, roundBoundary)
-    }
-
-    /** Keep complete detail starting at the oldest of the newest N user turns. */
-    private fun recentTurnKeepFromIndex(messages: List<HarnessMessage>): Int {
-        var remaining = MAX_DETAILED_USER_TURNS
-        for (index in messages.indices.reversed()) {
-            if (messages[index] is UserMessage) {
-                remaining--
-                if (remaining == 0) return index
-            }
         }
         return 0
     }
@@ -252,9 +233,6 @@ object ContextWindowPolicy {
         return boundary
     }
 
-    fun foldMessageText(role: String, text: String): String =
-        "[早期历史已折叠·$role] ${text.take(80).replace('\n', ' ')}…（内容过长，已省略，请依据最近轮次继续）"
-
     /**
      * Generated image bytes stay in the persisted transcript for UI rendering, but must never be
      * counted as language tokens or echoed into a subsequent provider request.
@@ -305,9 +283,9 @@ object ContextWindowPolicy {
         if (messages.isEmpty()) return ""
         val firstRequest = messages.filterIsInstance<UserMessage>().firstOrNull()?.text
             ?.replace('\n', ' ')?.take(240)
-        val recentRequests = messages.filterIsInstance<UserMessage>().takeLast(3)
-            .map { it.text.replace('\n', ' ').take(160) }
-        val toolStates = messages.filterIsInstance<ToolResult>().takeLast(8).map { result ->
+        val recentRequests = messages.filterIsInstance<UserMessage>().takeLast(8)
+            .map { it.text.replace('\n', ' ').take(320) }
+        val toolStates = messages.filterIsInstance<ToolResult>().takeLast(24).map { result ->
             val name = toolCallDetails[result.toolCallId]?.first ?: "tool"
             val args = toolCallDetails[result.toolCallId]?.second
             val output = if (result.output.length > compactThresholdFor(name)) {
@@ -318,11 +296,11 @@ object ContextWindowPolicy {
             val command = args?.get("command")?.jsonPrimitive?.contentOrNull
                 ?: args?.get("path")?.jsonPrimitive?.contentOrNull
             "$name:${if (result.success) "成功" else "失败"} " +
-                command.orEmpty().take(180) + " " + output.replace('\n', ' ').take(360)
+                command.orEmpty().take(480) + " " + output.replace('\n', ' ').take(720)
         }
         val lastAssistant = messages.filterIsInstance<AssistantText>().lastOrNull()?.text
             ?.let(::assistantTextForContext)
-            ?.replace('\n', ' ')?.take(240)
+            ?.replace('\n', ' ')?.take(600)
         val textMessages = messages.mapNotNull {
             when (it) {
                 is UserMessage -> it.text
@@ -337,7 +315,7 @@ object ContextWindowPolicy {
             .filter { it.isNotBlank() }
             .distinct()
             .toList()
-            .takeLast(8)
+            .takeLast(16)
         val decisions = textMessages.asSequence()
             .flatMap { it.lineSequence() }
             .filter { line -> DECISION_MARKERS.any { marker -> line.contains(marker, ignoreCase = true) } }
@@ -345,28 +323,28 @@ object ContextWindowPolicy {
             .filter { it.isNotBlank() }
             .distinct()
             .toList()
-            .takeLast(8)
+            .takeLast(16)
         val files = textMessages.asSequence()
             .flatMap { text -> FILE_PATH_REGEX.findAll(text.take(4000)).map { it.value.take(180) } }
             .distinct()
             .toList()
-            .takeLast(12)
+            .takeLast(24)
         val failures = messages.filterIsInstance<ToolResult>().filter { !it.success }
-            .takeLast(6)
-            .map { it.output.replace('\n', ' ').take(220) }
-        val unresolved = recentRequests.takeLast(2)
+            .takeLast(12)
+            .map { it.output.replace('\n', ' ').take(480) }
+        val unresolved = recentRequests.takeLast(4)
         return buildString {
             appendLine("[早期历史摘要，共折叠 ${messages.size} 条消息]")
             firstRequest?.takeIf { it.isNotBlank() }?.let { appendLine("初始目标：$it") }
+            if (toolStates.isNotEmpty()) appendLine("关键工具状态（新→旧）：${toolStates.asReversed().joinToString(" | ")}")
+            if (failures.isNotEmpty()) appendLine("失败根因线索（新→旧）：${failures.asReversed().joinToString(" | ")}")
             if (constraints.isNotEmpty()) appendLine("用户硬约束：${constraints.joinToString(" | ")}")
             if (decisions.isNotEmpty()) appendLine("关键决定：${decisions.joinToString(" | ")}")
             if (files.isNotEmpty()) appendLine("涉及文件：${files.joinToString(" | ")}")
-            if (recentRequests.isNotEmpty()) appendLine("近期用户要求：${recentRequests.joinToString(" | ")}")
-            if (toolStates.isNotEmpty()) appendLine("关键工具状态：${toolStates.joinToString(" | ")}")
-            if (failures.isNotEmpty()) appendLine("失败根因线索：${failures.joinToString(" | ")}")
+            if (recentRequests.isNotEmpty()) appendLine("近期用户要求（新→旧）：${recentRequests.asReversed().joinToString(" | ")}")
             if (unresolved.isNotEmpty()) appendLine("未解决事项：${unresolved.joinToString(" | ")}")
             lastAssistant?.takeIf { it.isNotBlank() }?.let { append("最近阶段结论：$it") }
-        }.take(2_400)
+        }.take(MAX_INCREMENTAL_SUMMARY_CHARS)
     }
 
     /**
@@ -416,6 +394,7 @@ object ContextWindowPolicy {
     private val CONSTRAINT_MARKERS = listOf("必须", "不得", "禁止", "不能", "严禁", "要求", "must", "never", "should not")
     private val DECISION_MARKERS = listOf("决定", "采用", "改为", "选择", "方案", "decision", "use", "采用")
     private val WHITESPACE_REGEX = Regex("\\s+")
+    private const val MAX_INCREMENTAL_SUMMARY_CHARS = 8_000
     private val FILE_PATH_REGEX = Regex("(?:/workspace|/sdcard|[A-Za-z]:[\\\\/])[^\\s,，。；;，)\\]]+")
 }
 

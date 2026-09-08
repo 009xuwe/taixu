@@ -1260,22 +1260,11 @@ class HarnessLoop @Inject constructor(
                 } +
                 message.imageUrls.size * ESTIMATED_IMAGE_TOKENS
         }
-        // Context and prompt remain immutable during network retries. 但在第一次发送前先做一次预检：
-        // 超大上下文主动按 64k 预算再压缩，避免把 80k~100k 请求反复推给首包延迟较高的兼容网关。
-        var requestMessages = assembleFor(model)
+        // Context and prompt remain immutable during network retries. The configured model
+        // window is authoritative: a transport heuristic must never persistently compact a
+        // valid 128k/200k conversation down to 64k.
+        val requestMessages = assembleFor(model)
         val originalEstimatedTokens = estimateTokens(requestMessages)
-        if (originalEstimatedTokens >= LARGE_REQUEST_TOKEN_THRESHOLD) {
-            val compactedModel = model.copy(
-                contextTokens = model.contextTokens?.coerceAtMost(LARGE_REQUEST_CONTEXT_BUDGET)
-                    ?: LARGE_REQUEST_CONTEXT_BUDGET,
-            )
-            requestMessages = assembleFor(compactedModel)
-            agentEventLogger.log(
-                sessId,
-                "LargeContextCompaction",
-                "发送前上下文压缩：约 $originalEstimatedTokens → ${estimateTokens(requestMessages)} tokens",
-            )
-        }
         val estimatedRequestTokens = estimateTokens(requestMessages)
         val maxNetworkRetries = maxNetworkRetriesFor(originalEstimatedTokens, retryPolicy.maxRetries)
         val maxAttempts = maxNetworkRetries + 1
@@ -1473,10 +1462,11 @@ class HarnessLoop @Inject constructor(
         rawToolName: String?,
         output: String,
     ) {
+        val toolCallId = ToolCallIdNormalizer.normalize(spec.id)
         messageProjector.append(
             sessId,
             ToolCall(
-                id = spec.id,
+                id = toolCallId,
                 createdAt = now(),
                 tool = tool,
                 args = args,
@@ -1489,7 +1479,7 @@ class HarnessLoop @Inject constructor(
             ToolResult(
                 id = newId(),
                 createdAt = now(),
-                toolCallId = spec.id,
+                toolCallId = toolCallId,
                 success = false,
                 output = output,
             ),
@@ -1629,9 +1619,9 @@ class HarnessLoop @Inject constructor(
         ) { item, pause ->
             if (pause.isAborted()) return@dispatch
             val toolCall = ToolCall(
-                // Preserve the provider protocol id across execution, approval,
-                // persistence and the subsequent tool result.
-                id = item.spec.id,
+                // Preserve the provider protocol id prefix with a unique suffix across
+                // execution, approval, persistence and the subsequent tool result.
+                id = ToolCallIdNormalizer.normalize(item.spec.id),
                 createdAt = now(),
                 tool = item.tool,
                 args = item.args,
@@ -1972,7 +1962,6 @@ class HarnessLoop @Inject constructor(
             .map { HarnessApiMapper.apiName(it) }
             .toSet() + "subagent"
         private const val LARGE_REQUEST_TOKEN_THRESHOLD = 64_000
-        private const val LARGE_REQUEST_CONTEXT_BUDGET = 64_000
         private const val LARGE_REQUEST_MAX_RETRIES = 1
         private const val ESTIMATED_IMAGE_TOKENS = 1_000
 

@@ -88,6 +88,24 @@ class ApprovalPolicyEngineTest {
     }
 
     @Test
+    fun `assisted mode auto allows host GUI observe and touch primitives`() {
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_observe"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_capture", "path" to "/tmp/a.png"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_click", "x" to "1", "y" to "2"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_swipe", "x1" to "1", "y1" to "2", "x2" to "3", "y2" to "4"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_input_text", "text" to "hi"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_key", "key" to "back"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "app_launch", "package" to "com.tencent.mobileqq"), workspace).required)
+    }
+
+    @Test
+    fun `request mode still gates host GUI touch actions`() {
+        assertFalse(policy.decide(ApprovalMode.REQUEST, HarnessTool.HOST, args("action" to "screen_observe"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.REQUEST, HarnessTool.HOST, args("action" to "screen_click", "x" to "1", "y" to "2"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.REQUEST, HarnessTool.HOST, args("action" to "app_launch", "package" to "com.android.settings"), workspace).required)
+    }
+
+    @Test
     fun `create request binds operation args hash and expiry`() {
         val toolCall = ToolCall(
             id = "call-1",

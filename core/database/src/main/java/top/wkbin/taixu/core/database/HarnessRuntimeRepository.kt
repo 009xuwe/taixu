@@ -112,13 +112,35 @@ class RoomHarnessRuntimeRepository @Inject constructor(
         }.orEmpty()
     override suspend fun branchEntryAt(sessionId: String, leafId: String?, index: Int): HarnessEntryEntity? =
         leafId?.let { dao.branchEntryAt(sessionId, it, index)?.let(::restoreFromStorage) }
+    private suspend fun ensureUniqueStorageEntry(entry: HarnessEntryEntity): HarnessEntryEntity {
+        var candidate = entry
+        repeat(8) {
+            val existing = dao.findEntry(candidate.id) ?: return candidate
+            if (existing.sessionId == entry.sessionId && existing.payloadJson == entry.payloadJson) {
+                return entry
+            }
+            val randomSuffix = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+            candidate = entry.copy(id = "${entry.id}_$randomSuffix")
+        }
+        val fallback = java.util.UUID.randomUUID().toString().replace("-", "")
+        return entry.copy(id = "${entry.id}_$fallback")
+    }
+
     override suspend fun findEntry(sessionId: String, entryId: String): HarnessEntryEntity? =
         dao.findEntry(entryId)?.takeIf { it.sessionId == sessionId }?.let(::restoreFromStorage)
 
     override suspend fun appendToLane(sessionId: String, laneName: String, entry: HarnessEntryEntity) {
         val lane = ensureLane(sessionId, laneName)
+        if (lane.leafId == entry.id) {
+            val existing = dao.findEntry(entry.id)
+            if (existing != null && existing.sessionId == sessionId && existing.payloadJson == entry.payloadJson) {
+                return
+            }
+        }
         require(entry.sessionId == sessionId && entry.parentId == lane.leafId) { "Entry parent does not match lane leaf" }
-        dao.appendEntry(sanitizeForStorage(entry), lane.copy(leafId = entry.id, updatedAt = System.currentTimeMillis()))
+        val uniqueEntry = ensureUniqueStorageEntry(entry)
+        val sanitized = sanitizeForStorage(uniqueEntry)
+        dao.appendEntry(sanitized, lane.copy(leafId = uniqueEntry.id, updatedAt = System.currentTimeMillis()))
     }
 
     override suspend fun moveLane(sessionId: String, laneName: String, leafId: String?) {
@@ -134,15 +156,42 @@ class RoomHarnessRuntimeRepository @Inject constructor(
 
     override suspend fun findOperation(operationId: String) = dao.findOperation(operationId)
     override suspend fun listActiveOperations(sessionId: String) = dao.listActiveOperations(sessionId)
-    override suspend fun acceptOperation(entry: HarnessEntryEntity, lane: HarnessLaneEntity, operation: HarnessOperationEntity) =
-        dao.acceptOperation(sanitizeForStorage(entry), lane, operation)
-    override suspend fun acceptQueuedOperation(queueItemId: String, entry: HarnessEntryEntity, lane: HarnessLaneEntity, operation: HarnessOperationEntity) =
-        dao.acceptQueuedOperation(queueItemId, sanitizeForStorage(entry), lane, operation)
+    override suspend fun acceptOperation(entry: HarnessEntryEntity, lane: HarnessLaneEntity, operation: HarnessOperationEntity) {
+        val uniqueEntry = ensureUniqueStorageEntry(entry)
+        val sanitized = sanitizeForStorage(uniqueEntry)
+        val updatedLane = if (lane.leafId == entry.id && uniqueEntry.id != entry.id) {
+            lane.copy(leafId = uniqueEntry.id)
+        } else {
+            lane
+        }
+        dao.acceptOperation(sanitized, updatedLane, operation)
+    }
+
+    override suspend fun acceptQueuedOperation(queueItemId: String, entry: HarnessEntryEntity, lane: HarnessLaneEntity, operation: HarnessOperationEntity) {
+        val uniqueEntry = ensureUniqueStorageEntry(entry)
+        val sanitized = sanitizeForStorage(uniqueEntry)
+        val updatedLane = if (lane.leafId == entry.id && uniqueEntry.id != entry.id) {
+            lane.copy(leafId = uniqueEntry.id)
+        } else {
+            lane
+        }
+        dao.acceptQueuedOperation(queueItemId, sanitized, updatedLane, operation)
+    }
+
     override suspend fun beginOperation(lane: HarnessLaneEntity, operation: HarnessOperationEntity) =
         dao.beginOperation(lane, operation)
     override suspend fun saveOperation(operation: HarnessOperationEntity) = dao.upsertOperation(operation)
-    override suspend fun settleEffect(entry: HarnessEntryEntity?, usage: HarnessUsageEntity?, operation: HarnessOperationEntity, lane: HarnessLaneEntity) =
-        dao.settleEffect(entry?.let(::sanitizeForStorage), usage, operation, lane)
+    override suspend fun settleEffect(entry: HarnessEntryEntity?, usage: HarnessUsageEntity?, operation: HarnessOperationEntity, lane: HarnessLaneEntity) {
+        val uniqueEntry = entry?.let { ensureUniqueStorageEntry(it) }
+        val sanitized = uniqueEntry?.let(::sanitizeForStorage)
+        val updatedLane = if (entry != null && lane.leafId == entry.id && uniqueEntry != null && uniqueEntry.id != entry.id) {
+            lane.copy(leafId = uniqueEntry.id)
+        } else {
+            lane
+        }
+        dao.settleEffect(sanitized, usage, operation, updatedLane)
+    }
+
     override suspend fun finishOperation(result: HarnessLaneResultEntity, lane: HarnessLaneEntity) =
         dao.finishOperation(result, lane)
     override suspend fun enqueue(item: HarnessQueueItemEntity) = dao.insertQueueItem(item)
@@ -153,8 +202,16 @@ class RoomHarnessRuntimeRepository @Inject constructor(
     override suspend fun cancelQueued(itemId: String) = dao.deleteQueueItem(itemId)
     override suspend fun clearQueue(sessionId: String, laneName: String, queueType: String) =
         dao.clearQueue(sessionId, laneName, queueType)
-    override suspend fun consumeQueued(itemId: String, entry: HarnessEntryEntity, lane: HarnessLaneEntity) =
-        dao.consumeQueueItem(itemId, sanitizeForStorage(entry), lane)
+    override suspend fun consumeQueued(itemId: String, entry: HarnessEntryEntity, lane: HarnessLaneEntity) {
+        val uniqueEntry = ensureUniqueStorageEntry(entry)
+        val sanitized = sanitizeForStorage(uniqueEntry)
+        val updatedLane = if (lane.leafId == entry.id && uniqueEntry.id != entry.id) {
+            lane.copy(leafId = uniqueEntry.id)
+        } else {
+            lane
+        }
+        dao.consumeQueueItem(itemId, sanitized, updatedLane)
+    }
     override suspend fun recordUsage(usage: HarnessUsageEntity) {
         dao.insertUsage(usage)
     }

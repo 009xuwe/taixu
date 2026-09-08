@@ -19,11 +19,11 @@ class CompactionManager @Inject constructor(
 ) {
     suspend fun project(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): CompactedContext {
         val lane = repository.ensureLane(sessionId, laneName)
-        // Both queries are bounded at the Room boundary: old payloads never enter the Java heap.
-        // The latest compaction is fetched separately so its rolling summary survives even when it
-        // sits outside the recent-entry window.
+        // Provider projection must walk the complete active branch. A UI-sized tail limit here
+        // silently drops unsummarized messages before token budgeting gets a chance to compact them.
+        // The latest compaction is still fetched separately to recover its retained snapshot.
         val latestCompaction = repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
-        val entries = repository.branchTail(sessionId, lane.leafId, MAX_BRANCH_ENTRIES)
+        val entries = repository.branch(sessionId, lane.leafId)
         if (latestCompaction == null) return CompactedContext(messages = entries.mapNotNull(::decodeMessage))
 
         val payload = json.decodeFromString(CompactionPayload.serializer(), latestCompaction.payloadJson)
@@ -123,13 +123,6 @@ class CompactionManager @Inject constructor(
 
     companion object {
         const val ENTRY_TYPE = "compaction"
-        private const val MAX_SUMMARY_CHARS = 4_800
-        /**
-         * 每次 project() 最多从 Room 加载并反序列化的 entry 数量上限。
-         * 超长会话保护：entry 平均约 2KB payload，600 条≈1.2MB 原始 JSON，
-         * 在 256MB 堆上加上其他并发会话仍有安全余量。
-         * compaction 摘要已语义覆盖早期历史，尾部 entries 最具上下文价值。
-         */
-        private const val MAX_BRANCH_ENTRIES = 600
+        private const val MAX_SUMMARY_CHARS = 16_000
     }
 }

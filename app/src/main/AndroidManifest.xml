@@ -112,6 +112,22 @@
         <service
             android:name="top.wkbin.taixu.ui.chat.floating.FloatingChatService"
             android:exported="false" />
+        <service
+            android:name="top.wkbin.taixu.ui.workflow.hud.WorkflowHudService"
+            android:exported="false" />
+        <!-- GUI 全局手势降级通路：用户在系统无障碍设置中手动开启后可用 -->
+        <service
+            android:name="top.wkbin.taixu.runtime.gui.TaiXuGuiAccessibilityService"
+            android:exported="false"
+            android:label="@string/taixu_app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/taixu_gui_accessibility_service" />
+        </service>
     </application>
 
 </manifest>

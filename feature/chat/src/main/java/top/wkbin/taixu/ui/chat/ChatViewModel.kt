@@ -26,6 +26,8 @@ import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.events.HarnessEvent
 import top.wkbin.taixu.harness.events.HarnessEventBus
+import top.wkbin.taixu.harness.workflow.ProactiveWorkflowAdvisor
+import top.wkbin.taixu.harness.workflow.ProactiveWorkflowSuggestion
 import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.harness.queue.PromptQueue
 import top.wkbin.taixu.harness.session.ConversationBranch
@@ -79,6 +81,12 @@ data class SubagentResultUiState(
     val error: String? = null,
 )
 
+data class WorkflowLaunchRequest(
+    val workflowId: String?,
+    val projectName: String,
+    val initialVariables: Map<String, String> = emptyMap(),
+)
+
 /** 空会话首屏的权限感知引导档位；决定开场提示卡的文案与色调。 */
 enum class OnboardingPrivilege { SANDBOX, SANDBOX_UNLOCKABLE, SHIZUKU_READY, ROOT_READY }
 
@@ -101,14 +109,21 @@ class ChatViewModel @Inject constructor(
     private val compactionManager: top.wkbin.taixu.harness.compaction.CompactionManager,
     private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
     private val laneManager: LaneManager,
+
     private val eventBus: HarnessEventBus,
+    private val proactiveWorkflowAdvisor: ProactiveWorkflowAdvisor,
     private val modelDiscovery: AgentModelDiscovery,
     private val providerCatalog: AgentProviderCatalog,
     private val providerRepository: ProviderRepository,
     private val profileWriter: top.wkbin.taixu.core.tools.AiProfileWriter,
     private val privilegeManager: top.wkbin.taixu.runtime.privilege.PrivilegeManager,
     private val pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
+    private val workflowRepository: top.wkbin.taixu.core.database.WorkflowRepository,
 ) : ViewModel() {
+    private val _workflowLaunchRequests = kotlinx.coroutines.flow.MutableSharedFlow<WorkflowLaunchRequest>(extraBufferCapacity = 2)
+    val workflowLaunchRequests: kotlinx.coroutines.flow.SharedFlow<WorkflowLaunchRequest> = _workflowLaunchRequests
+    private val _workflowSuggestions = MutableStateFlow<List<ProactiveWorkflowSuggestion>>(emptyList())
+    val workflowSuggestions: StateFlow<List<ProactiveWorkflowSuggestion>> = _workflowSuggestions.asStateFlow()
 
     /**
      * 模型回复里引用的沙箱绝对路径（如 /workspace/xxx.jpg）到宿主真实目录的映射，
@@ -132,6 +147,7 @@ class ChatViewModel @Inject constructor(
             }
             .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
+
     private val _eventHistory = MutableStateFlow<Map<String, List<HarnessEvent>>>(emptyMap())
     private val _permissionRequests = kotlinx.coroutines.flow.MutableSharedFlow<HarnessEvent.PermissionRequired>(
         extraBufferCapacity = 8,
@@ -142,6 +158,7 @@ class ChatViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             quickPhraseRepository.ensureInitialized()
+            workflowRepository.ensureBuiltins()
         }
         viewModelScope.launch {
             eventBus.events.collect { event ->
@@ -150,6 +167,13 @@ class ChatViewModel @Inject constructor(
                 }
                 if (event is HarnessEvent.PermissionRequired) {
                     _permissionRequests.tryEmit(event)
+                }
+            }
+        }
+        viewModelScope.launch {
+            proactiveWorkflowAdvisor.observeSuggestions().collect { suggestion ->
+                _workflowSuggestions.update { current ->
+                    (listOf(suggestion) + current.filterNot { it.workflowId == suggestion.workflowId }).take(3)
                 }
             }
         }
@@ -182,6 +206,16 @@ class ChatViewModel @Inject constructor(
 
     fun enableMcpRecommendation(presetId: String) = harnessLoop.enableRecommendedMcp(presetId)
     fun dismissMcpRecommendation(presetId: String) = harnessLoop.dismissMcpRecommendation(presetId)
+    fun dismissWorkflowSuggestion(workflowId: String) {
+        _workflowSuggestions.update { suggestions -> suggestions.filterNot { it.workflowId == workflowId } }
+    }
+
+    fun launchWorkflowSuggestion(suggestion: ProactiveWorkflowSuggestion) {
+        dismissWorkflowSuggestion(suggestion.workflowId)
+        _workflowLaunchRequests.tryEmit(
+            WorkflowLaunchRequest(suggestion.workflowId, suggestion.projectName, suggestion.initialVariables),
+        )
+    }
     /** 运行中排队的待发送消息（当前任务结束后自动接续）。 */
     val pendingMessages: StateFlow<List<PendingMessage>> = harnessLoop.pendingMessages
     val queuedPrompts: StateFlow<List<QueuedPrompt>> = harnessLoop.queuedPrompts
@@ -422,9 +456,13 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /** 斜杠指令建议列表（当输入以 / 开头时实时过滤展示，自动合并已激活的专精技能）。 */
-    val matchingCommands: StateFlow<List<SlashCommandItem>> = kotlinx.coroutines.flow.combine(_input, agentSkillRepository.activeSkills) { text, skills ->
-        if (text.startsWith("/")) SlashCommands.filterCommands(context, text, skills)
+    /** 斜杠指令建议列表（当输入以 / 开头时实时过滤展示，自动合并已激活的专精技能与可用工作流）。 */
+    val matchingCommands: StateFlow<List<SlashCommandItem>> = kotlinx.coroutines.flow.combine(
+        _input,
+        agentSkillRepository.activeSkills,
+        workflowRepository.observeDefinitions(),
+    ) { text, skills, workflows ->
+        if (text.startsWith("/")) SlashCommands.filterCommands(context, text, skills, workflows)
         else emptyList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -685,6 +723,12 @@ class ChatViewModel @Inject constructor(
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
         val rawText = (customText ?: _input.value).trim()
         if (rawText.isBlank() && imageUrls.isEmpty()) return
+        WORKFLOW_COMMAND.matchEntire(rawText)?.let { match ->
+            setInput("")
+            val projectName = workspace.value.trim('/').removePrefix("workspace/").substringBefore('/').takeIf(String::isNotBlank).orEmpty()
+            _workflowLaunchRequests.tryEmit(WorkflowLaunchRequest(match.groupValues[1].takeIf(String::isNotBlank), projectName))
+            return
+        }
         setInput("")
 
         val pinnedIds = _pinnedMentionIds.value
@@ -710,6 +754,10 @@ class ChatViewModel @Inject constructor(
                 ComposerSendMode.NEXT_RUN -> harnessLoop.send(effectiveText, imageUrls = imageUrls)
             }
         }
+    }
+
+    private companion object {
+        val WORKFLOW_COMMAND = Regex("^/wf(?:\\s+([A-Za-z0-9_.-]+))?$")
     }
 
     /** 创建针对工具安装或沙箱异常的专属自愈会话并立即启动诊断 */

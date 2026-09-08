@@ -24,6 +24,13 @@ object ToolStatusDescriber {
             when (action) {
                 "screen_observe" -> "正在感知屏幕控件与前台应用…"
                 "screen_click" -> "正在模拟点击屏幕坐标 (${arg(args, "x")}, ${arg(args, "y")})…"
+                "screen_double_click" -> "正在双击屏幕坐标 (${arg(args, "x")}, ${arg(args, "y")})…"
+                "screen_long_press" -> "正在长按屏幕坐标 (${arg(args, "x")}, ${arg(args, "y")})…"
+                "screen_swipe" -> "正在滑动屏幕…"
+                "screen_scroll" -> "正在滚动屏幕（${arg(args, "direction")}）…"
+                "screen_input_text", "paste_text" -> "正在粘贴文本到焦点控件…"
+                "screen_key" -> "正在发送按键 ${arg(args, "key")}…"
+                "screen_capture" -> "正在截取屏幕…"
                 "screen_swipe" -> "正在滑动屏幕 (${arg(args, "x1")}, ${arg(args, "y1")}) ➔ (${arg(args, "x2")}, ${arg(args, "y2")})…"
                 "screen_input_text" -> "正在向当前输入框打字：${arg(args, "text")?.take(20)}…"
                 "screen_key" -> "正在触发系统按键：${arg(args, "key")}…"

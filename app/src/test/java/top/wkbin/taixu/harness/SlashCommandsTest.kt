@@ -34,5 +34,12 @@ class SlashCommandsTest {
         val results = SlashCommands.filterCommands("rust", listOf(skill))
         assertTrue(results.any { it.command == "/rust" && it.label == "Rust测试专家" })
     }
+
+    @Test
+    fun exposesWorkflowCommand() {
+        val results = SlashCommands.filterCommands("wf")
+        assertEquals("/wf", results.single().command)
+        assertEquals("/wf ", results.single().template)
+    }
 }
 

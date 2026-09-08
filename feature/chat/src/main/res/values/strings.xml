@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="chat_command_workflow">运行工作流</string>
+    <string name="chat_command_workflow_description">使用 /wf &lt;工作流 ID&gt; 调用太墟工作流</string>
     <string name="chat_web_image">网络图片</string>
     <string name="chat_web_content">网络内容</string>
     <string name="chat_open_link_failed">无法打开该链接</string>

@@ -94,7 +94,8 @@ class MainActivity : AppCompatActivity() {
         if (granted) runtimeServiceController.start()
     }
 
-    private var notificationPermissionCheckScheduled = false
+    /** 是否已发起过 POST_NOTIFICATIONS 系统弹窗；与服务启动解耦，避免授权后无法补启。 */
+    private var notificationPermissionRequested = false
 
     /** 控制 SplashScreen 持续显示，直到 onboarding 偏好从 DataStore 加载完成，避免白屏空窗。 */
     private val keepSplashOnScreen: MutableState<Boolean> = mutableStateOf(true)
@@ -342,26 +343,29 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPostResume() {
         super.onPostResume()
-        if (notificationPermissionCheckScheduled) return
-        notificationPermissionCheckScheduled = true
-
         // Runtime permission dialogs are most reliable after the first page is resumed and drawn.
         // First launch also restores onboarding/theme state, so requesting from onCreate can be
         // swallowed by some Android builds before the Activity becomes fully interactive.
+        // 每次回到前台都尝试启动保活：用户可能在系统设置里补授了通知权限。
         window.decorView.post {
             if (!isFinishing && !isDestroyed) {
-                // 首帧之后再拉起 Runtime 保活前台服务，避免 onStartCommand 抢在首帧前占用主线程。
-                runtimeServiceController.start()
-                requestNotificationPermissionIfNeeded()
+                // MIUI 会在 POST_NOTIFICATIONS 尚未授权时拒绝 START_FOREGROUND AppOp。
+                // 先完成权限门，再启动需要常驻通知的 Runtime 服务，避免无通知的幽灵服务
+                // 和随后出现的系统转场噪声。
+                startRuntimeServiceWhenNotificationAllowed()
             }
         }
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+    private fun startRuntimeServiceWhenNotificationAllowed() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        ) return
-        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        ) {
+            runtimeServiceController.start()
+        } else if (!notificationPermissionRequested) {
+            notificationPermissionRequested = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 }

@@ -67,6 +67,7 @@ class ToolExecutor @Inject constructor(
     private val checkpointStore: top.wkbin.taixu.harness.checkpoint.CheckpointStore? = null,
     private val dualAgentCoordinator: top.wkbin.taixu.harness.dual.DualAgentCoordinator? = null,
     private val embeddedAdbManager: EmbeddedAdbManager? = null,
+    private val workflowSignals: top.wkbin.taixu.harness.workflow.WorkflowSignalBus? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -324,6 +325,21 @@ class ToolExecutor @Inject constructor(
                     onFailure = { err -> false to err.message.orEmpty() }
                 )
             }
+            "screen_double_click" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                gui.doubleClick(requireInt(args, "x"), requireInt(args, "y")).fold(
+                    onSuccess = { true to it },
+                    onFailure = { false to it.message.orEmpty() },
+                )
+            }
+            "screen_long_press" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val duration = optionalLong(args, "duration_ms", 800L, 200L, 5_000L)
+                gui.longPress(requireInt(args, "x"), requireInt(args, "y"), duration).fold(
+                    onSuccess = { true to it },
+                    onFailure = { false to it.message.orEmpty() },
+                )
+            }
             "screen_swipe" -> {
                 val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
                 val x1 = requireInt(args, "x1")
@@ -337,7 +353,23 @@ class ToolExecutor @Inject constructor(
                     onFailure = { err -> false to err.message.orEmpty() }
                 )
             }
-            "screen_input_text" -> {
+            "screen_scroll" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val direction = when (requireString(args, "direction").lowercase()) {
+                    "up" -> top.wkbin.taixu.runtime.gui.ScrollDirection.UP
+                    "down" -> top.wkbin.taixu.runtime.gui.ScrollDirection.DOWN
+                    "left" -> top.wkbin.taixu.runtime.gui.ScrollDirection.LEFT
+                    "right" -> top.wkbin.taixu.runtime.gui.ScrollDirection.RIGHT
+                    else -> return false to "direction 仅支持 up/down/left/right"
+                }
+                val ratio = args["distance_ratio"]?.jsonPrimitive?.content?.toFloatOrNull()?.coerceIn(0.15f, 0.8f) ?: 0.45f
+                val durationMs = optionalLong(args, "duration_ms", 350L, 50L, 5_000L)
+                gui.scroll(direction, ratio, durationMs).fold(
+                    onSuccess = { true to it },
+                    onFailure = { false to it.message.orEmpty() },
+                )
+            }
+            "screen_input_text", "paste_text" -> {
                 val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
                 val text = requireString(args, "text")
                 val res = gui.inputText(text)
@@ -563,9 +595,11 @@ class ToolExecutor @Inject constructor(
         val messageId = args["message_id"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotBlank() }
         val index = args["index"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
         require(messageId != null || index != null) { "history.read 需要 message_id 或 index" }
-        val message = messageStore?.read(sessionId, messageId, index)
-            ?: return false to "未找到指定历史消息"
-        return true to historyLabel(message, full = true).take(MAX_HISTORY_READ_OUTPUT)
+        val messages = messageStore?.readWithRelated(sessionId, messageId, index).orEmpty()
+        if (messages.isEmpty()) return false to "未找到指定历史消息"
+        return true to messages.joinToString("\n\n") { message ->
+            "id=${message.id}\n${historyLabel(message, full = true)}"
+        }.take(MAX_HISTORY_READ_OUTPUT)
     }
 
     private fun historyLabel(message: HarnessMessage, full: Boolean = false): String = when (message) {
@@ -612,6 +646,19 @@ class ToolExecutor @Inject constructor(
         val stdout = result.stdout.trim()
         val stderr = result.stderr.trim()
         val isSuccess = result.isSuccess
+
+        // 🌟 AI 场景感知：构建失败或 APK 产物生成时主动通知工作流总线
+        val projectName = workspace.trim('/').substringAfterLast('/').ifBlank { "workspace" }
+        if (!isSuccess && isLikelyBuildCommand(command)) {
+            val buildError = (stderr.ifBlank { stdout }).take(4000)
+            workflowSignals?.emit(top.wkbin.taixu.harness.workflow.WorkflowSignal.BuildFailed(projectName, cwd, buildError))
+        }
+        val combinedOutput = stdout + "\n" + stderr
+        APK_PATH_REGEX.find(combinedOutput)?.let { match ->
+            val apkPath = match.value
+            workflowSignals?.emit(top.wkbin.taixu.harness.workflow.WorkflowSignal.ApkGenerated(projectName, cwd, apkPath))
+        }
+
         val body = buildString {
             append("exit ${result.exitCode} · ${result.durationMs} ms")
             if (stdout.isNotEmpty()) append("\n$stdout")
@@ -929,6 +976,12 @@ class ToolExecutor @Inject constructor(
         const val MAX_PROCESS_LOG_LINES = 500L
         const val AGENT_PROCESS_PREFIX = "agent-process:"
         val PROCESS_ID = Regex("[a-z0-9][a-z0-9._-]{0,63}")
+        private val APK_PATH_REGEX = Regex("""(?:\/[\w.\-]+)+\.apk""")
 
+        private fun isLikelyBuildCommand(cmd: String): Boolean {
+            val lower = cmd.lowercase()
+            return lower.contains("gradle") || lower.contains("assemble") || lower.contains("taixu-build") ||
+                lower.contains("cargo build") || lower.contains("make") || lower.contains("cmake")
+        }
     }
 }
