@@ -37,6 +37,7 @@ class McpManager @Inject constructor(
     private val repository: McpServerRepository,
     private val stdio: McpStdioTransport,
     private val http: McpHttpTransport,
+    private val commandBuilder: McpCommandBuilder,
     private val logger: AppLogger,
     private val agentEventLogger: AgentEventLogger,
 ) {
@@ -146,13 +147,18 @@ class McpManager @Inject constructor(
         .onFailure { cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE) }
     }
 
-    suspend fun executeTool(fullToolName: String, arguments: JsonObject): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+    suspend fun executeTool(
+        fullToolName: String,
+        arguments: JsonObject,
+        workspace: String = "",
+    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         if (!fullToolName.startsWith("mcp__")) return@withContext false to "无效的 MCP 工具名称：$fullToolName"
         val tool = getActiveMcpTools().firstOrNull { McpToolApiName.matches(it, fullToolName) }
             ?: return@withContext false to "未找到 MCP 工具：$fullToolName"
         val server = repository.servers.first().firstOrNull { it.id == tool.serverId && it.isEnabled }
             ?: return@withContext false to "未找到 MCP 服务：${tool.serverId}"
-        return@withContext cancellableResult { transport(server).execute(server, tool.name, arguments) }
+        val bound = commandBuilder.bindWorkspaceRepository(server, workspace)
+        return@withContext cancellableResult { transport(bound).execute(bound, tool.name, arguments) }
             .onFailure { logger.e("MCP[${server.name}] 工具 ${tool.name} 执行异常: ${it.message}", it) }
             .onSuccess { (ok, output) ->
                 if (!ok) logger.w("MCP[${server.name}] 工具 ${tool.name} 返回错误: $output".take(500))

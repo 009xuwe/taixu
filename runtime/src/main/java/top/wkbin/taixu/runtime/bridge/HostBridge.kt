@@ -22,6 +22,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.core.common.logging.AppLogger
+import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import java.io.BufferedReader
 import java.io.File
@@ -54,6 +55,7 @@ class HostBridge @Inject constructor(
     private val logger: AppLogger,
     private val privilegeManager: PrivilegeManager,
     private val embeddedAdbManager: EmbeddedAdbManager,
+    private val pathManager: RuntimePathManager,
 ) {
     companion object {
         const val BRIDGE_PORT = 7980
@@ -239,9 +241,23 @@ class HostBridge @Inject constructor(
 
         // 将沙箱路径映射到宿主路径
         val hostPath = resolveSandboxPath(apkPath)
-        val apkFile = File(hostPath)
+        var apkFile = File(hostPath)
         if (!apkFile.isFile) {
-            return HttpResponse(404, errorJson("APK file not found: $apkPath (resolved: $hostPath)"))
+            // 智能容错：如果在指定路径未找到，尝试在工作区目录中按文件名模糊搜索匹配的最新 APK
+            val candidateName = apkFile.name.takeIf { it.endsWith(".apk", ignoreCase = true) }
+                ?: apkPath.substringAfterLast('/').takeIf { it.endsWith(".apk", ignoreCase = true) }
+            val fallback = if (candidateName != null && pathManager.workspaceDir.isDirectory) {
+                pathManager.workspaceDir.walkTopDown().maxDepth(8)
+                    .filter { it.isFile && it.name.equals(candidateName, ignoreCase = true) }
+                    .maxByOrNull { it.lastModified() }
+            } else null
+
+            if (fallback != null) {
+                logger.i("HostBridge: APK 在 '$hostPath' 未找到，通过工作区扫描智能匹配到 '${fallback.absolutePath}'")
+                apkFile = fallback
+            } else {
+                return HttpResponse(404, errorJson("APK file not found: $apkPath (resolved: $hostPath)"))
+            }
         }
         if (!apkFile.name.endsWith(".apk", ignoreCase = true)) {
             return HttpResponse(400, errorJson("File does not have .apk extension: ${apkFile.name}"))
@@ -380,16 +396,35 @@ class HostBridge @Inject constructor(
     /**
      * 将沙箱内路径映射到宿主路径。
      * /sdcard/Download/app.apk → /storage/emulated/0/Download/app.apk
+     * /workspace/... → pathManager.workspaceDir/...
+     * /attachments/... → pathManager.attachmentsDir/...
      */
     private fun resolveSandboxPath(sandboxPath: String): String {
+        val trimmed = sandboxPath.trim()
         return when {
-            sandboxPath.startsWith("/sdcard/") ->
-                "/storage/emulated/0/${sandboxPath.removePrefix("/sdcard/")}"
-            sandboxPath == "/sdcard" ->
+            trimmed.startsWith("/sdcard/") ->
+                "/storage/emulated/0/${trimmed.removePrefix("/sdcard/")}"
+            trimmed == "/sdcard" ->
                 "/storage/emulated/0"
-            sandboxPath.startsWith("/storage/emulated/0/") ->
-                sandboxPath // 已经是宿主路径
-            else -> sandboxPath // 原样返回（可能是宿主绝对路径）
+            trimmed.startsWith("/storage/emulated/0/") ->
+                trimmed // 已经是宿主存储路径
+            trimmed.startsWith("/workspace/") ->
+                File(pathManager.workspaceDir, trimmed.removePrefix("/workspace/")).absolutePath
+            trimmed == "/workspace" ->
+                pathManager.workspaceDir.absolutePath
+            trimmed.startsWith("/attachments/") ->
+                File(pathManager.attachmentsDir, trimmed.removePrefix("/attachments/")).absolutePath
+            trimmed == "/attachments" ->
+                pathManager.attachmentsDir.absolutePath
+            else -> {
+                // 若为相对路径或去除了开头的斜杠，先在工作区内检查是否存在
+                val wsRelative = File(pathManager.workspaceDir, trimmed.removePrefix("/"))
+                if (wsRelative.exists()) {
+                    wsRelative.absolutePath
+                } else {
+                    trimmed // 原样返回（可能是宿主绝对路径）
+                }
+            }
         }
     }
 

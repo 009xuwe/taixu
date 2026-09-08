@@ -822,9 +822,9 @@ def to_json_text(data, empty_hint):
 
 
 def guarded_call(indexer, fn):
-    """所有触达图谱 DB 的工具共用非阻塞锁：后台初始索引进行中时立即返回进度状态，
-    而不是让请求排队数分钟无响应。"""
-    if not indexer.lock.acquire(blocking=False):
+    """触达图谱 DB 的工具共用锁：后台初始索引时短暂等待（默认 8s），
+    避免会话刚启动就非阻塞硬拒；超时仍返回进度，防止排队数分钟无响应。"""
+    if not indexer.lock.acquire(blocking=True, timeout=8.0):
         raise RuntimeError(indexer.status_text())
     try:
         return fn()

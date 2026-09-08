@@ -4,6 +4,7 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.runtime.EnvironmentResolver
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -229,8 +230,8 @@ class ProotCommandBuilder private constructor(
                 skipped.add(path)
             }
         }
-        // 记录被跳过的绑定——这些缺失会导致沙箱内 Android 二进制无法执行（"无 linker"问题）
-        if (skipped.isNotEmpty()) {
+        // 缺失绑定会导致沙箱内 Android 二进制无法执行；同一进程只告警一次，避免刷屏。
+        if (skipped.isNotEmpty() && hostBindingsWarningLogged.compareAndSet(false, true)) {
             logWarning("HostSystemBindings: ${skipped.size} path(s) skipped (not exist/unreadable): $skipped")
         }
     }
@@ -285,5 +286,6 @@ class ProotCommandBuilder private constructor(
         val ENVIRONMENT_KEY = Regex("[A-Za-z_][A-Za-z0-9_]*")
         const val SHARED_STORAGE_ROOT = "/storage/emulated/0"
         val ALLOWED_GUEST_MOUNT_ROOTS = setOf("/mnt", "/sdcard")
+        private val hostBindingsWarningLogged = AtomicBoolean(false)
     }
 }

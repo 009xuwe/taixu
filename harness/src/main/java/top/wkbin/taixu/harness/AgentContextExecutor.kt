@@ -249,7 +249,13 @@ class AgentContextExecutor @Inject constructor(
                     ?: return false to "当前会话没有可推进的活跃计划，请先用 replace_active 创建"
                 val stepsElement = args["steps"]
                 val newStepsJson = stepsElement?.toString() ?: plan.stepsJson
-                val newStatus = args["status"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: plan.status
+                // status 是计划生命周期枚举（active/completed/cancelled），不是自然语言进度描述。
+                // 模型常把阶段说明塞进 status，直接写入会导致 getActivePlan 永久找不到记录。
+                val requestedStatus = args["status"]?.jsonPrimitive?.contentOrNull?.lowercase()
+                val newStatus = when (requestedStatus) {
+                    "completed", "cancelled", "active" -> requestedStatus
+                    else -> plan.status
+                }
                 agentContextDao.savePlan(
                     plan.copy(
                         stepsJson = newStepsJson,

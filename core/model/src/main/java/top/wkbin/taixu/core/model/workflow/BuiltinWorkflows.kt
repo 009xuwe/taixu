@@ -195,7 +195,7 @@ object BuiltinWorkflows {
         trigger = WorkflowTrigger.Proactive("APK_GENERATED", suggestionLabel = "安装刚生成的 APK"),
         nodes = listOf(
             WorkflowNode("start", WorkflowNodeType.TRIGGER, "读取 APK", config = mapOf("requiredVariables" to "APK_PATH")),
-            WorkflowNode("approve", WorkflowNodeType.HUMAN_APPROVAL, "确认安装", description = "确认将刚生成的 APK 安装到宿主设备。", canvasX = 260f),
+            WorkflowNode("approve", WorkflowNodeType.HUMAN_APPROVAL, "确认安装", description = "确认将刚生成的 APK 安装到宿主设备：\${APK_PATH}", canvasX = 260f),
             WorkflowNode("install", WorkflowNodeType.HOST_ACTION, "安装 APK", config = mapOf("action" to "install-apk"), timeoutSeconds = 600, canvasX = 520f),
             WorkflowNode("done", WorkflowNodeType.TERMINAL_OUTPUT, "安装请求已提交", canvasX = 780f),
         ),

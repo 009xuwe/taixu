@@ -56,6 +56,8 @@ internal fun WorkflowStartDialog(
     definition: WorkflowDefinition,
     supplied: Map<String, String>,
     models: List<AiModelEntity>,
+    availableApks: List<DiscoveredApk> = emptyList(),
+    onRefreshApks: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onStart: (Map<String, String>) -> Unit,
 ) {
@@ -78,6 +80,13 @@ internal fun WorkflowStartDialog(
     }
     val values = remember(definition.id, supplied) {
         mutableStateMapOf<String, String>().apply { putAll(definition.defaultVariables + supplied) }
+    }
+
+    val isApkWorkflow = "APK_PATH" in required
+    LaunchedEffect(definition.id, availableApks) {
+        if (isApkWorkflow && values["APK_PATH"].isNullOrBlank() && availableApks.isNotEmpty()) {
+            values["APK_PATH"] = availableApks.first().sandboxPath
+        }
     }
 
     val active = models.firstOrNull { it.isActive }
@@ -206,7 +215,15 @@ internal fun WorkflowStartDialog(
                         )
                     }
                 }
-                required.forEach { key ->
+                if (isApkWorkflow) {
+                    ApkSelectorSection(
+                        selectedPath = values["APK_PATH"].orEmpty(),
+                        availableApks = availableApks,
+                        onSelectApk = { values["APK_PATH"] = it },
+                        onRefresh = onRefreshApks,
+                    )
+                }
+                required.filterNot { it == "APK_PATH" }.forEach { key ->
                     OutlinedTextField(
                         value = values[key].orEmpty(),
                         onValueChange = { values[key] = it },
@@ -240,4 +257,176 @@ internal fun WorkflowStartDialog(
             ) { Text("开始执行") }
         },
     )
+}
+
+@Composable
+private fun ApkSelectorSection(
+    selectedPath: String,
+    availableApks: List<DiscoveredApk>,
+    onSelectApk: (String) -> Unit,
+    onRefresh: (() -> Unit)?,
+) {
+    var showManualInput by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                RuntimeIcon(RuntimeIconName.Android, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(6.dp))
+                Text("选择安装 APK", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            }
+            if (onRefresh != null) {
+                TextButton(
+                    onClick = onRefresh,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("重新扫描", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+
+        if (availableApks.isNotEmpty()) {
+            availableApks.forEachIndexed { index, apk ->
+                val isSelected = selectedPath == apk.sandboxPath ||
+                    selectedPath == apk.file.absolutePath ||
+                    selectedPath == apk.relativePath
+                Surface(
+                    onClick = { onSelectApk(apk.sandboxPath) },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isSelected) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                    border = BorderStroke(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = if (isSelected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant
+                        },
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            if (isSelected) {
+                                RuntimeIcon(RuntimeIconName.Check, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(
+                                text = apk.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                            )
+                            if (index == 0) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                ) {
+                                    Text(
+                                        text = "✨ 最新生成",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = apk.relativePath,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 2,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = formatApkSize(apk.sizeBytes),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = formatApkTime(apk.lastModified),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            TextButton(
+                onClick = { showManualInput = !showManualInput },
+                contentPadding = PaddingValues(0.dp),
+            ) {
+                RuntimeIcon(
+                    if (showManualInput) RuntimeIconName.ChevronUp else RuntimeIconName.ChevronDown,
+                    Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    if (showManualInput) "收起手动输入" else "手动指定其他 APK 路径...",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        } else {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        RuntimeIcon(RuntimeIconName.Info, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(6.dp))
+                        Text("未在工程中扫描到 APK", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Text(
+                        "若您已在终端完成编译构建，可点击右上角「重新扫描」；或在下方直接输入 APK 文件路径。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        if (availableApks.isEmpty() || showManualInput) {
+            OutlinedTextField(
+                value = selectedPath,
+                onValueChange = onSelectApk,
+                label = { Text("APK 路径 (绝对路径或相对路径)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+        }
+    }
+}
+
+private fun formatApkSize(bytes: Long): String = when {
+    bytes <= 0L -> "0 B"
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> "%.1f KB".format(bytes / 1024.0)
+    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+}
+
+private fun formatApkTime(timestamp: Long): String {
+    if (timestamp <= 0L) return ""
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+    return sdf.format(java.util.Date(timestamp))
 }

@@ -33,8 +33,19 @@ import top.wkbin.taixu.core.model.workflow.WorkflowRuntimeState
 import top.wkbin.taixu.core.model.workflow.WorkflowTrigger
 import top.wkbin.taixu.harness.workflow.WorkflowRunHandle
 import top.wkbin.taixu.harness.workflow.WorkflowScheduler
+import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.gui.WorkflowGuiHudBridge
 import top.wkbin.taixu.ui.workflow.hud.WorkflowHudService
+import java.io.File
+
+data class DiscoveredApk(
+    val file: File,
+    val name: String,
+    val relativePath: String,
+    val sandboxPath: String,
+    val sizeBytes: Long,
+    val lastModified: Long,
+)
 
 @HiltViewModel
 class WorkflowViewModel @Inject constructor(
@@ -43,6 +54,7 @@ class WorkflowViewModel @Inject constructor(
     private val hud: WorkflowGuiHudBridge,
     @ApplicationContext private val appContext: Context,
     aiModelRepository: AiModelRepository,
+    private val pathManager: RuntimePathManager,
 ) : ViewModel() {
     val definitions: StateFlow<List<WorkflowDefinition>> = repository.observeDefinitions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BuiltinWorkflows.all)
@@ -68,6 +80,12 @@ class WorkflowViewModel @Inject constructor(
     init {
         viewModelScope.launch { repository.ensureBuiltins() }
     }
+
+    /**
+     * 自动扫描工程目录或工作区下的 APK 构建产物，按最后修改时间倒序排列（最新在前）。
+     */
+    fun scanWorkspaceApks(projectName: String): List<DiscoveredApk> =
+        scanApksInWorkspace(pathManager.workspaceDir, projectName)
 
     fun start(definition: WorkflowDefinition, projectName: String, variables: Map<String, String> = emptyMap()) {
         activeHandle?.cancel()
@@ -397,4 +415,51 @@ private fun WorkflowNodeType.defaultConfig(): Map<String, String> = when (this) 
     WorkflowNodeType.DELAY -> mapOf("seconds" to "1")
     WorkflowNodeType.SET_VARIABLE -> mapOf("variables" to "EXAMPLE_KEY=example_value")
     else -> emptyMap()
+}
+
+internal fun scanApksInWorkspace(workspaceDir: File, projectName: String): List<DiscoveredApk> {
+    val safeProject = projectName.trim().trim('/').takeIf { it.isNotEmpty() }
+    val projectDir = if (safeProject != null) File(workspaceDir, safeProject) else null
+
+    // 优先在当前工程目录搜索，如果当前工程下未找到，再扩大至整个工作区根目录
+    val targetDirs = listOfNotNull(
+        projectDir?.takeIf { it.isDirectory },
+        workspaceDir.takeIf { it.isDirectory },
+    ).distinct()
+
+    val results = mutableListOf<DiscoveredApk>()
+    val seenPaths = mutableSetOf<String>()
+
+    for (dir in targetDirs) {
+        val isProjectScope = dir == projectDir
+        runCatching {
+            dir.walkTopDown()
+                .maxDepth(8)
+                .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+                .forEach { file ->
+                    val relPath = file.relativeTo(dir).path.replace('\\', '/')
+                    val sandboxPath = if (isProjectScope && safeProject != null) {
+                        "/workspace/$safeProject/$relPath"
+                    } else {
+                        val relToWorkspace = file.relativeTo(workspaceDir).path.replace('\\', '/')
+                        "/workspace/$relToWorkspace"
+                    }
+                    if (seenPaths.add(file.absolutePath)) {
+                        results.add(
+                            DiscoveredApk(
+                                file = file,
+                                name = file.name,
+                                relativePath = if (isProjectScope) relPath else file.relativeTo(workspaceDir).path.replace('\\', '/'),
+                                sandboxPath = sandboxPath,
+                                sizeBytes = file.length(),
+                                lastModified = file.lastModified(),
+                            ),
+                        )
+                    }
+                }
+        }
+        if (results.isNotEmpty()) break
+    }
+
+    return results.sortedByDescending { it.lastModified }
 }

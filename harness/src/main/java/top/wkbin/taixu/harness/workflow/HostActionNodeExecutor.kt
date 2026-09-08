@@ -188,7 +188,7 @@ class HostActionNodeExecutor @Inject constructor(
             "health" -> shellViaBridge("taixu-host health", context)
             "install-apk" -> {
                 val artifact = node.config["artifactFrom"]?.let { context.nodeOutputs[it]?.artifacts?.lastOrNull() }
-                    ?: context.globalVariables["APK_PATH"]
+                    ?: context.globalVariables["APK_PATH"]?.takeIf { it.isNotBlank() }
                     ?: cfg("path").takeIf { it.isNotBlank() }
                     ?: error("未找到 APK：请配置 artifactFrom、path 或变量 APK_PATH")
                 shellViaBridge("taixu-host install-apk ${posixQuote(artifact)}", context, artifacts = listOf(artifact))

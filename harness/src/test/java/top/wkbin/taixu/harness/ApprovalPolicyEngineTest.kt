@@ -58,6 +58,59 @@ class ApprovalPolicyEngineTest {
     }
 
     @Test
+    fun `assisted mode auto allows safe read pipelines and cd then inspect`() {
+        assertFalse(
+            policy.decide(
+                ApprovalMode.ASSISTED,
+                HarnessTool.BASE,
+                args("command" to "ls -la /workspace 2>&1 | head -40"),
+                workspace,
+            ).required,
+        )
+        assertFalse(
+            policy.decide(
+                ApprovalMode.ASSISTED,
+                HarnessTool.BASE,
+                args("command" to "cd /workspace/RelayGo && rg -n foo lib | head -40"),
+                workspace,
+            ).required,
+        )
+        assertFalse(
+            policy.decide(
+                ApprovalMode.ASSISTED,
+                HarnessTool.BASE,
+                args("command" to "git status | head -20"),
+                workspace,
+            ).required,
+        )
+        // Still gate unsafe composition
+        assertTrue(
+            policy.decide(
+                ApprovalMode.ASSISTED,
+                HarnessTool.BASE,
+                args("command" to "ls /workspace | rm -rf /"),
+                workspace,
+            ).required,
+        )
+        assertTrue(
+            policy.decide(
+                ApprovalMode.ASSISTED,
+                HarnessTool.BASE,
+                args("command" to "cd /workspace && curl https://example.com"),
+                workspace,
+            ).required,
+        )
+        assertTrue(
+            policy.decide(
+                ApprovalMode.ASSISTED,
+                HarnessTool.BASE,
+                args("command" to "cat README.md > backup.txt"),
+                workspace,
+            ).required,
+        )
+    }
+
+    @Test
     fun `full access bypasses approval for every tool`() {
         val tools = HarnessTool.entries
         tools.forEach { tool ->

@@ -24,6 +24,7 @@ import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.PendingMessage
 import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.ContextWindowPolicy
+import top.wkbin.taixu.harness.ContextUsageBreakdown
 import top.wkbin.taixu.harness.events.HarnessEvent
 import top.wkbin.taixu.harness.events.HarnessEventBus
 import top.wkbin.taixu.harness.workflow.ProactiveWorkflowAdvisor
@@ -402,20 +403,34 @@ class ChatViewModel @Inject constructor(
         )
     }.combine(settingsDataStore.contextCompactionEnabled) { inputs, compactionEnabled ->
         val activeModel = inputs.activeModel
-        val systemTokens = if (activeModel?.pureChatMode == true) {
-            0
-        } else {
-            val skillTokens = inputs.skills.filter { it.isEnabled }.sumOf { ContextWindowPolicy.estimateTokens(it.systemPrompt) }
-            val mcpTokens = inputs.mcps.filter { it.isEnabled }.sumOf {
-                ContextWindowPolicy.estimateTokens("${it.name}\n${it.description}\n${it.command}\n${it.args.joinToString(" ")}")
-            }
-            1_600 + skillTokens + mcpTokens
+        val pureChat = activeModel?.pureChatMode == true
+        val toolDisabled = pureChat || activeModel?.toolCallMode.equals("disabled", ignoreCase = true)
+
+        val systemPromptTokens = if (pureChat) 0 else ContextWindowPolicy.DEFAULT_SYSTEM_PROMPT_TOKENS
+        val toolDefinitionTokens = if (toolDisabled) 0 else ContextWindowPolicy.DEFAULT_NATIVE_TOOL_TOKENS
+        val rulesTokens = if (pureChat) 0 else ContextWindowPolicy.DEFAULT_RULES_TOKENS
+        val skillTokens = if (pureChat) 0 else inputs.skills.filter { it.isEnabled }.sumOf {
+            ContextWindowPolicy.estimateTokens(it.systemPrompt)
         }
+        val mcpTokens = if (pureChat) 0 else inputs.mcps.filter { it.isEnabled }.sumOf {
+            ContextWindowPolicy.estimateTokens("${it.name}\n${it.description}\n${it.command}\n${it.args.joinToString(" ")}")
+        }
+        val subagentTokens = if (toolDisabled) 0 else ContextWindowPolicy.DEFAULT_SUBAGENT_TOKENS
+
+        val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
+        val budget = (activeModel?.contextTokens ?: inputs.defaultBudget).coerceAtLeast(1)
+
         val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
             messages = inputs.currentMessages,
-            budget = (activeModel?.contextTokens ?: inputs.defaultBudget).coerceAtLeast(1),
-            systemTokens = systemTokens,
+            budget = budget,
+            systemTokens = totalSystemTokens,
             compactionEnabled = compactionEnabled,
+            systemPromptTokens = systemPromptTokens,
+            toolDefinitionTokens = toolDefinitionTokens,
+            rulesTokens = rulesTokens,
+            skillsTokens = skillTokens,
+            mcpTokens = mcpTokens,
+            subagentTokens = subagentTokens,
         )
         val totalPromptTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.promptTokens?.toLong() }.sum()
         val totalCachedTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.cachedTokens?.toLong() }.sum()
@@ -425,13 +440,14 @@ class ChatViewModel @Inject constructor(
 
         ContextUsage(
             usedTokens = effectiveUsage.totalTokens,
-            limitTokens = (activeModel?.contextTokens ?: inputs.defaultBudget).coerceAtLeast(1),
-            systemTokens = systemTokens,
+            limitTokens = budget,
+            systemTokens = totalSystemTokens,
             toolTokens = effectiveUsage.toolTokens,
             conversationTokens = effectiveUsage.conversationTokens,
             compacted = effectiveUsage.keepFromIndex > 0,
             cachedTokens = totalCachedTokens,
             cacheHitRatePercent = cacheHitPct,
+            breakdown = effectiveUsage.breakdown,
         )
 
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextUsage())
@@ -1198,6 +1214,7 @@ data class ContextUsage(
     val compacted: Boolean = false,
     val cachedTokens: Long = 0L,
     val cacheHitRatePercent: Int? = null,
+    val breakdown: ContextUsageBreakdown = ContextUsageBreakdown(),
 )
 
 

@@ -218,4 +218,40 @@ class ContextWindowPolicyTest {
         assertTrue(summary.contains("失败根因线索"))
         assertTrue(summary.contains("gradlew"))
     }
+
+    @Test
+    fun `estimateEffectiveUsage calculates 8-dimensional breakdown correctly`() {
+        val messages = listOf(
+            UserMessage("u1", 1, "Hello world"),
+            AssistantText("a1", 2, "I will check the files."),
+            ToolCall("t1", 3, HarnessTool.BASE, kotlinx.serialization.json.buildJsonObject {
+                put("command", "ls -la")
+            }),
+            ToolResult("r1", 4, "t1", true, "file1.txt\nfile2.txt"),
+        )
+
+        val usage = ContextWindowPolicy.estimateEffectiveUsage(
+            messages = messages,
+            budget = 128_000,
+            systemTokens = 5_000,
+            compactionEnabled = true,
+            systemPromptTokens = 576,
+            toolDefinitionTokens = 3_600,
+            rulesTokens = 1_400,
+            skillsTokens = 500,
+            mcpTokens = 800,
+            subagentTokens = 1_100,
+        )
+
+        val bd = usage.breakdown
+        assertEquals(576, bd.systemPromptTokens)
+        assertEquals(3_600, bd.toolDefinitionTokens)
+        assertEquals(1_400, bd.rulesTokens)
+        assertEquals(500, bd.skillsTokens)
+        assertEquals(800, bd.mcpTokens)
+        assertEquals(1_100, bd.subagentTokens)
+        assertEquals(0, bd.summarizedTokens)
+        assertTrue(bd.conversationTokens > 0)
+        assertEquals(bd.totalTokens, usage.totalTokens)
+    }
 }

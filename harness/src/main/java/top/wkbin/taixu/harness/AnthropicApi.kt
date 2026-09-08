@@ -70,9 +70,12 @@ internal class AnthropicApi(
         val call = okHttpClient.newCall(buildRequest(model, messages, stream = true))
         // 与 ChatApi 一致：取消时立即关闭 socket，保证"停止"秒级生效
         val cancelHandle = coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { call.cancel() }
+        val firstEventTimeoutMs = ProviderClient.resolveFirstEventTimeoutMs(
+            ProviderClient.estimateApiMessageTokens(messages),
+        )
         val firstEventState = AtomicInteger(ProviderClient.FIRST_EVENT_WAITING)
         val firstEventWatchdog = launch {
-            delay(ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS.milliseconds)
+            delay(firstEventTimeoutMs.milliseconds)
             if (firstEventState.compareAndSet(ProviderClient.FIRST_EVENT_WAITING, ProviderClient.FIRST_EVENT_TIMED_OUT)) {
                 call.cancel()
             }
@@ -174,7 +177,7 @@ internal class AnthropicApi(
         } catch (io: IOException) {
             if (firstEventState.get() == ProviderClient.FIRST_EVENT_TIMED_OUT) {
                 throw SocketTimeoutException(
-                    "等待模型首个响应超过 ${ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS / 1000}s",
+                    "等待模型首个响应超过 ${firstEventTimeoutMs / 1000}s",
                 ).apply { initCause(io) }
             }
             throw io

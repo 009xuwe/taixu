@@ -109,23 +109,35 @@ object ContextWindowPolicy {
         return (cjk / 1.8f + ascii / 2.5f + punctuation / 2.8f).toInt().coerceAtLeast(1)
     }
 
+    const val DEFAULT_SYSTEM_PROMPT_TOKENS = 576
+    const val DEFAULT_NATIVE_TOOL_TOKENS = 3_600
+    const val DEFAULT_RULES_TOKENS = 1_400
+    const val DEFAULT_SUBAGENT_TOKENS = 1_100
+
     /** Estimate the payload after the same token-budget compaction used by [HarnessLoop]. */
     fun estimateEffectiveUsage(
         messages: List<HarnessMessage>,
         budget: Int,
         systemTokens: Int,
         compactionEnabled: Boolean,
+        systemPromptTokens: Int = 0,
+        toolDefinitionTokens: Int = 0,
+        rulesTokens: Int = 0,
+        skillsTokens: Int = 0,
+        mcpTokens: Int = 0,
+        subagentTokens: Int = 0,
     ): EffectiveContextUsage {
         val keepFrom = if (compactionEnabled) {
             computeKeepFromIndex(messages, budget, systemTokens)
         } else {
             0
         }
-        var conversationTokens = if (keepFrom > 0) {
+        val summarizedTokens = if (keepFrom > 0) {
             estimateTokens(buildHistorySummary(messages.take(keepFrom)))
         } else {
             0
         }
+        var conversationTokens = 0
         var toolTokens = 0
         messages.drop(keepFrom).forEach { message ->
             when (message) {
@@ -145,11 +157,34 @@ object ContextWindowPolicy {
                 }
             }
         }
+        val resolvedSystemPromptTokens = if (systemPromptTokens == 0 && toolDefinitionTokens == 0 &&
+            rulesTokens == 0 && skillsTokens == 0 && mcpTokens == 0 && subagentTokens == 0 && systemTokens > 0
+        ) {
+            systemTokens
+        } else {
+            systemPromptTokens
+        }
+        val breakdown = ContextUsageBreakdown(
+            systemPromptTokens = resolvedSystemPromptTokens,
+            toolDefinitionTokens = toolDefinitionTokens,
+            rulesTokens = rulesTokens,
+            skillsTokens = skillsTokens,
+            mcpTokens = mcpTokens,
+            subagentTokens = subagentTokens,
+            summarizedTokens = summarizedTokens,
+            conversationTokens = conversationTokens + toolTokens,
+        )
+        val computedTotal = if (breakdown.totalTokens > 0) {
+            breakdown.totalTokens
+        } else {
+            systemTokens + conversationTokens + toolTokens + summarizedTokens
+        }
         return EffectiveContextUsage(
             keepFromIndex = keepFrom,
             conversationTokens = conversationTokens,
             toolTokens = toolTokens,
-            totalTokens = systemTokens + conversationTokens + toolTokens,
+            totalTokens = computedTotal,
+            breakdown = breakdown,
         )
     }
 
@@ -398,9 +433,34 @@ object ContextWindowPolicy {
     private val FILE_PATH_REGEX = Regex("(?:/workspace|/sdcard|[A-Za-z]:[\\\\/])[^\\s,，。；;，)\\]]+")
 }
 
+/**
+ * 上下文 Token 用量明细（8 维细分模型，用于高保真还原现代化 Agent 上下文可视化面板）。
+ */
+data class ContextUsageBreakdown(
+    val systemPromptTokens: Int = 0,
+    val toolDefinitionTokens: Int = 0,
+    val rulesTokens: Int = 0,
+    val skillsTokens: Int = 0,
+    val mcpTokens: Int = 0,
+    val subagentTokens: Int = 0,
+    val summarizedTokens: Int = 0,
+    val conversationTokens: Int = 0,
+) {
+    val totalTokens: Int
+        get() = systemPromptTokens +
+            toolDefinitionTokens +
+            rulesTokens +
+            skillsTokens +
+            mcpTokens +
+            subagentTokens +
+            summarizedTokens +
+            conversationTokens
+}
+
 data class EffectiveContextUsage(
     val keepFromIndex: Int,
     val conversationTokens: Int,
     val toolTokens: Int,
     val totalTokens: Int,
+    val breakdown: ContextUsageBreakdown = ContextUsageBreakdown(),
 )

@@ -196,6 +196,17 @@ class ApprovalPolicyEngine @Inject constructor(
                 .digest(argumentsJson.toByteArray(Charsets.UTF_8))
             return digest.joinToString("") { "%02x".format(it) }
         }
+
+        private val CD_PREFIX = Regex("""^cd\s+[^\s;&|<>`$()]+$""")
+        private val SAFE_READ_FILTER = Regex(
+            """^(head|tail|grep|rg|wc|cat|awk|sort|uniq|tr|cut)(\s|$)""",
+        )
+        private val BLOCKED_NETWORK_OR_MUTATION = Regex(
+            """\b(curl|wget|nc|ssh|scp|adb|taixu-host|mount|umount|kill|pkill|chmod|chown|apt(-get)?|apk|dnf|pacman|npm\s+(install|publish)|pip\s+install|git\s+(push|reset|clean))\b""",
+        )
+        private val ROUTINE_PRIMARY = Regex(
+            """^(pwd|ls|find|rg|grep|head|tail|cat|git\s+(status|diff|log|show)|gradle(w)?\b.*(test|check|assemble)|npm\s+(test|run\s+(test|lint|build))|flutter\s+(test|analyze|build)|pytest\b|kotlinc\b|\./gradlew\b.*(test|check|assemble))""",
+        )
     }
 
     private fun summarize(tool: HarnessTool, args: JsonObject, rawToolName: String? = null): String = when (tool) {
@@ -251,13 +262,46 @@ class ApprovalPolicyEngine @Inject constructor(
         // expansion, eval, and nested shells can hide a second mutation behind an otherwise
         // harmless prefix (e.g. `ls $(rm -rf /tmp)`). Require explicit approval for these.
         if (hasDynamicShellSyntax(normalized)) return false
-        // Auto-approval is intentionally limited to one transparent command.
-        // Shell composition, substitution and redirection can hide a second mutation
-        // behind an otherwise harmless prefix such as `git status`.
-        if (listOf("\n", "\r", ";", "&&", "||", "|", ">", "<", "`", "$(").any { it in normalized }) return false
-        if (Regex("\\bfind\\b.*\\s(-delete|-exec|-execdir)\\b").containsMatchIn(normalized)) return false
-        if (Regex("\\b(curl|wget|nc|ssh|scp|adb|taixu-host|mount|umount|kill|pkill|chmod|chown|apt(-get)?|apk|dnf|pacman|npm\\s+(install|publish)|pip\\s+install|git\\s+(push|reset|clean))\\b").containsMatchIn(normalized)) return false
-        return Regex("^(pwd|ls|find|rg|grep|head|tail|cat|git\\s+(status|diff|log|show)|gradle(w)?\\b.*(test|check|assemble)|npm\\s+(test|run\\s+(test|lint|build))|flutter\\s+(test|analyze|build)|pytest\\b|kotlinc\\b|./gradlew\\b.*(test|check|assemble))").containsMatchIn(normalized)
+        if (listOf("\n", "\r", ";", "||", "`", "$(").any { it in normalized }) return false
+        if (hasUnsafeFileRedirection(normalized)) return false
+
+        // Allow token-saving read pipelines and `cd <path> && <routine>` composition that the
+        // agent prompt itself recommends (e.g. `ls ... 2>&1 | head -40`, `cd proj && rg ... | head`).
+        val withoutSafeRedirects = normalized
+            .replace(Regex("""\s+\d*>&\d+\b"""), " ")
+            .replace(Regex("""\s+>&\d+\b"""), " ")
+            .trim()
+        val pipeParts = withoutSafeRedirects.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+        if (pipeParts.isEmpty()) return false
+        if (pipeParts.drop(1).any { !isSafeReadFilter(it) }) return false
+
+        val leftParts = pipeParts.first().split("&&").map { it.trim() }.filter { it.isNotEmpty() }
+        if (leftParts.isEmpty()) return false
+        var index = 0
+        if (CD_PREFIX.matches(leftParts[0])) {
+            index = 1
+            if (index >= leftParts.size) return false
+        }
+        // Only one primary command after optional cd — further && chains need approval.
+        if (leftParts.size - index != 1) return false
+        return isRoutinePrimaryCommand(leftParts[index])
+    }
+
+    private fun isRoutinePrimaryCommand(command: String): Boolean {
+        if (Regex("\\bfind\\b.*\\s(-delete|-exec|-execdir)\\b").containsMatchIn(command)) return false
+        if (BLOCKED_NETWORK_OR_MUTATION.containsMatchIn(command)) return false
+        return ROUTINE_PRIMARY.containsMatchIn(command)
+    }
+
+    private fun isSafeReadFilter(command: String): Boolean =
+        SAFE_READ_FILTER.containsMatchIn(command) && !hasDynamicShellSyntax(command)
+
+    /** File redirection (`>` / `<`) except fd-to-fd forms like `2>&1`. */
+    private fun hasUnsafeFileRedirection(command: String): Boolean {
+        val stripped = command
+            .replace(Regex("""\d*>&\d+"""), "")
+            .replace(Regex(""">&\d+"""), "")
+        return ">" in stripped || "<" in stripped
     }
 
     /**

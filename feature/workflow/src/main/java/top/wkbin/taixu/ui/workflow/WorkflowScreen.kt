@@ -156,10 +156,15 @@ fun WorkflowScreen(
         ApprovalDialog(request, onDecision = { approved, variables -> viewModel.decide(request.nodeId, approved, variables) })
     }
     pendingRun?.let { definition ->
+        var apks by remember(definition.id, projectName) {
+            mutableStateOf(viewModel.scanWorkspaceApks(projectName))
+        }
         WorkflowStartDialog(
             definition = definition,
             supplied = initialVariables,
             models = models,
+            availableApks = apks,
+            onRefreshApks = { apks = viewModel.scanWorkspaceApks(projectName) },
             onDismiss = { pendingRun = null },
         ) { variables ->
             pendingRun = null

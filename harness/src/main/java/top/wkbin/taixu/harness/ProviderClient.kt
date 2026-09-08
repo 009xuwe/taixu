@@ -116,14 +116,17 @@ internal class ChatApi(
     ): ChatResult = withContext(Dispatchers.IO) {
         val call = okHttpClient.newCall(buildRequest(model, messages, stream = true, includeUsage = includeUsage))
         // 关键：阻塞式 readUtf8Line() 不感知协程取消。用户点"停止"时必须主动 call.cancel()
-        // 关闭底层 socket，阻塞读才会立刻抛出 IOException 退出——否则要等读超时（最长 3 分钟），
+        // 关闭底层 socket，阻塞读才会立刻抛出 IOException 退出——否则要等读超时，
         // 表现为"停止按钮没反应"。
         val cancelHandle = coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { call.cancel() }
         // source.timeout() 只有收到 HTTP 响应头后才生效。看门狗覆盖 DNS、连接、请求体上传、
         // 等待响应头以及首个 SSE 事件的完整阶段，避免大请求仍静默等满 callTimeout。
+        val firstEventTimeoutMs = ProviderClient.resolveFirstEventTimeoutMs(
+            ProviderClient.estimateApiMessageTokens(messages),
+        )
         val firstEventState = AtomicInteger(ProviderClient.FIRST_EVENT_WAITING)
         val firstEventWatchdog = launch {
-            delay(ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS)
+            delay(firstEventTimeoutMs)
             if (firstEventState.compareAndSet(ProviderClient.FIRST_EVENT_WAITING, ProviderClient.FIRST_EVENT_TIMED_OUT)) {
                 call.cancel()
             }
@@ -210,7 +213,7 @@ internal class ChatApi(
         } catch (io: IOException) {
             if (firstEventState.get() == ProviderClient.FIRST_EVENT_TIMED_OUT) {
                 throw SocketTimeoutException(
-                    "等待模型首个响应超过 ${ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS / 1000}s",
+                    "等待模型首个响应超过 ${firstEventTimeoutMs / 1000}s",
                 ).apply { initCause(io) }
             }
             throw io
@@ -856,13 +859,31 @@ class ProviderClient @Inject constructor(
     companion object {
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         const val DEFAULT_MODEL = "gpt-4o-mini"
-        private const val CALL_TIMEOUT_MS = 3 * 60 * 1000L
+        // 须覆盖最大首字看门狗（240s），否则超大上下文 Prefill 会先被 callTimeout 掐断。
+        private const val CALL_TIMEOUT_MS = 5 * 60 * 1000L
 
-        /** 大请求若迟迟没有任何合法 SSE 事件，应尽早失败并向 UI 暴露重试，而不是静默等满 3 分钟。 */
+        /** 大请求若迟迟没有任何合法 SSE 事件，应尽早失败并向 UI 暴露重试，而不是静默等满 callTimeout。 */
         internal const val FIRST_STREAM_EVENT_TIMEOUT_MS = 90_000L
         internal const val FIRST_EVENT_WAITING = 0
         internal const val FIRST_EVENT_RECEIVED = 1
         internal const val FIRST_EVENT_TIMED_OUT = 2
+
+        /** 按预估输入规模放宽首字看门狗：超大上下文 Prefill 常超过默认 90s。 */
+        internal fun resolveFirstEventTimeoutMs(estimatedTokens: Int): Long = when {
+            estimatedTokens > 80_000 -> 240_000L
+            estimatedTokens > 40_000 -> 150_000L
+            else -> FIRST_STREAM_EVENT_TIMEOUT_MS
+        }
+
+        internal fun estimateApiMessageTokens(messages: List<ApiMessage>): Int =
+            messages.sumOf { message ->
+                ContextWindowPolicy.estimateTokens(message.content.orEmpty()) +
+                    ContextWindowPolicy.estimateTokens(message.reasoning_content.orEmpty()) +
+                    (message.tool_calls?.sumOf { call ->
+                        ContextWindowPolicy.estimateTokens(call.function.name) +
+                            ContextWindowPolicy.estimateTokens(call.function.arguments)
+                    } ?: 0)
+            }
 
         /**
          * 单回合推理内容的累积上限（字符）。推理是执行过程草稿，不是长期上下文；
@@ -1019,7 +1040,7 @@ class ProviderClient @Inject constructor(
             return LlmRateLimitException(message, retrySeconds, quotaExhausted)
         }
 
-        internal const val READ_TIMEOUT_MS = 3 * 60 * 1000L
+        internal const val READ_TIMEOUT_MS = 5 * 60 * 1000L
         internal val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         /** 工具 JSON Schema，与 ToolExecutor 的参数契约一一对应。 */
@@ -1128,7 +1149,7 @@ class ProviderClient @Inject constructor(
                     name = "plan",
                     description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。当任务预计需要 3 次以上工具调用、存在多个相互依赖的执行阶段、失败后需要分支排查，或会修改多个文件/系统状态时，第一轮工具调用先 replace_active 建立规划，每步完成后 advance；简单单步或双步任务不要建 plan。详细规则见 workflow 规则块（未注入时可用 load_rule 获取）。支持 action: replace_active, get_active, advance, clear_active。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"action":{"type":"string","enum":["replace_active","get_active","advance","clear_active"],"description":"规划操作动作"},"goal":{"type":"string","description":"任务总体目标"},"steps":{"type":"array","description":"规划步骤列表（每个步骤包含 id, title, status: pending|in_progress|completed|failed）","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"}},"required":["id","title","status"]}},"status":{"type":"string","description":"任务整体状态"}},"required":["action"]}""",
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["replace_active","get_active","advance","clear_active"],"description":"规划操作动作"},"goal":{"type":"string","description":"任务总体目标"},"steps":{"type":"array","description":"规划步骤列表（每个步骤包含 id, title, status: pending|in_progress|completed|failed）","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"}},"required":["id","title","status"]}},"status":{"type":"string","enum":["active","completed","cancelled"],"description":"可选：计划整体生命周期状态（仅限 active/completed/cancelled，步骤进度请写在 steps[].status）"}},"required":["action"]}""",
                     ).jsonObject,
                 ),
             ),

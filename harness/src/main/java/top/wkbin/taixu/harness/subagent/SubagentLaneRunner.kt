@@ -71,6 +71,7 @@ class SubagentLaneRunner @Inject constructor(
         return try {
             val configuredModel = modelConfig ?: providerClient.resolveConfigured(modelId, modelVariant)
             val loopDetector = ToolCallLoopDetector()
+            // 子智能体是定向小任务，不能沿用主会话数百轮上限，否则只读审计会漫游到超时。
             val maxRounds = runCatching { settingsDataStore.maxToolRounds.first() }
                 .getOrDefault(DEFAULT_MAX_ROUNDS)
                 .coerceIn(MIN_MAX_ROUNDS, MAX_MAX_ROUNDS)
@@ -259,9 +260,9 @@ class SubagentLaneRunner @Inject constructor(
     private fun now() = System.currentTimeMillis()
 
     companion object {
-        private const val DEFAULT_MAX_ROUNDS = 100
-        private const val MIN_MAX_ROUNDS = 10
-        private const val MAX_MAX_ROUNDS = 300
+        private const val DEFAULT_MAX_ROUNDS = 20
+        private const val MIN_MAX_ROUNDS = 5
+        private const val MAX_MAX_ROUNDS = 30
         private const val NETWORK_ATTEMPTS = 2
         private const val NETWORK_RETRY_DELAY_MS = 1_000L
     }
