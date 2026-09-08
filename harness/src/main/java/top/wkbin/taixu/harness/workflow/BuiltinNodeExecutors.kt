@@ -75,8 +75,6 @@ class LinuxNodeExecutor @Inject constructor(
         WorkflowNodeType.BASH_COMMAND,
         WorkflowNodeType.PROCESS_SERVICE,
         WorkflowNodeType.TAIXU_BUILD,
-        WorkflowNodeType.HOST_ACTION,
-        WorkflowNodeType.CONDITION_BRANCH,
     )
 
     override suspend fun execute(
@@ -84,14 +82,6 @@ class LinuxNodeExecutor @Inject constructor(
         context: WorkflowRuntimeContext,
         onProgress: suspend (NodeRunStatus, String) -> Unit,
     ): NodeExecutionOutput = withContext(Dispatchers.IO) {
-        if (node.type == WorkflowNodeType.CONDITION_BRANCH) {
-            val upstream = context.upstreamNodeIds?.lastOrNull()?.let { context.nodeOutputs[it] }
-            return@withContext NodeExecutionOutput(
-                status = upstream?.status ?: NodeRunStatus.SUCCESS,
-                exitCode = upstream?.exitCode ?: 0,
-                textOutput = upstream?.textOutput ?: previousOutput(context),
-            )
-        }
         val commandLine = commandFor(node, context)
             ?: return@withContext NodeExecutionOutput(NodeRunStatus.FAILED, exitCode = 2, error = "节点缺少可执行配置")
         onProgress(NodeRunStatus.STREAMING, commandLine)
@@ -153,20 +143,8 @@ class LinuxNodeExecutor @Inject constructor(
             "analyze" -> "taixu-build analyze ."
             else -> "taixu-build ${node.config["projectType"] ?: "android"} . ${node.config["task"] ?: "assembleDebug"} --offline"
         }
-        WorkflowNodeType.HOST_ACTION -> when (node.config["action"]) {
-            "install-apk" -> {
-                val artifact = node.config["artifactFrom"]?.let { context.nodeOutputs[it]?.artifacts?.lastOrNull() }
-                    ?: context.globalVariables["APK_PATH"]
-                artifact?.let { "taixu-host install-apk ${posixQuote(it)}" }
-            }
-            "health" -> "taixu-host health"
-            else -> node.config["command"]?.let { interpolate(it, context) }
-        }
         else -> null
     }
-
-    private fun previousOutput(context: WorkflowRuntimeContext): String =
-        context.previousOutput()
 
     private fun interpolate(template: String, context: WorkflowRuntimeContext): String = VARIABLE.replace(template) { match ->
         val key = match.groupValues[1]

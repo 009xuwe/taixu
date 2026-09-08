@@ -443,6 +443,16 @@ fun WorkflowNodeType.visualTheme(): NodeVisualTheme = when (this) {
         icon = RuntimeIconName.Android,
         tag = "宿主系统",
     )
+    WorkflowNodeType.DELAY -> NodeVisualTheme(
+        accentColor = Color(0xFF94A3B8),
+        icon = RuntimeIconName.Speed,
+        tag = "延时等待",
+    )
+    WorkflowNodeType.SET_VARIABLE -> NodeVisualTheme(
+        accentColor = Color(0xFF2DD4BF),
+        icon = RuntimeIconName.Tune,
+        tag = "设置变量",
+    )
     WorkflowNodeType.TERMINAL_OUTPUT -> NodeVisualTheme(
         accentColor = Color(0xFF0EA5E9), // 归档天蓝
         icon = RuntimeIconName.Check,
@@ -592,10 +602,13 @@ private fun WorkflowNodeCard(
                     ) {
                         val previewText = when (node.type) {
                             WorkflowNodeType.BASH_COMMAND -> ">_ ${node.config["command"]?.trim() ?: "待配置命令"}"
-                            WorkflowNodeType.CONDITION_BRANCH -> "🔀 exitCode == 0 ? 分支A : 分支B"
+                            WorkflowNodeType.CONDITION_BRANCH -> "🔀 ${node.config["expression"]?.trim() ?: "exitCode == 0"}"
                             WorkflowNodeType.AGENT_INFERENCE -> "✨ ${node.config["prompt"]?.trim()?.take(20) ?: "AI 提示词"}"
                             WorkflowNodeType.TAIXU_BUILD -> "📦 ${node.config["projectType"] ?: "android"} · ${node.config["task"] ?: "assemble"}"
                             WorkflowNodeType.HUMAN_APPROVAL -> "🛡️ 需要人工确认"
+                            WorkflowNodeType.HOST_ACTION -> "📱 ${node.config["action"] ?: "status"}"
+                            WorkflowNodeType.DELAY -> "⏱ ${node.config["seconds"] ?: "1"}s"
+                            WorkflowNodeType.SET_VARIABLE -> "🔤 ${node.config["variables"]?.lineSequence()?.firstOrNull() ?: "KEY=value"}"
                             else -> progress.ifBlank { node.description.ifBlank { node.id } }
                         }
                         Text(
@@ -724,5 +737,7 @@ private fun WorkflowNodeType.displayName(): String = when (this) {
     WorkflowNodeType.CONDITION_BRANCH -> "条件分支"
     WorkflowNodeType.HUMAN_APPROVAL -> "人工审批"
     WorkflowNodeType.HOST_ACTION -> "宿主动作"
+    WorkflowNodeType.DELAY -> "延时"
+    WorkflowNodeType.SET_VARIABLE -> "变量"
     WorkflowNodeType.TERMINAL_OUTPUT -> "输出"
 }

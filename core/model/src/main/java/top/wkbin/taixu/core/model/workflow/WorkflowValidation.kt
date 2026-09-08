@@ -19,6 +19,36 @@ object WorkflowValidator {
             if (node.timeoutSeconds !in 1..3600) {
                 issues += WorkflowValidationIssue("nodes.${node.id}.timeoutSeconds", "超时必须在 1–3600 秒之间")
             }
+            if (node.type == WorkflowNodeType.CONDITION_BRANCH) {
+                val expression = node.config["expression"] ?: node.config["condition"]
+                WorkflowConditionEvaluator.validationError(expression)?.let { message ->
+                    issues += WorkflowValidationIssue("nodes.${node.id}.expression", message)
+                }
+            }
+            if (node.type == WorkflowNodeType.HOST_ACTION) {
+                val action = node.config["action"].orEmpty().ifBlank { "status" }
+                val def = HostWorkflowActions.find(action)
+                if (def == null && node.config["command"].isNullOrBlank()) {
+                    issues += WorkflowValidationIssue(
+                        "nodes.${node.id}.action",
+                        "未知宿主动作：$action（可改用已知动作，或提供 command 作为逃逸舱）",
+                    )
+                }
+                def?.fields?.filter { it.required }?.forEach { field ->
+                    if (node.config[field.key].isNullOrBlank()) {
+                        issues += WorkflowValidationIssue(
+                            "nodes.${node.id}.${field.key}",
+                            "宿主动作「${def.label}」缺少必填参数：${field.label}",
+                        )
+                    }
+                }
+            }
+            if (node.type == WorkflowNodeType.DELAY) {
+                val seconds = node.config["seconds"] ?: node.config["delaySeconds"]
+                if (seconds != null && seconds.toDoubleOrNull() == null) {
+                    issues += WorkflowValidationIssue("nodes.${node.id}.seconds", "等待秒数必须是数字")
+                }
+            }
         }
 
         val known = nodeIds.toSet()

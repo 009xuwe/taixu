@@ -54,6 +54,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import top.wkbin.taixu.core.model.workflow.FailurePolicy
+import top.wkbin.taixu.core.model.workflow.HostWorkflowActions
+import top.wkbin.taixu.core.model.workflow.HostWorkflowPrivilege
 import top.wkbin.taixu.core.model.workflow.NodeRunStatus
 import top.wkbin.taixu.core.model.workflow.WorkflowEdge
 import top.wkbin.taixu.core.model.workflow.WorkflowNode
@@ -985,6 +987,21 @@ private fun NodeInspectorCard(
                 }
 
                 WorkflowNodeType.CONDITION_BRANCH -> {
+                    OutlinedTextField(
+                        value = configMap["expression"] ?: configMap["condition"].orEmpty(),
+                        onValueChange = {
+                            configMap["expression"] = it
+                            configMap.remove("condition")
+                        },
+                        label = { Text("条件表达式") },
+                        placeholder = { Text("exitCode == 0  或  \${HOST_PRIVILEGED} == true") },
+                        supportingText = {
+                            Text("支持 exitCode / output contains / \${VAR} 比较，以及 && ||。成立→exit 0，否则 exit 1。")
+                        },
+                        minLines = 2,
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     BranchRouterCard(
                         state = state,
                         node = node,
@@ -1094,19 +1111,32 @@ private fun NodeInspectorCard(
                 }
 
                 WorkflowNodeType.HOST_ACTION -> {
-                    var actionExpanded by remember { mutableStateOf(false) }
-                    val currentAction = configMap["action"] ?: "install-apk"
+                    HostActionConfigFields(configMap = configMap)
+                }
 
-                    Column {
-                        RuntimeOutlinedButton(onClick = { actionExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text("宿主动作：${if (currentAction == "install-apk") "安装 APK" else currentAction}", maxLines = 1)
-                        }
-                        DropdownMenu(expanded = actionExpanded, onDismissRequest = { actionExpanded = false }) {
-                            listOf("install-apk" to "安装构建生成的 APK", "health" to "宿主环境诊断").forEach { (a, l) ->
-                                DropdownMenuItem(text = { Text(l) }, onClick = { configMap["action"] = a; actionExpanded = false })
-                            }
-                        }
-                    }
+                WorkflowNodeType.DELAY -> {
+                    OutlinedTextField(
+                        value = configMap["seconds"] ?: "1",
+                        onValueChange = { configMap["seconds"] = it.filter { ch -> ch.isDigit() || ch == '.' }.take(6) },
+                        label = { Text("等待秒数") },
+                        supportingText = { Text("支持 0–600 秒，可写小数") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                WorkflowNodeType.SET_VARIABLE -> {
+                    OutlinedTextField(
+                        value = configMap["variables"].orEmpty(),
+                        onValueChange = { configMap["variables"] = it },
+                        label = { Text("变量赋值（每行 KEY=value）") },
+                        placeholder = { Text("FOO=bar\nPATH=\${WORKSPACE_PATH}") },
+                        supportingText = { Text("支持 \${VAR} / \${previous.output} / \${nodeId.output}") },
+                        minLines = 3,
+                        maxLines = 8,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
 
                 WorkflowNodeType.HUMAN_APPROVAL -> {
@@ -1226,6 +1256,91 @@ private fun NodeInspectorCard(
 }
 
 @Composable
+private fun HostActionConfigFields(configMap: MutableMap<String, String>) {
+    var categoryExpanded by remember { mutableStateOf(false) }
+    var actionExpanded by remember { mutableStateOf(false) }
+    val grouped = remember { HostWorkflowActions.grouped() }
+    val currentActionId = configMap["action"] ?: "status"
+    val currentDef = HostWorkflowActions.find(currentActionId)
+    val currentCategory = currentDef?.category ?: grouped.keys.firstOrNull().orEmpty()
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(modifier = Modifier.weight(1f)) {
+                RuntimeOutlinedButton(onClick = { categoryExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("分类：$currentCategory", maxLines = 1)
+                }
+                DropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
+                    grouped.keys.forEach { category ->
+                        DropdownMenuItem(
+                            text = { Text(category) },
+                            onClick = {
+                                categoryExpanded = false
+                                val first = grouped[category]?.firstOrNull() ?: return@DropdownMenuItem
+                                configMap["action"] = first.id
+                            },
+                        )
+                    }
+                }
+            }
+            Column(modifier = Modifier.weight(1.4f)) {
+                RuntimeOutlinedButton(onClick = { actionExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(currentDef?.label ?: currentActionId, maxLines = 1)
+                }
+                DropdownMenu(expanded = actionExpanded, onDismissRequest = { actionExpanded = false }) {
+                    grouped[currentCategory].orEmpty().forEach { action ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    buildString {
+                                        append(action.label)
+                                        if (action.privilege == HostWorkflowPrivilege.PRIVILEGED) append(" · 需特权")
+                                    },
+                                )
+                            },
+                            onClick = {
+                                configMap["action"] = action.id
+                                actionExpanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        currentDef?.let { def ->
+            Text(
+                text = def.description + if (def.privilege == HostWorkflowPrivilege.PRIVILEGED) {
+                    "\n⚠ 需要 Shizuku 或 Root 生效。"
+                } else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            def.fields.forEach { field ->
+                OutlinedTextField(
+                    value = configMap[field.key].orEmpty(),
+                    onValueChange = { configMap[field.key] = it },
+                    label = { Text(if (field.required) "${field.label} *" else field.label) },
+                    placeholder = { Text(field.hint) },
+                    singleLine = !field.multiline,
+                    minLines = if (field.multiline) 3 else 1,
+                    maxLines = if (field.multiline) 6 else 1,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        } ?: OutlinedTextField(
+            value = configMap["command"].orEmpty(),
+            onValueChange = { configMap["command"] = it },
+            label = { Text("自定义宿主命令（逃逸舱）") },
+            supportingText = { Text("未知 action 时将按特权 shell 执行此命令") },
+            minLines = 2,
+            maxLines = 4,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
 private fun BranchRouterCard(
     state: WorkflowEditorUiState,
     node: WorkflowNode,
@@ -1261,7 +1376,8 @@ private fun BranchRouterCard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = "💡 路由规则：上游节点执行完毕后，根据退出码分流：\n  • exitCode == 0 走向【成功分支】\n  • exitCode != 0 走向【失败分支】",
+                    text = "💡 节点会求值上方表达式：成立 exitCode=0，不成立 exitCode=1（节点本身仍成功，便于分流）。\n" +
+                        "下面可快速把成功/失败分支连到目标节点。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(8.dp),
@@ -1643,8 +1759,8 @@ fun WorkflowNodeType.metadata(): NodeTypeMeta = when (this) {
         type = this,
         label = "条件分支路由",
         icon = RuntimeIconName.Link,
-        summary = "透传上游输出，结合引出连线上的条件表达式进行分支跳转",
-        guide = "条件分支节点根据上游执行的退出码 (exitCode) 或输出内容进行分流跳转，支持可视化配置成功与失败分支。",
+        summary = "求值表达式并按成立/不成立分流",
+        guide = "支持 exitCode、output contains、\${变量} 比较，以及 && / ||。成立时 exitCode=0，否则为 1；请用边上的条件或 success/failure 端口承接分支。",
     )
     WorkflowNodeType.HUMAN_APPROVAL -> NodeTypeMeta(
         type = this,
@@ -1657,8 +1773,22 @@ fun WorkflowNodeType.metadata(): NodeTypeMeta = when (this) {
         type = this,
         label = "宿主系统动作",
         icon = RuntimeIconName.Android,
-        summary = "调用 Android 宿主能力（如直接安装构建产出的 APK 安装包）",
-        guide = "穿透沙箱边界调用 Android 本地能力，例如直接唤起系统安装器安装编译完成的 APK，或进行系统健康体检。",
+        summary = "打开应用、发广播、改设置、操控屏幕等 Android 宿主能力",
+        guide = "穿透沙箱调用 Android：应用管理、Intent/广播、系统设置、GUI 自动化、通知与特权 shell。标「需特权」的动作要求 Shizuku 或 Root。",
+    )
+    WorkflowNodeType.DELAY -> NodeTypeMeta(
+        type = this,
+        label = "延时等待",
+        icon = RuntimeIconName.Speed,
+        summary = "暂停若干秒后再继续后续节点",
+        guide = "用于等待界面切换、广播落地或给人工留出观察时间。",
+    )
+    WorkflowNodeType.SET_VARIABLE -> NodeTypeMeta(
+        type = this,
+        label = "设置变量",
+        icon = RuntimeIconName.Tune,
+        summary = "向后续节点注入 KEY=value 变量",
+        guide = "每行一个赋值，右侧支持 \${VAR} 插值。写入的变量会进入全局上下文，可供条件与宿主动作引用。",
     )
     WorkflowNodeType.TERMINAL_OUTPUT -> NodeTypeMeta(
         type = this,

@@ -113,12 +113,17 @@ class RoomHarnessRuntimeRepository @Inject constructor(
     override suspend fun branchEntryAt(sessionId: String, leafId: String?, index: Int): HarnessEntryEntity? =
         leafId?.let { dao.branchEntryAt(sessionId, it, index)?.let(::restoreFromStorage) }
     private suspend fun ensureUniqueStorageEntry(entry: HarnessEntryEntity): HarnessEntryEntity {
-        val existing = dao.findEntry(entry.id) ?: return entry
-        if (existing.sessionId == entry.sessionId && existing.payloadJson == entry.payloadJson) {
-            return entry
+        var candidate = entry
+        repeat(8) {
+            val existing = dao.findEntry(candidate.id) ?: return candidate
+            if (existing.sessionId == entry.sessionId && existing.payloadJson == entry.payloadJson) {
+                return entry
+            }
+            val randomSuffix = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+            candidate = entry.copy(id = "${entry.id}_$randomSuffix")
         }
-        val randomSuffix = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
-        return entry.copy(id = "${entry.id}_$randomSuffix")
+        val fallback = java.util.UUID.randomUUID().toString().replace("-", "")
+        return entry.copy(id = "${entry.id}_$fallback")
     }
 
     override suspend fun findEntry(sessionId: String, entryId: String): HarnessEntryEntity? =

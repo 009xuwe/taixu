@@ -46,10 +46,44 @@
 - 输入构建错误 → 只读智能体诊断 → 确认修改 → 子智能体最小修复 → Diff → 确认重新构建。
 - APK 解包与反编译 → 智能体只读审计 → 带证据的报告；不强制覆盖已有解包目录。
 - Git Diff → 智能体提交建议 → 用户输入确认提交说明 → 本地提交；不推送。
+- **宿主自动化实验室**：权限探测 → 打开设置 → 等待前台 → 屏幕感知 → 通知（无特权则 Toast 降级）。
+- **广播 + 系统设置演示**：变量 → 自定义广播 → 读亮度 → 审批后写亮度。
 
 ## 节点与安全边界
 
-当前可执行节点覆盖触发器、终止节点、Bash、托管进程、智能体推理、子智能体委派、太墟构建、宿主动作、条件和人工审批。内置发布工作流在 APK 安装前要求确认；智能提交只在本地提交，不默认推送远端。
+当前可执行节点覆盖触发器、终止节点、Bash、托管进程、智能体推理、子智能体委派、太墟构建、**宿主动作（应用/广播/设置/GUI/特权 shell）**、**条件求值**、延时、设置变量和人工审批。
+
+### 宿主动作（HOST_ACTION）
+
+编辑器按分类选择动作；标记「需特权」的项要求设置中已切换到 **Shizuku 或 Root** 且授权生效：
+
+- **诊断**：权限状态、桥健康、设备快照、logcat
+- **应用**：打开应用、强停、清数据、冻结/解冻、授权/撤销权限、等待前台
+- **Intent**：发送广播、启动 Activity/Service（支持 extras：`key=value` / `key:int=1` / `flag:bool=true`）
+- **系统**：settings get/put、飞行模式、Wi‑Fi、媒体音量
+- **GUI**：感知屏幕、点击/滑动/输入/按键、截图
+- **交互**：Toast、震动、剪贴板、通知
+- **高级**：特权 shell、`cmd` 服务调用；未知 action 可回退到自定义 `command`
+
+广播与启动 Activity 默认先走应用 Context；失败或勾选强制 shell 时走 `am broadcast` / `am start`。
+
+### 条件分支（CONDITION_BRANCH）
+
+节点配置 `expression` 并真正求值（不再只是透传）：
+
+- `exitCode == 0` / `!=`
+- `output contains …` / `output matches …`
+- `${VAR} == …` / `!=` / `contains` / `matches` / 数值比较
+- `empty VAR` / `notEmpty VAR`
+- `&&` / `||` 组合
+
+成立时节点 `exitCode=0` 并写入 `CONDITION_RESULT=true`；不成立为 `exitCode=1`。边上仍可用 `exitCode` / success·failure 端口分流。
+
+### 其它
+
+- `DELAY`：等待秒数；`SET_VARIABLE`：多行 `KEY=value` 注入全局变量。
+- 内置发布工作流在 APK 安装前要求确认；智能提交只在本地提交，不默认推送远端。
+- 新增内置示例：`host_automation_lab`（打开设置 + 屏幕感知）、`host_broadcast_and_settings`（广播 + 设置）。
 
 智能体节点通过每次运行、每个节点独立的持久化 Harness 会话与 Lane 执行，不切换智枢当前会话。`prompt` 支持 `${WORKSPACE_PATH}`、`${变量名}`、`${节点ID.output}` 与 `${previous.output}`；后者只合并实际激活的直接前驱，按连线顺序输出，不受无关并行节点影响。子智能体节点可配置 `role`，或同时配置 `department` 与 `agentQuery`，写权限范围由逗号分隔的 `writePaths` 声明。
 

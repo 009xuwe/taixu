@@ -13,6 +13,10 @@ abstract class WorkflowExecutorModule {
     @Binds @IntoSet abstract fun bindApproval(impl: ApprovalNodeExecutor): NodeExecutor
     @Binds @IntoSet abstract fun bindLinux(impl: LinuxNodeExecutor): NodeExecutor
     @Binds @IntoSet abstract fun bindAgent(impl: AgentNodeExecutor): NodeExecutor
+    @Binds @IntoSet abstract fun bindCondition(impl: ConditionNodeExecutor): NodeExecutor
+    @Binds @IntoSet abstract fun bindDelay(impl: DelayNodeExecutor): NodeExecutor
+    @Binds @IntoSet abstract fun bindSetVariable(impl: SetVariableNodeExecutor): NodeExecutor
+    @Binds @IntoSet abstract fun bindHostAction(impl: HostActionNodeExecutor): NodeExecutor
 
     @Binds abstract fun bindAgentExecutionPort(impl: HarnessWorkflowAgentExecutionPort): WorkflowAgentExecutionPort
 }

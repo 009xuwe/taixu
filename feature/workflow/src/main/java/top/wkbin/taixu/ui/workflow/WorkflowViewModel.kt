@@ -325,6 +325,8 @@ private fun WorkflowNodeType.defaultTitle(): String = when (this) {
     WorkflowNodeType.CONDITION_BRANCH -> "条件分支"
     WorkflowNodeType.HUMAN_APPROVAL -> "人工审批"
     WorkflowNodeType.HOST_ACTION -> "宿主动作"
+    WorkflowNodeType.DELAY -> "延时等待"
+    WorkflowNodeType.SET_VARIABLE -> "设置变量"
     WorkflowNodeType.TERMINAL_OUTPUT -> "输出结果"
 }
 
@@ -338,5 +340,9 @@ private fun WorkflowNodeType.defaultConfig(): Map<String, String> = when (this) 
         "role" to "",
         "writePaths" to "",
     )
+    WorkflowNodeType.HOST_ACTION -> mapOf("action" to "status")
+    WorkflowNodeType.CONDITION_BRANCH -> mapOf("expression" to "exitCode == 0")
+    WorkflowNodeType.DELAY -> mapOf("seconds" to "1")
+    WorkflowNodeType.SET_VARIABLE -> mapOf("variables" to "EXAMPLE_KEY=example_value")
     else -> emptyMap()
 }

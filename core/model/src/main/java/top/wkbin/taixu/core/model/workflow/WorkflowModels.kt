@@ -49,6 +49,8 @@ enum class WorkflowNodeType {
     CONDITION_BRANCH,
     HUMAN_APPROVAL,
     HOST_ACTION,
+    DELAY,
+    SET_VARIABLE,
     TERMINAL_OUTPUT,
 }
 
