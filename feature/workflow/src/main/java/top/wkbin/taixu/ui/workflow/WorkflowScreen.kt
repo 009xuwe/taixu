@@ -133,7 +133,7 @@ fun WorkflowScreen(
                 onRedo = viewModel::redoEdit,
                 onSave = viewModel::saveEditor,
                 onAutoLayout = viewModel::autoLayout,
-                modifier = Modifier.fillMaxSize().padding(padding),
+                modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
             )
             activeState == null -> WorkflowCatalog(
                 definitions = definitions,

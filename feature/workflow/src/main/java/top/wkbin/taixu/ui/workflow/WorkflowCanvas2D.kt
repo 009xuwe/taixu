@@ -257,6 +257,7 @@ fun WorkflowCanvas2D(
                         .pointerInput(node.id, editable, scale) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
+                                down.consume()
                                 var isDrag = false
                                 val pointerId = down.id
                                 var totalPan = Offset.Zero
@@ -269,6 +270,7 @@ fun WorkflowCanvas2D(
                                     val change = event.changes.firstOrNull { it.id == pointerId } ?: break
 
                                     if (change.changedToUpIgnoreConsumed()) {
+                                        change.consume()
                                         if (!isDrag) {
                                             val source = connectionSourceId
                                             if (source != null && source != node.id) {
@@ -319,7 +321,9 @@ fun WorkflowCanvas2D(
             onZoomOut = { zoomBy(0.82f) },
             onFit = ::fitToContent,
             onZoomIn = { zoomBy(1.22f) },
-            modifier = Modifier.align(Alignment.TopEnd),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 12.dp),
         )
 
         Text(

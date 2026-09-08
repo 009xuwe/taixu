@@ -7,14 +7,17 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -114,170 +117,185 @@ fun WorkflowEditorView(
     var showRunConsole by remember { mutableStateOf(false) }
     var nodePendingDelete by remember { mutableStateOf<WorkflowNode?>(null) }
 
-    Column(modifier) {
-        state.message?.let { message ->
-            Surface(
-                color = if (message == "已保存" || message == "请选择目标节点") {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                } else {
-                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.labelSmall,
+    BoxWithConstraints(modifier) {
+        val editorHeight = maxHeight
+        val isWideScreen = maxWidth >= 820.dp
+        val selectedNode = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+        val isInspectorOpen = !isWideScreen && sheetExpanded && selectedNode != null
+
+        Column(Modifier.fillMaxSize()) {
+            state.message?.let { message ->
+                Surface(
                     color = if (message == "已保存" || message == "请选择目标节点") {
-                        MaterialTheme.colorScheme.primary
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
                     } else {
-                        MaterialTheme.colorScheme.error
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
                     },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            }
-        }
-
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val canvas: @Composable (Modifier) -> Unit = { canvasModifier ->
-                WorkflowCanvas2D(
-                    definition = state.definition,
-                    state = activeRunState,
-                    editable = !isRunning,
-                    selectedNodeId = state.selectedNodeId,
-                    connectionSourceId = state.connectionSourceId,
-                    onNodeSelected = onSelectNode,
-                    onNodeClicked = { nodeId ->
-                        onSelectNode(nodeId)
-                        sheetExpanded = true
-                    },
-                    onCanvasTapped = {
-                        sheetExpanded = false
-                        onSelectNode(null)
-                    },
-                    onNodeMoved = onMoveNode,
-                    onConnectionRequested = { _, target -> onConnect(target) },
-                    onBeginConnection = onBeginConnection,
-                    onRemoveNode = { nodeId ->
-                        val target = state.definition.nodes.firstOrNull { it.id == nodeId }
-                        if (target != null) nodePendingDelete = target
-                    },
-                    onConfigureNode = { nodeId ->
-                        onSelectNode(nodeId)
-                        sheetExpanded = true
-                    },
-                    modifier = canvasModifier,
-                )
-            }
-            val inspector: @Composable (Modifier) -> Unit = { inspectorModifier ->
-                EditorInspector(
-                    state = state,
-                    activeRunState = activeRunState,
-                    onUpdateNode = onUpdateNode,
-                    onUpdateMetadata = onUpdateMetadata,
-                    onBeginConnection = onBeginConnection,
-                    onCancelConnection = onCancelConnection,
-                    onRemoveNode = {
-                        val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
-                        if (selected != null) nodePendingDelete = selected
-                    },
-                    onConnectNodes = onConnectNodes,
-                    onDisconnectAllForNode = onDisconnectAllForNode,
-                    onUpdateEdge = onUpdateEdge,
-                    onRemoveEdge = onRemoveEdge,
-                    onOpenConsole = { showRunConsole = true },
-                    modifier = inspectorModifier,
-                )
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (message == "已保存" || message == "请选择目标节点") {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
             }
 
-            val selectedNode = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                val canvas: @Composable (Modifier) -> Unit = { canvasModifier ->
+                    WorkflowCanvas2D(
+                        definition = state.definition,
+                        state = activeRunState,
+                        editable = !isRunning,
+                        selectedNodeId = state.selectedNodeId,
+                        connectionSourceId = state.connectionSourceId,
+                        onNodeSelected = onSelectNode,
+                        onNodeClicked = { nodeId ->
+                            onSelectNode(nodeId)
+                            sheetExpanded = true
+                        },
+                        onCanvasTapped = {
+                            sheetExpanded = false
+                            onSelectNode(null)
+                        },
+                        onNodeMoved = onMoveNode,
+                        onConnectionRequested = { _, target -> onConnect(target) },
+                        onBeginConnection = onBeginConnection,
+                        onRemoveNode = { nodeId ->
+                            val target = state.definition.nodes.firstOrNull { it.id == nodeId }
+                            if (target != null) nodePendingDelete = target
+                        },
+                        onConfigureNode = { nodeId ->
+                            onSelectNode(nodeId)
+                            sheetExpanded = true
+                        },
+                        modifier = canvasModifier,
+                    )
+                }
+                val inspector: @Composable (Modifier) -> Unit = { inspectorModifier ->
+                    EditorInspector(
+                        state = state,
+                        activeRunState = activeRunState,
+                        onUpdateNode = onUpdateNode,
+                        onUpdateMetadata = onUpdateMetadata,
+                        onBeginConnection = onBeginConnection,
+                        onCancelConnection = onCancelConnection,
+                        onRemoveNode = {
+                            val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+                            if (selected != null) nodePendingDelete = selected
+                        },
+                        onConnectNodes = onConnectNodes,
+                        onDisconnectAllForNode = onDisconnectAllForNode,
+                        onUpdateEdge = onUpdateEdge,
+                        onRemoveEdge = onRemoveEdge,
+                        onOpenConsole = { showRunConsole = true },
+                        modifier = inspectorModifier,
+                    )
+                }
 
-            if (maxWidth >= 820.dp) {
-                Row(Modifier.fillMaxSize()) {
-                    canvas(Modifier.weight(1f).fillMaxSize())
-                    if (sheetExpanded && selectedNode != null) {
-                        VerticalDivider()
-                        Box(Modifier.width(420.dp).fillMaxSize()) {
-                            Column(Modifier.fillMaxSize()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    val theme = selectedNode.type.visualTheme()
-                                    Surface(
-                                        color = theme.accentColor.copy(alpha = 0.16f),
-                                        shape = RoundedCornerShape(6.dp),
+                if (isWideScreen) {
+                    Row(Modifier.fillMaxSize()) {
+                        canvas(Modifier.weight(1f).fillMaxSize())
+                        if (sheetExpanded && selectedNode != null) {
+                            VerticalDivider()
+                            Box(Modifier.width(420.dp).fillMaxSize()) {
+                                Column(Modifier.fillMaxSize()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     ) {
+                                        val theme = selectedNode.type.visualTheme()
+                                        Surface(
+                                            color = theme.accentColor.copy(alpha = 0.16f),
+                                            shape = RoundedCornerShape(6.dp),
+                                        ) {
+                                            Text(
+                                                text = theme.tag,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = theme.accentColor,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                            )
+                                        }
                                         Text(
-                                            text = theme.tag,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = theme.accentColor,
+                                            text = selectedNode.title,
+                                            style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
                                         )
+                                        RuntimeIconButton(
+                                            onClick = {
+                                                sheetExpanded = false
+                                                onSelectNode(null)
+                                            },
+                                            modifier = Modifier.size(32.dp),
+                                            contentDescription = "关闭面板",
+                                        ) {
+                                            RuntimeIcon(RuntimeIconName.Close, Modifier.size(18.dp))
+                                        }
                                     }
-                                    Text(
-                                        text = selectedNode.title,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    RuntimeIconButton(
-                                        onClick = {
-                                            sheetExpanded = false
-                                            onSelectNode(null)
-                                        },
-                                        modifier = Modifier.size(32.dp),
-                                        contentDescription = "关闭面板",
-                                    ) {
-                                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(18.dp))
-                                    }
+                                    HorizontalDivider()
+                                    inspector(Modifier.fillMaxSize())
                                 }
-                                HorizontalDivider()
-                                inspector(Modifier.fillMaxSize())
                             }
                         }
                     }
+                } else {
+                    EditorBottomSheetLayout(
+                        maxHeight = editorHeight,
+                        selectedNode = selectedNode,
+                        sheetExpanded = sheetExpanded && selectedNode != null,
+                        onSheetExpandedChange = { expanded ->
+                            sheetExpanded = expanded
+                            if (!expanded) onSelectNode(null)
+                        },
+                        isRunning = isRunning,
+                        canvas = canvas,
+                        inspector = inspector,
+                    )
                 }
-            } else {
-                EditorBottomSheetLayout(
-                    maxHeight = maxHeight,
-                    selectedNode = selectedNode,
-                    sheetExpanded = sheetExpanded && selectedNode != null,
-                    onSheetExpandedChange = { expanded ->
-                        sheetExpanded = expanded
-                        if (!expanded) onSelectNode(null)
+            }
+
+            AnimatedVisibility(
+                visible = !isInspectorOpen,
+                enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                    expandVertically(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                    fadeIn(tween(160)),
+                exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(180, easing = FastOutSlowInEasing)) +
+                    shrinkVertically(animationSpec = tween(180, easing = FastOutSlowInEasing)) +
+                    fadeOut(tween(140)),
+            ) {
+                EditorBottomDock(
+                    state = state,
+                    activeRunState = activeRunState,
+                    onAddNode = onAddNode,
+                    onDeleteSelectedNode = {
+                        val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+                        if (selected != null) nodePendingDelete = selected
                     },
-                    isRunning = isRunning,
-                    canvas = canvas,
-                    inspector = inspector,
+                    onToggleConsole = { showRunConsole = true },
+                    onUndo = onUndo,
+                    onRedo = onRedo,
+                    onSave = onSave,
+                    onAutoLayout = onAutoLayout,
+                    onRun = {
+                        onRun()
+                        showRunConsole = true
+                    },
+                    onCancelRun = onCancelRun,
                 )
             }
         }
-
-        EditorBottomDock(
-            state = state,
-            activeRunState = activeRunState,
-            onAddNode = onAddNode,
-            onDeleteSelectedNode = {
-                val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
-                if (selected != null) nodePendingDelete = selected
-            },
-            onToggleConsole = { showRunConsole = true },
-            onUndo = onUndo,
-            onRedo = onRedo,
-            onSave = onSave,
-            onAutoLayout = onAutoLayout,
-            onRun = {
-                onRun()
-                showRunConsole = true
-            },
-            onCancelRun = onCancelRun,
-        )
     }
 
     // 节点删除确认弹窗
@@ -354,15 +372,23 @@ private fun EditorBottomSheetLayout(
                         .fillMaxWidth()
                         .height(maxHeight * 0.62f)
                         .shadow(
-                            elevation = 12.dp,
+                            elevation = 16.dp,
                             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-                        ),
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {},
                     shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
                     tonalElevation = 4.dp,
                 ) {
-                    Column(Modifier.fillMaxSize()) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .navigationBarsPadding(),
+                    ) {
                         // 顶部居中拖拽把手指示条
                         Box(
                             modifier = Modifier
@@ -445,22 +471,28 @@ private fun EditorBottomDock(
     val isRunning = activeRunState?.status in setOf(WorkflowRunStatus.RUNNING, WorkflowRunStatus.WAITING_APPROVAL)
 
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
-        shape = RoundedCornerShape(0.dp), // 去除圆角，平铺贴边
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(0.dp), // 去除圆角，平铺沉底贴边
         color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
         tonalElevation = 3.dp,
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .navigationBarsPadding(),
         ) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                thickness = 1.dp,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
             // 添加节点
             DockActionButton(
                 icon = RuntimeIconName.Plus,
@@ -553,6 +585,7 @@ private fun EditorBottomDock(
             )
         }
     }
+}
 
     if (addDialogVisible) {
         NodePickerModal(
