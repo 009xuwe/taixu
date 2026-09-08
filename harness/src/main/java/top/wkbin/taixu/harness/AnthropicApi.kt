@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -367,7 +367,8 @@ internal class AnthropicApi(
                 "text" -> text.append(obj["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
                 "thinking" -> reasoning.append(obj["thinking"]?.jsonPrimitive?.contentOrNull.orEmpty())
                 "tool_use" -> calls += ApiToolCallSpec(
-                    id = obj["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    id = obj["id"]?.jsonPrimitive?.contentOrNull?.ifBlank { ToolCallIdNormalizer.normalize(null) }
+                        ?: ToolCallIdNormalizer.normalize(null),
                     name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                     argumentsJson = obj["input"]?.toString() ?: "{}",
                 )
