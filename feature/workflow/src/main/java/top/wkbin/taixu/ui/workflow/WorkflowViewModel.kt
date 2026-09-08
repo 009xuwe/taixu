@@ -170,7 +170,7 @@ class WorkflowViewModel @Inject constructor(
                     WorkflowNode("start", WorkflowNodeType.TRIGGER, "手动触发", canvasX = 80f, canvasY = 160f),
                     WorkflowNode("done", WorkflowNodeType.TERMINAL_OUTPUT, "完成", canvasX = 420f, canvasY = 160f),
                 ),
-                edges = listOf(WorkflowEdge("edge_start_done", "start", "success", "done")),
+                edges = listOf(WorkflowEdge("edge_start_done", "start", "output", "done")),
             ),
             initiallySaved = false,
         )
@@ -223,7 +223,7 @@ class WorkflowViewModel @Inject constructor(
         mutate {
             WorkflowGraphEditor.connect(
                 it,
-                WorkflowEdge("edge_${UUID.randomUUID().toString().take(8)}", source, "success", targetNodeId),
+                WorkflowEdge("edge_${UUID.randomUUID().toString().take(8)}", source, "output", targetNodeId),
             )
         }
         _editorState.value = _editorState.value?.copy(connectionSourceId = null)

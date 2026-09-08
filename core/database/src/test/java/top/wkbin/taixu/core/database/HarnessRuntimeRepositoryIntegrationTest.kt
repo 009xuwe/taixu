@@ -296,4 +296,25 @@ class HarnessRuntimeRepositoryIntegrationTest {
         assertEquals(1, entries.size)
         assertEquals("idempotent_1", entries.first().id)
     }
+
+    @Test
+    fun `appendEntry rolls back lane when insert is ignored for conflicting id`() = runBlocking {
+        val sessionId = "session-ignore-conflict"
+        repository.ensureLane(sessionId, "main")
+        repository.appendToLane(sessionId, "main", entry("root", sessionId, null).copy(payloadJson = "{\"a\":1}"))
+
+        // Simulate a race / missed rename: another row already owns this primary key.
+        dao.insertEntry(entry("child", "other-session", null).copy(payloadJson = "{\"hijacked\":true}"))
+
+        val leafBefore = repository.findLane(sessionId, "main")!!.leafId
+        val failed = runCatching {
+            dao.appendEntry(
+                entry("child", sessionId, leafBefore).copy(payloadJson = "{\"a\":2}"),
+                lane(sessionId, leafId = "child"),
+            )
+        }
+        assertTrue("Conflicting IGNORE must abort the transaction", failed.isFailure)
+        assertEquals(leafBefore, repository.findLane(sessionId, "main")!!.leafId)
+        assertEquals("other-session", dao.findEntry("child")!!.sessionId)
+    }
 }

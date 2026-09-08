@@ -13,6 +13,24 @@ interface HarnessRuntimeDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertEntry(entry: HarnessEntryEntity): Long
 
+    /**
+     * Insert entry or accept an idempotent duplicate (same session + payload).
+     * A silent [OnConflictStrategy.IGNORE] against a different row must abort the
+     * surrounding `@Transaction` so callers never advance `leafId` to a missing/wrong id.
+     */
+    suspend fun insertEntryOrThrow(entry: HarnessEntryEntity) {
+        val rowId = insertEntry(entry)
+        if (rowId != -1L) return
+        val existing = findEntry(entry.id)
+        check(
+            existing != null &&
+                existing.sessionId == entry.sessionId &&
+                existing.payloadJson == entry.payloadJson,
+        ) {
+            "Harness entry insert ignored for ${entry.id}; refusing to mutate lane/operation without a stored row"
+        }
+    }
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertUsage(usage: HarnessUsageEntity): Long
 
@@ -168,7 +186,7 @@ interface HarnessRuntimeDao {
 
     @Transaction
     suspend fun acceptOperation(entry: HarnessEntryEntity, lane: HarnessLaneEntity, operation: HarnessOperationEntity) {
-        insertEntry(entry)
+        insertEntryOrThrow(entry)
         upsertOperation(operation)
         upsertLane(lane)
     }
@@ -180,7 +198,7 @@ interface HarnessRuntimeDao {
         lane: HarnessLaneEntity,
         operation: HarnessOperationEntity,
     ) {
-        insertEntry(entry)
+        insertEntryOrThrow(entry)
         deleteQueueItem(queueItemId)
         upsertOperation(operation)
         upsertLane(lane)
@@ -194,7 +212,7 @@ interface HarnessRuntimeDao {
 
     @Transaction
     suspend fun settleEffect(entry: HarnessEntryEntity?, usage: HarnessUsageEntity?, operation: HarnessOperationEntity, lane: HarnessLaneEntity) {
-        if (entry != null) insertEntry(entry)
+        if (entry != null) insertEntryOrThrow(entry)
         if (usage != null) insertUsage(usage)
         upsertOperation(operation)
         upsertLane(lane)
@@ -210,7 +228,7 @@ interface HarnessRuntimeDao {
 
     @Transaction
     suspend fun consumeQueueItem(itemId: String, entry: HarnessEntryEntity, lane: HarnessLaneEntity) {
-        insertEntry(entry)
+        insertEntryOrThrow(entry)
         deleteQueueItem(itemId)
         upsertLane(lane)
     }
@@ -219,7 +237,7 @@ interface HarnessRuntimeDao {
     suspend fun appendEntry(entry: HarnessEntryEntity, lane: HarnessLaneEntity) {
         val current = findLane(lane.sessionId, lane.name)
         check(current?.leafId == entry.parentId) { "Lane ${lane.name} moved while appending ${entry.id}" }
-        insertEntry(entry)
+        insertEntryOrThrow(entry)
         upsertLane(lane)
     }
 

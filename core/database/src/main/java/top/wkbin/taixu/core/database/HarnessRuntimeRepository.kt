@@ -117,13 +117,18 @@ class RoomHarnessRuntimeRepository @Inject constructor(
         repeat(8) {
             val existing = dao.findEntry(candidate.id) ?: return candidate
             if (existing.sessionId == entry.sessionId && existing.payloadJson == entry.payloadJson) {
-                return entry
+                // Idempotent retry of the same logical entry.
+                return candidate
             }
             val randomSuffix = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
             candidate = entry.copy(id = "${entry.id}_$randomSuffix")
         }
         val fallback = java.util.UUID.randomUUID().toString().replace("-", "")
-        return entry.copy(id = "${entry.id}_$fallback")
+        val resolved = entry.copy(id = "${entry.id}_$fallback")
+        check(dao.findEntry(resolved.id) == null) {
+            "Unable to allocate a unique harness entry id for ${entry.id}"
+        }
+        return resolved
     }
 
     override suspend fun findEntry(sessionId: String, entryId: String): HarnessEntryEntity? =

@@ -115,10 +115,10 @@
         <service
             android:name="top.wkbin.taixu.ui.workflow.hud.WorkflowHudService"
             android:exported="false" />
-        <!-- GUI 全局手势降级通路：用户在系统无障碍设置中手动开启后可用 -->
+        <!-- GUI 手势通路：必须 exported=true，否则 Android 12+ system_server 无法绑定无障碍服务 -->
         <service
             android:name="top.wkbin.taixu.runtime.gui.TaiXuGuiAccessibilityService"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/taixu_app_name"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
