@@ -47,91 +47,97 @@ data class ScreenObservation(
 class HostGuiController @Inject constructor(
     @ApplicationContext private val context: Context,
     private val privilegeManager: PrivilegeManager,
+    private val toolkit: HostGuiToolkit,
+    private val hud: WorkflowGuiHudBridge,
 ) {
     /**
      * 感知屏幕状态：获取当前前台应用、Activity 及 UI 控件树
      */
     suspend fun observeScreen(onlyInteractive: Boolean = true): Result<ScreenObservation> = withContext(Dispatchers.IO) {
-        runCatching {
-            val foreground = getForegroundInfo()
-            val dumpPath = "/data/local/tmp/taixu_gui_dump.xml"
-            val fallbackDumpPath = "/sdcard/taixu_gui_dump.xml"
+        hud.beginScreenOp("感知屏幕…")
+        try {
+            runCatching {
+                val foreground = getForegroundInfo()
+                val dumpPath = "/data/local/tmp/taixu_gui_dump.xml"
+                val fallbackDumpPath = "/sdcard/taixu_gui_dump.xml"
 
-            // 优先 dump 到 /data/local/tmp，失败则回退 /sdcard
-            val dumpResult = privilegeManager.executeShellCommand(
-                "/system/bin/uiautomator dump $dumpPath >/dev/null 2>&1 && /system/bin/cat $dumpPath; /system/bin/rm -f $dumpPath"
-            )
-
-            val xmlContent = if (dumpResult.success && dumpResult.stdout.isNotBlank()) {
-                dumpResult.stdout
-            } else {
-                val fallback = privilegeManager.executeShellCommand(
-                    "/system/bin/uiautomator dump $fallbackDumpPath >/dev/null 2>&1 && /system/bin/cat $fallbackDumpPath; /system/bin/rm -f $fallbackDumpPath"
+                // 优先 dump 到 /data/local/tmp，失败则回退 /sdcard
+                val dumpResult = privilegeManager.executeShellCommand(
+                    "/system/bin/uiautomator dump $dumpPath >/dev/null 2>&1 && /system/bin/cat $dumpPath; /system/bin/rm -f $dumpPath"
                 )
-                fallback.stdout
+
+                val xmlContent = if (dumpResult.success && dumpResult.stdout.isNotBlank()) {
+                    dumpResult.stdout
+                } else {
+                    val fallback = privilegeManager.executeShellCommand(
+                        "/system/bin/uiautomator dump $fallbackDumpPath >/dev/null 2>&1 && /system/bin/cat $fallbackDumpPath; /system/bin/rm -f $fallbackDumpPath"
+                    )
+                    fallback.stdout
+                }
+
+                val nodes = AndroidGuiXmlParser.parse(xmlContent, onlyInteractive)
+                ScreenObservation(
+                    packageName = foreground.first,
+                    activityName = foreground.second,
+                    nodes = nodes,
+                    rawXml = xmlContent,
+                )
             }
-
-            val nodes = AndroidGuiXmlParser.parse(xmlContent, onlyInteractive)
-            ScreenObservation(
-                packageName = foreground.first,
-                activityName = foreground.second,
-                nodes = nodes,
-                rawXml = xmlContent,
-            )
+        } finally {
+            hud.endScreenOp()
         }
     }
 
-    /**
-     * 点击屏幕坐标 (x, y)
-     */
-    suspend fun click(x: Int, y: Int): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val res = privilegeManager.executeShellCommand("/system/bin/input tap $x $y")
-            if (res.success) "已点击坐标 ($x, $y)" else error(res.stderr.ifBlank { "点击失败 exit=${res.exitCode}" })
-        }
-    }
-
-    /**
-     * 滑动屏幕：从 (x1, y1) 滑动至 (x2, y2)
-     */
-    suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 300): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val res = privilegeManager.executeShellCommand("/system/bin/input swipe $x1 $y1 $x2 $y2 $durationMs")
-            if (res.success) "已从 ($x1, $y1) 滑动至 ($x2, $y2)，耗时 ${durationMs}ms" else error(res.stderr.ifBlank { "滑动失败" })
-        }
-    }
-
-    /**
-     * 向当前焦点控件输入文本
-     */
-    suspend fun inputText(text: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            // Android input text 需要对空格和特殊字符进行转义
-            val sanitized = text.replace(" ", "%s").replace("'", "\\'")
-            val res = privilegeManager.executeShellCommand("/system/bin/input text '$sanitized'")
-            if (res.success) "已输入文本：$text" else error(res.stderr.ifBlank { "输入失败" })
-        }
-    }
-
-    /**
-     * 发送系统导航或功能按键
-     */
-    suspend fun sendKey(keyName: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val keyCode = when (keyName.trim().lowercase()) {
-                "back" -> 4
-                "home" -> 3
-                "recents", "app_switch" -> 187
-                "enter" -> 66
-                "delete", "backspace" -> 67
-                "volume_up" -> 24
-                "volume_down" -> 25
-                "power" -> 26
-                else -> keyName.toIntOrNull() ?: error("未知按键：$keyName（支持 back/home/recents/enter/delete/power）")
+    suspend fun execute(action: GuiPrimitive): Result<String> {
+        hud.beginScreenOp(actionHudLabel(action))
+        return try {
+            runCatching {
+                val result = toolkit.execute(action)
+                if (result.success) result.toAgentLine() else error(result.toAgentLine())
             }
-            val res = privilegeManager.executeShellCommand("/system/bin/input keyevent $keyCode")
-            if (res.success) "已触发按键：$keyName (KEYCODE $keyCode)" else error(res.stderr.ifBlank { "按键触发失败" })
+        } finally {
+            hud.endScreenOp()
         }
+    }
+
+    private fun actionHudLabel(action: GuiPrimitive): String = when (action) {
+        is GuiPrimitive.Tap -> "点击中…"
+        is GuiPrimitive.DoubleTap -> "双击中…"
+        is GuiPrimitive.LongPress -> "长按中…"
+        is GuiPrimitive.Swipe -> "滑动中…"
+        is GuiPrimitive.Scroll -> "滚动中…"
+        is GuiPrimitive.Key -> "按键 ${action.key.name.lowercase()}…"
+        is GuiPrimitive.PasteText -> "粘贴/输入中…"
+    }
+
+    /** 点击屏幕坐标 (x, y) — 自动降级：无障碍手势 → cmd input → bin input */
+    suspend fun click(x: Int, y: Int): Result<String> = execute(GuiPrimitive.Tap(x, y))
+
+    suspend fun doubleClick(x: Int, y: Int): Result<String> = execute(GuiPrimitive.DoubleTap(x, y))
+
+    suspend fun longPress(x: Int, y: Int, durationMs: Long = 800L): Result<String> =
+        execute(GuiPrimitive.LongPress(x, y, durationMs))
+
+    /** 滑动屏幕：从 (x1, y1) 滑动至 (x2, y2) */
+    suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 300): Result<String> =
+        execute(GuiPrimitive.Swipe(x1, y1, x2, y2, durationMs))
+
+    suspend fun scroll(
+        direction: ScrollDirection,
+        distanceRatio: Float = 0.45f,
+        durationMs: Long = 350L,
+    ): Result<String> = execute(GuiPrimitive.Scroll(direction, distanceRatio, durationMs))
+
+    /**
+     * 向当前焦点控件输入文本（CJK 走剪贴板粘贴，多后端降级）。
+     */
+    suspend fun inputText(text: String): Result<String> = execute(GuiPrimitive.PasteText(text))
+
+    /** 发送系统导航或功能按键 */
+    suspend fun sendKey(keyName: String): Result<String> {
+        val key = GuiKey.parse(keyName)
+            ?: return Result.failure(IllegalArgumentException("未知按键：$keyName（支持 back/home/recents/enter/delete/paste/power）"))
+        return execute(GuiPrimitive.Key(key))
     }
 
     /**
@@ -255,8 +261,22 @@ class HostGuiController @Inject constructor(
     }
 
     fun clipboardSet(text: String): Result<String> = runCatching {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("taixu-workflow", text))
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var error: Throwable? = null
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("taixu-workflow", text))
+            } catch (t: Throwable) {
+                error = t
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (!latch.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+            error("写入剪贴板超时")
+        }
+        error?.let { throw it }
         "已写入剪贴板（${text.length} 字符）"
     }
 

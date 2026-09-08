@@ -4,7 +4,8 @@ import android.graphics.Paint
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -21,12 +22,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.ui.text.font.FontFamily
 import top.wkbin.taixu.ui.components.RuntimeIcon
+import top.wkbin.taixu.ui.components.RuntimeIconButton
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,10 +52,13 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -94,6 +98,8 @@ fun WorkflowCanvas2D(
     selectedNodeId: String? = null,
     connectionSourceId: String? = null,
     onNodeSelected: (String?) -> Unit = {},
+    onNodeClicked: (String) -> Unit = onNodeSelected,
+    onCanvasTapped: () -> Unit = { onNodeSelected(null) },
     onNodeMoved: (String, Float, Float) -> Unit = { _, _, _ -> },
     onConnectionRequested: (String, String) -> Unit = { _, _ -> },
     onBeginConnection: (String) -> Unit = {},
@@ -105,6 +111,8 @@ fun WorkflowCanvas2D(
     val nodeHeightPx = with(density) { NodeHeight.toPx() }
     val gridSizePx = with(density) { GridSize.toPx() }
     val fitPaddingPx = with(density) { 40.dp.toPx() }
+    val viewConfiguration = LocalViewConfiguration.current
+    val touchSlop = viewConfiguration.touchSlop
     val positions = remember(definition.id, density) {
         mutableStateMapOf<String, Offset>().apply {
             definition.nodes.forEachIndexed { index, node ->
@@ -175,7 +183,10 @@ fun WorkflowCanvas2D(
                 }
             }
             .pointerInput(definition.id) {
-                detectTapGestures(onDoubleTap = { fitToContent() })
+                detectTapGestures(
+                    onDoubleTap = { fitToContent() },
+                    onTap = { onCanvasTapped() },
+                )
             },
     ) {
         // 背景点阵
@@ -244,36 +255,60 @@ fun WorkflowCanvas2D(
                             }
                         }
                         .pointerInput(node.id, editable, scale) {
-                            if (!editable) return@pointerInput
-                            detectDragGestures(
-                                onDragStart = {
-                                    val current = positions[node.id]
-                                        ?: resolvedPositions[node.id]
-                                        ?: nodePosition(node, index, density.density)
-                                    positions[node.id] = current
-                                    onNodeSelected(node.id)
-                                },
-                                onDragEnd = {
-                                    val current = positions[node.id] ?: return@detectDragGestures
-                                    val snapped = Offset(
-                                        (current.x / gridSizePx).roundToInt() * gridSizePx,
-                                        (current.y / gridSizePx).roundToInt() * gridSizePx,
-                                    )
-                                    positions[node.id] = snapped
-                                    onNodeMoved(node.id, snapped.x / density.density, snapped.y / density.density)
-                                },
-                            ) { change, amount ->
-                                change.consume()
-                                val current = positions[node.id]
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var isDrag = false
+                                val pointerId = down.id
+                                var totalPan = Offset.Zero
+                                val initialWorldPos = positions[node.id]
                                     ?: resolvedPositions[node.id]
                                     ?: nodePosition(node, index, density.density)
-                                positions[node.id] = current + amount / scale
+
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+
+                                    if (change.changedToUpIgnoreConsumed()) {
+                                        if (!isDrag) {
+                                            val source = connectionSourceId
+                                            if (source != null && source != node.id) {
+                                                onConnectionRequested(source, node.id)
+                                            } else {
+                                                onNodeClicked(node.id)
+                                            }
+                                        } else {
+                                            val current = positions[node.id]
+                                            if (current != null) {
+                                                val snapped = Offset(
+                                                    (current.x / gridSizePx).roundToInt() * gridSizePx,
+                                                    (current.y / gridSizePx).roundToInt() * gridSizePx,
+                                                )
+                                                positions[node.id] = snapped
+                                                onNodeMoved(node.id, snapped.x / density.density, snapped.y / density.density)
+                                            }
+                                        }
+                                        break
+                                    }
+
+                                    if (!editable) {
+                                        continue
+                                    }
+
+                                    val panDelta = change.positionChange()
+                                    if (panDelta != Offset.Zero) {
+                                        totalPan += panDelta
+                                        if (!isDrag && (totalPan.x * totalPan.x + totalPan.y * totalPan.y) > touchSlop * touchSlop) {
+                                            isDrag = true
+                                            positions[node.id] = initialWorldPos
+                                        }
+                                        if (isDrag) {
+                                            change.consume()
+                                            val current = positions[node.id] ?: initialWorldPos
+                                            positions[node.id] = current + panDelta / scale
+                                        }
+                                    }
+                                }
                             }
-                        }
-                        .clickable {
-                            val source = connectionSourceId
-                            if (source != null && source != node.id) onConnectionRequested(source, node.id)
-                            else onNodeSelected(node.id)
                         },
                 )
             }
@@ -636,16 +671,45 @@ private fun ViewportControls(
 ) {
     Surface(
         modifier = modifier.padding(12.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f),
-        tonalElevation = 4.dp,
-        shadowElevation = 3.dp,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+        tonalElevation = 2.dp,
+        shadowElevation = 2.dp,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onZoomOut) { Text("−", style = MaterialTheme.typography.titleLarge) }
-            Text("${(scale * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
-            IconButton(onClick = onFit) { Text("适配", style = MaterialTheme.typography.labelMedium) }
-            IconButton(onClick = onZoomIn) { Text("+", style = MaterialTheme.typography.titleLarge) }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+        ) {
+            RuntimeIconButton(
+                onClick = onZoomOut,
+                modifier = Modifier.size(32.dp),
+                contentDescription = "缩小",
+            ) {
+                Text("−", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                text = "${(scale * 100).roundToInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            RuntimeIconButton(
+                onClick = onFit,
+                modifier = Modifier.size(32.dp),
+                contentDescription = "适配视口",
+            ) {
+                Text("适配", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            }
+            RuntimeIconButton(
+                onClick = onZoomIn,
+                modifier = Modifier.size(32.dp),
+                contentDescription = "放大",
+            ) {
+                RuntimeIcon(RuntimeIconName.Plus, Modifier.size(15.dp))
+            }
         }
     }
 }

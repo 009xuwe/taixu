@@ -255,9 +255,31 @@ object HostWorkflowActions {
             label = "点击坐标",
             category = "GUI",
             privilege = HostWorkflowPrivilege.PRIVILEGED,
+            description = "降级：无障碍手势 → cmd input → bin input",
             fields = listOf(
                 HostWorkflowField("x", "X", required = true),
                 HostWorkflowField("y", "Y", required = true),
+            ),
+        ),
+        HostWorkflowActionDef(
+            id = "screen_double_click",
+            label = "双击坐标",
+            category = "GUI",
+            privilege = HostWorkflowPrivilege.PRIVILEGED,
+            fields = listOf(
+                HostWorkflowField("x", "X", required = true),
+                HostWorkflowField("y", "Y", required = true),
+            ),
+        ),
+        HostWorkflowActionDef(
+            id = "screen_long_press",
+            label = "长按坐标",
+            category = "GUI",
+            privilege = HostWorkflowPrivilege.PRIVILEGED,
+            fields = listOf(
+                HostWorkflowField("x", "X", required = true),
+                HostWorkflowField("y", "Y", required = true),
+                HostWorkflowField("durationMs", "时长 ms", "默认 800"),
             ),
         ),
         HostWorkflowActionDef(
@@ -274,10 +296,23 @@ object HostWorkflowActions {
             ),
         ),
         HostWorkflowActionDef(
-            id = "screen_input_text",
-            label = "输入文本",
+            id = "screen_scroll",
+            label = "滚动屏幕",
             category = "GUI",
             privilege = HostWorkflowPrivilege.PRIVILEGED,
+            description = "按方向滚动（up/down/left/right），内部映射为滑动",
+            fields = listOf(
+                HostWorkflowField("direction", "方向", "up / down / left / right", required = true),
+                HostWorkflowField("distanceRatio", "幅度", "0.15–0.8，默认 0.45"),
+                HostWorkflowField("durationMs", "时长 ms", "默认 350"),
+            ),
+        ),
+        HostWorkflowActionDef(
+            id = "screen_input_text",
+            label = "粘贴/输入文本",
+            category = "GUI",
+            privilege = HostWorkflowPrivilege.PRIVILEGED,
+            description = "CJK 走剪贴板+粘贴；自动降级 Ctrl+V / ASCII input text",
             fields = listOf(HostWorkflowField("text", "文本", required = true)),
         ),
         HostWorkflowActionDef(
@@ -285,7 +320,8 @@ object HostWorkflowActions {
             label = "发送按键",
             category = "GUI",
             privilege = HostWorkflowPrivilege.PRIVILEGED,
-            fields = listOf(HostWorkflowField("key", "按键", "back/home/recents/enter/delete/power", required = true)),
+            description = "back/home/recents 优先无障碍全局动作，再降级 keyevent",
+            fields = listOf(HostWorkflowField("key", "按键", "back/home/recents/enter/delete/paste/power", required = true)),
         ),
         HostWorkflowActionDef(
             id = "screen_capture",
@@ -293,6 +329,18 @@ object HostWorkflowActions {
             category = "GUI",
             privilege = HostWorkflowPrivilege.PRIVILEGED,
             fields = listOf(HostWorkflowField("path", "保存路径", "/sdcard/Download/taixu-screen.png", required = true)),
+        ),
+        HostWorkflowActionDef(
+            id = "gui_pilot",
+            label = "智能体 GUI 试飞循环",
+            category = "GUI",
+            privilege = HostWorkflowPrivilege.PRIVILEGED,
+            description = "本地循环：感知屏幕 → 模型输出一步 JSON → 点击/输入。不走聊天子智能体 Lane。",
+            fields = listOf(
+                HostWorkflowField("goal", "目标", "可空，默认读变量 GUI_GOAL"),
+                HostWorkflowField("package", "目标包名", "可空，默认读 TARGET_PACKAGE"),
+                HostWorkflowField("maxSteps", "最大步数", "默认 18"),
+            ),
         ),
         HostWorkflowActionDef(
             id = "toast",

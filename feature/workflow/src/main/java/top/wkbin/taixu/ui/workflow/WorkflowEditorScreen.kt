@@ -3,14 +3,21 @@ package top.wkbin.taixu.ui.workflow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,13 +26,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
+import top.wkbin.taixu.ui.components.RuntimeIconButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -101,44 +114,30 @@ fun WorkflowEditorView(
     var showRunConsole by remember { mutableStateOf(false) }
     var nodePendingDelete by remember { mutableStateOf<WorkflowNode?>(null) }
 
-    // 选中节点时自动展开调参面板
-    LaunchedEffect(state.selectedNodeId) {
-        if (state.selectedNodeId != null) {
-            sheetExpanded = true
-        }
-    }
-
     Column(modifier) {
-        EditorToolbar(
-            state = state,
-            activeRunState = activeRunState,
-            onAddNode = onAddNode,
-            onDeleteSelectedNode = {
-                val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
-                if (selected != null) nodePendingDelete = selected
-            },
-            onToggleConsole = { showRunConsole = true },
-            onUndo = onUndo,
-            onRedo = onRedo,
-            onSave = onSave,
-            onAutoLayout = onAutoLayout,
-            onRun = {
-                onRun()
-                showRunConsole = true
-            },
-            onCancelRun = onCancelRun,
-        )
-
         state.message?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (message == "已保存" || message == "请选择目标节点") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
+            Surface(
+                color = if (message == "已保存" || message == "请选择目标节点") {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                } else {
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (message == "已保存" || message == "请选择目标节点") {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
         }
 
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val canvas: @Composable (Modifier) -> Unit = { canvasModifier ->
                 WorkflowCanvas2D(
                     definition = state.definition,
@@ -147,6 +146,14 @@ fun WorkflowEditorView(
                     selectedNodeId = state.selectedNodeId,
                     connectionSourceId = state.connectionSourceId,
                     onNodeSelected = onSelectNode,
+                    onNodeClicked = { nodeId ->
+                        onSelectNode(nodeId)
+                        sheetExpanded = true
+                    },
+                    onCanvasTapped = {
+                        sheetExpanded = false
+                        onSelectNode(null)
+                    },
                     onNodeMoved = onMoveNode,
                     onConnectionRequested = { _, target -> onConnect(target) },
                     onBeginConnection = onBeginConnection,
@@ -182,24 +189,95 @@ fun WorkflowEditorView(
                 )
             }
 
+            val selectedNode = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+
             if (maxWidth >= 820.dp) {
                 Row(Modifier.fillMaxSize()) {
                     canvas(Modifier.weight(1f).fillMaxSize())
-                    VerticalDivider()
-                    inspector(Modifier.width(400.dp).fillMaxSize())
+                    if (sheetExpanded && selectedNode != null) {
+                        VerticalDivider()
+                        Box(Modifier.width(420.dp).fillMaxSize()) {
+                            Column(Modifier.fillMaxSize()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    val theme = selectedNode.type.visualTheme()
+                                    Surface(
+                                        color = theme.accentColor.copy(alpha = 0.16f),
+                                        shape = RoundedCornerShape(6.dp),
+                                    ) {
+                                        Text(
+                                            text = theme.tag,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = theme.accentColor,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        )
+                                    }
+                                    Text(
+                                        text = selectedNode.title,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    RuntimeIconButton(
+                                        onClick = {
+                                            sheetExpanded = false
+                                            onSelectNode(null)
+                                        },
+                                        modifier = Modifier.size(32.dp),
+                                        contentDescription = "关闭面板",
+                                    ) {
+                                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(18.dp))
+                                    }
+                                }
+                                HorizontalDivider()
+                                inspector(Modifier.fillMaxSize())
+                            }
+                        }
+                    }
                 }
             } else {
                 EditorBottomSheetLayout(
                     maxHeight = maxHeight,
-                    selectedNodeTitle = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }?.title,
-                    sheetExpanded = sheetExpanded,
-                    onSheetExpandedChange = { sheetExpanded = it },
+                    selectedNode = selectedNode,
+                    sheetExpanded = sheetExpanded && selectedNode != null,
+                    onSheetExpandedChange = { expanded ->
+                        sheetExpanded = expanded
+                        if (!expanded) onSelectNode(null)
+                    },
                     isRunning = isRunning,
                     canvas = canvas,
                     inspector = inspector,
                 )
             }
         }
+
+        EditorBottomDock(
+            state = state,
+            activeRunState = activeRunState,
+            onAddNode = onAddNode,
+            onDeleteSelectedNode = {
+                val selected = state.definition.nodes.firstOrNull { it.id == state.selectedNodeId }
+                if (selected != null) nodePendingDelete = selected
+            },
+            onToggleConsole = { showRunConsole = true },
+            onUndo = onUndo,
+            onRedo = onRedo,
+            onSave = onSave,
+            onAutoLayout = onAutoLayout,
+            onRun = {
+                onRun()
+                showRunConsole = true
+            },
+            onCancelRun = onCancelRun,
+        )
     }
 
     // 节点删除确认弹窗
@@ -248,95 +326,101 @@ fun WorkflowEditorView(
     }
 }
 
-private val SheetPeekHeight = 56.dp
-
 @Composable
 private fun EditorBottomSheetLayout(
     maxHeight: Dp,
-    selectedNodeTitle: String?,
+    selectedNode: WorkflowNode?,
     sheetExpanded: Boolean,
     onSheetExpandedChange: (Boolean) -> Unit,
     isRunning: Boolean,
     canvas: @Composable (Modifier) -> Unit,
     inspector: @Composable (Modifier) -> Unit,
 ) {
-    val expandedHeight = maxHeight * 0.65f
-    val sheetHeight by animateDpAsState(
-        targetValue = if (sheetExpanded) expandedHeight else SheetPeekHeight,
-        animationSpec = tween(durationMillis = 280),
-        label = "sheetHeight",
-    )
-
     Box(Modifier.fillMaxSize()) {
-        canvas(Modifier.fillMaxSize().padding(bottom = SheetPeekHeight))
+        // 画布全屏铺满，彻底消除常驻 56dp 底栏占用
+        canvas(Modifier.fillMaxSize())
 
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(sheetHeight)
-                .align(Alignment.BottomCenter)
-                .shadow(elevation = if (sheetExpanded) 8.dp else 3.dp, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            tonalElevation = 2.dp,
+        // 仅在单击节点并且展开时才向上弹出，非持久化
+        AnimatedVisibility(
+            visible = sheetExpanded && selectedNode != null,
+            enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(280, easing = FastOutSlowInEasing)) + fadeIn(tween(200)),
+            exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(220, easing = FastOutSlowInEasing)) + fadeOut(tween(180)),
+            modifier = Modifier.align(Alignment.BottomCenter),
         ) {
-            Column(Modifier.fillMaxSize()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 8.dp, bottom = 4.dp)
-                            .size(width = 36.dp, height = 4.dp)
-                            .background(
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
-                                RoundedCornerShape(2.dp),
-                            ),
-                    )
-                }
-
-                Row(
+            if (selectedNode != null) {
+                val theme = selectedNode.type.visualTheme()
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onSheetExpandedChange(!sheetExpanded) }
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        .height(maxHeight * 0.62f)
+                        .shadow(
+                            elevation = 12.dp,
+                            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                        ),
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                    tonalElevation = 4.dp,
                 ) {
-                    RuntimeIcon(
-                        name = if (sheetExpanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronUp,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        text = when {
-                            isRunning && selectedNodeTitle != null -> "● 正在运行 · 节点：$selectedNodeTitle"
-                            selectedNodeTitle != null -> "节点参数与连线：$selectedNodeTitle"
-                            else -> "工作流属性检查面板"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = if (sheetExpanded) 0.12f else 0.22f),
-                    ) {
-                        Text(
-                            text = if (sheetExpanded) "收起面板" else (if (selectedNodeTitle != null) "展开调参" else "展开"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        )
-                    }
-                }
-                HorizontalDivider()
+                    Column(Modifier.fillMaxSize()) {
+                        // 顶部居中拖拽把手指示条
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp, bottom = 4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 36.dp, height = 4.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                                        CircleShape,
+                                    ),
+                            )
+                        }
 
-                if (sheetExpanded) {
-                    inspector(Modifier.fillMaxSize())
+                        // 弹窗顶部栏：类型彩色药丸、节点标题、关闭按钮
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Surface(
+                                color = theme.accentColor.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(6.dp),
+                            ) {
+                                Text(
+                                    text = theme.tag,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = theme.accentColor,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                )
+                            }
+                            Text(
+                                text = selectedNode.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            RuntimeIconButton(
+                                onClick = { onSheetExpandedChange(false) },
+                                modifier = Modifier.size(32.dp),
+                                contentDescription = "收起面板",
+                            ) {
+                                RuntimeIcon(RuntimeIconName.Close, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        HorizontalDivider()
+
+                        // 属性配置与连线检查器
+                        inspector(Modifier.fillMaxSize())
+                    }
                 }
             }
         }
@@ -344,7 +428,7 @@ private fun EditorBottomSheetLayout(
 }
 
 @Composable
-private fun EditorToolbar(
+private fun EditorBottomDock(
     state: WorkflowEditorUiState,
     activeRunState: WorkflowRuntimeState?,
     onAddNode: (WorkflowNodeType) -> Unit,
@@ -360,86 +444,113 @@ private fun EditorToolbar(
     var addDialogVisible by remember { mutableStateOf(false) }
     val isRunning = activeRunState?.status in setOf(WorkflowRunStatus.RUNNING, WorkflowRunStatus.WAITING_APPROVAL)
 
-    Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding(),
+        shape = RoundedCornerShape(0.dp), // 去除圆角，平铺贴边
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+        tonalElevation = 3.dp,
     ) {
-        RuntimeButton(
-            onClick = { addDialogVisible = true },
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp))
-            Text("添加节点", maxLines = 1)
-        }
+            // 添加节点
+            DockActionButton(
+                icon = RuntimeIconName.Plus,
+                label = "添加",
+                onClick = { addDialogVisible = true },
+                tint = MaterialTheme.colorScheme.primary,
+            )
 
-        if (isRunning) {
-            RuntimeOutlinedButton(
-                onClick = onCancelRun,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                RuntimeIcon(RuntimeIconName.Stop, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
-                Text("停止调试", color = MaterialTheme.colorScheme.error, maxLines = 1)
+            // 运行 / 停止调试
+            if (isRunning) {
+                DockActionButton(
+                    icon = RuntimeIconName.Stop,
+                    label = "停止",
+                    onClick = onCancelRun,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            } else {
+                DockActionButton(
+                    icon = RuntimeIconName.Play,
+                    label = "运行",
+                    onClick = onRun,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
-        } else {
-            RuntimeButton(
-                onClick = onRun,
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-            ) {
-                RuntimeIcon(RuntimeIconName.Play, Modifier.size(16.dp))
-                Text("运行调试", maxLines = 1)
-            }
-        }
 
-        if (activeRunState != null) {
-            RuntimeOutlinedButton(
-                onClick = onToggleConsole,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (isRunning) MaterialTheme.colorScheme.primary else runStatusColor(activeRunState.status),
-                    modifier = Modifier.size(8.dp),
-                ) {}
-                Spacer(Modifier.width(6.dp))
-                RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(15.dp))
-                Text(if (isRunning) "控制台 (运行中)" else "执行日志", maxLines = 1)
+            // 控制台 / 日志
+            if (activeRunState != null) {
+                DockActionButton(
+                    icon = RuntimeIconName.Terminal,
+                    label = if (isRunning) "运行中" else "日志",
+                    onClick = onToggleConsole,
+                    tint = if (isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    badge = if (isRunning) {
+                        {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                    .align(Alignment.TopEnd)
+                            )
+                        }
+                    } else null,
+                )
             }
-        }
 
-        if (state.selectedNodeId != null && !isRunning) {
-            RuntimeOutlinedButton(
-                onClick = onDeleteSelectedNode,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-            ) {
-                RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.error)
-                Text("删除节点", color = MaterialTheme.colorScheme.error, maxLines = 1)
+            // 删除节点（当选中节点且未在运行时呈现）
+            if (state.selectedNodeId != null && !isRunning) {
+                DockActionButton(
+                    icon = RuntimeIconName.Trash,
+                    label = "删除",
+                    onClick = onDeleteSelectedNode,
+                    tint = MaterialTheme.colorScheme.error,
+                )
             }
-        }
 
-        RuntimeOutlinedButton(onClick = onAutoLayout, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-            Text("自动排版", maxLines = 1)
-        }
-        RuntimeOutlinedButton(onClick = onUndo, enabled = state.canUndo && !isRunning, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-            Text("撤销", maxLines = 1)
-        }
-        RuntimeOutlinedButton(onClick = onRedo, enabled = state.canRedo && !isRunning, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-            Text("重做", maxLines = 1)
-        }
-        Spacer(Modifier.width(6.dp))
-        Text(
-            if (isRunning) "● 正在运行…" else if (state.isDirty) "未保存" else "已保存",
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isRunning) MaterialTheme.colorScheme.primary else if (state.isDirty) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
-        RuntimeOutlinedButton(
-            onClick = onSave,
-            enabled = !state.isSaving && state.isDirty && !isRunning,
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-        ) {
-            RuntimeIcon(RuntimeIconName.Save, Modifier.size(16.dp))
-            Text(if (state.isSaving) "保存中" else "保存", maxLines = 1)
+            // 自动排版
+            DockActionButton(
+                icon = RuntimeIconName.Tune,
+                label = "排版",
+                onClick = onAutoLayout,
+            )
+
+            // 撤销
+            DockActionButton(
+                icon = RuntimeIconName.Back,
+                label = "撤销",
+                enabled = state.canUndo && !isRunning,
+                onClick = onUndo,
+            )
+
+            // 重做
+            DockActionButton(
+                icon = RuntimeIconName.Reverse,
+                label = "重做",
+                enabled = state.canRedo && !isRunning,
+                onClick = onRedo,
+            )
+
+            // 保存
+            DockActionButton(
+                icon = RuntimeIconName.Save,
+                label = when {
+                    state.isSaving -> "保存中"
+                    state.isDirty -> "保存*"
+                    else -> "已保存"
+                },
+                enabled = !state.isSaving && state.isDirty && !isRunning,
+                tint = if (state.isDirty) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = onSave,
+            )
         }
     }
 
@@ -451,6 +562,46 @@ private fun EditorToolbar(
                 onAddNode(type)
             },
         )
+    }
+}
+
+@Composable
+private fun DockActionButton(
+    icon: RuntimeIconName,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    badge: (@Composable BoxScope.() -> Unit)? = null,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(0.dp), // 去除圆角
+        color = Color.Transparent,
+        modifier = modifier
+            .alpha(if (enabled) 1f else 0.38f)
+            .padding(horizontal = 2.dp),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                RuntimeIcon(icon, Modifier.size(19.dp), tint = tint)
+                badge?.invoke(this)
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                color = tint,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -1047,6 +1198,15 @@ private fun NodeInspectorCard(
                         onValueChange = { configMap["role"] = it },
                         label = { Text("智能体角色（可选）") },
                         placeholder = { Text("例如：Android 资深架构师") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = configMap["modelId"].orEmpty(),
+                        onValueChange = { configMap["modelId"] = it },
+                        label = { Text("固定模型配置 ID（可选）") },
+                        placeholder = { Text("留空则使用运行时选择的 WORKFLOW_MODEL_ID") },
+                        supportingText = { Text("优先于运行对话框所选模型；一般留空即可") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )

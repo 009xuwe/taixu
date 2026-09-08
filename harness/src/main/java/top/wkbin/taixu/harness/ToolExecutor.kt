@@ -325,6 +325,21 @@ class ToolExecutor @Inject constructor(
                     onFailure = { err -> false to err.message.orEmpty() }
                 )
             }
+            "screen_double_click" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                gui.doubleClick(requireInt(args, "x"), requireInt(args, "y")).fold(
+                    onSuccess = { true to it },
+                    onFailure = { false to it.message.orEmpty() },
+                )
+            }
+            "screen_long_press" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val duration = optionalLong(args, "duration_ms", 800L, 200L, 5_000L)
+                gui.longPress(requireInt(args, "x"), requireInt(args, "y"), duration).fold(
+                    onSuccess = { true to it },
+                    onFailure = { false to it.message.orEmpty() },
+                )
+            }
             "screen_swipe" -> {
                 val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
                 val x1 = requireInt(args, "x1")
@@ -338,7 +353,23 @@ class ToolExecutor @Inject constructor(
                     onFailure = { err -> false to err.message.orEmpty() }
                 )
             }
-            "screen_input_text" -> {
+            "screen_scroll" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val direction = when (requireString(args, "direction").lowercase()) {
+                    "up" -> top.wkbin.taixu.runtime.gui.ScrollDirection.UP
+                    "down" -> top.wkbin.taixu.runtime.gui.ScrollDirection.DOWN
+                    "left" -> top.wkbin.taixu.runtime.gui.ScrollDirection.LEFT
+                    "right" -> top.wkbin.taixu.runtime.gui.ScrollDirection.RIGHT
+                    else -> return false to "direction 仅支持 up/down/left/right"
+                }
+                val ratio = args["distance_ratio"]?.jsonPrimitive?.content?.toFloatOrNull()?.coerceIn(0.15f, 0.8f) ?: 0.45f
+                val durationMs = optionalLong(args, "duration_ms", 350L, 50L, 5_000L)
+                gui.scroll(direction, ratio, durationMs).fold(
+                    onSuccess = { true to it },
+                    onFailure = { false to it.message.orEmpty() },
+                )
+            }
+            "screen_input_text", "paste_text" -> {
                 val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
                 val text = requireString(args, "text")
                 val res = gui.inputText(text)

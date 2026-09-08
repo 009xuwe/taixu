@@ -50,13 +50,18 @@ class ApprovalPolicyEngine @Inject constructor(
     ): ApprovalDecision {
         // 宿主特权命令作用于真实 Android 系统。只读操作始终放行；
         // 完全访问 = 用户显式授权一切宿主操作（含 exec / 卸载应用），全部自动放行；
-        // 仅 REQUEST（每次审批）与 ASSISTED 模式对可变宿主操作要求确认。
+        // ASSISTED 下 GUI 感知/触控（screen_* / app_launch）自动放行——否则工作流智能体节点
+        // 会卡在 Harness 审批且工作流 UI 不展示该审批；危险变更（settings/package/exec）仍需确认。
+        // REQUEST 模式对所有可变宿主操作仍要求确认。
         if (tool == HarnessTool.HOST) {
             val action = args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase()
             if (action in HOST_READ_ONLY_ACTIONS) {
                 return ApprovalDecision(false)
             }
             if (mode == ApprovalMode.FULL_ACCESS) {
+                return ApprovalDecision(false)
+            }
+            if (mode == ApprovalMode.ASSISTED && action in HOST_GUI_ASSISTED_ACTIONS) {
                 return ApprovalDecision(false)
             }
             val critical = action == "exec" || action == "package_uninstall_user"
@@ -68,6 +73,8 @@ class ApprovalPolicyEngine @Inject constructor(
                     "package_disable", "package_enable", "app_freeze", "app_unfreeze" -> "操作将改变真实 Android 应用的启用状态。"
                     "app_grant_permission" -> "操作将为真实 Android 应用授予权限。"
                     "package_uninstall_user" -> "操作将为指定 Android 用户卸载应用；系统应用通常可用 install-existing 恢复，但其数据可能丢失。"
+                    "screen_click", "screen_swipe", "screen_input_text", "screen_key", "app_launch" ->
+                        "操作将操控真实 Android 屏幕或启动应用。"
                     else -> "命令将通过 Shizuku 或 Root 修改真实 Android 宿主，可能改变系统设置、停用或卸载应用。"
                 },
                 summary = summarize(tool, args),
@@ -160,7 +167,28 @@ class ApprovalPolicyEngine @Inject constructor(
     companion object {
         /** 审批有效期：超时未决的请求自动失效，恢复执行前也会复核。 */
         const val APPROVAL_TTL_MS: Long = 10 * 60 * 1000L
-        private val HOST_READ_ONLY_ACTIONS = setOf("status", "settings_get", "package_list", "app_list", "logcat", "device_status")
+        private val HOST_READ_ONLY_ACTIONS = setOf(
+            "status",
+            "settings_get",
+            "package_list",
+            "app_list",
+            "logcat",
+            "device_status",
+            "screen_observe",
+            "screen_capture",
+        )
+        /** ASSISTED 下自动放行的 GUI 原语（仍受 REQUEST / 危险动作策略约束）。 */
+        private val HOST_GUI_ASSISTED_ACTIONS = setOf(
+            "screen_click",
+            "screen_double_click",
+            "screen_long_press",
+            "screen_swipe",
+            "screen_scroll",
+            "screen_input_text",
+            "paste_text",
+            "screen_key",
+            "app_launch",
+        )
 
         /** argumentsJson 的 SHA-256 十六进制摘要；创建时写入，执行前复核。 */
         fun argsHash(argumentsJson: String): String {

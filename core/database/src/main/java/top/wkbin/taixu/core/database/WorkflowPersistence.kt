@@ -102,7 +102,7 @@ interface WorkflowDao {
 
 interface WorkflowRepository {
     fun observeDefinitions(): Flow<List<WorkflowDefinition>>
-    fun observeRecentExecutions(limit: Int = 30): Flow<List<WorkflowExecutionLogEntity>>
+    fun observeRecentExecutions(limit: Int = 5): Flow<List<WorkflowExecutionLogEntity>>
     fun observeHistory(): Flow<List<WorkflowRuntimeState>> = observeRecentExecutions().map { logs ->
         val decoder = Json { ignoreUnknownKeys = true }
         logs.mapNotNull { runCatching { decoder.decodeFromString<WorkflowRuntimeState>(it.finalContextJson) }.getOrNull() }

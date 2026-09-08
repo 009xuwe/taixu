@@ -193,8 +193,10 @@ class AgentNodeExecutor @Inject constructor(
             nodeTitle = node.title,
             prompt = interpolateAgentPrompt(promptTemplate, context),
             workspacePath = context.workspacePath,
-            modelId = node.config["modelId"]?.takeIf(String::isNotBlank),
-            modelVariant = node.config["modelVariant"]?.takeIf(String::isNotBlank),
+            modelId = node.config["modelId"]?.takeIf(String::isNotBlank)
+                ?: context.globalVariables["WORKFLOW_MODEL_ID"]?.takeIf(String::isNotBlank),
+            modelVariant = node.config["modelVariant"]?.takeIf(String::isNotBlank)
+                ?: context.globalVariables["WORKFLOW_MODEL_VARIANT"]?.takeIf(String::isNotBlank),
             role = node.config["role"].orEmpty(),
             department = node.config["department"].orEmpty(),
             agentQuery = node.config["agentQuery"].orEmpty(),

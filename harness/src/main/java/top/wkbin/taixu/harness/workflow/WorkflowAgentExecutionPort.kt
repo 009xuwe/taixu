@@ -90,21 +90,34 @@ class HarnessWorkflowAgentExecutionPort @Inject constructor(
     private suspend fun ensureSession(request: WorkflowAgentRequest): HarnessSessionEntity {
         val sessionId = "workflow:${request.executionId}:${request.nodeId}"
         return sessionCreationMutex.withLock {
-            sessions.findById(sessionId) ?: run {
-                val now = System.currentTimeMillis()
-                val activeModel = models.activeModel()
-                HarnessSessionEntity(
-                    id = sessionId,
-                    title = "工作流 · ${request.nodeTitle}",
-                    createdAt = now,
-                    updatedAt = now,
-                    modelId = request.modelId ?: activeModel?.id,
-                    modelVariant = request.modelVariant
-                        ?: activeModel?.takeIf { request.modelId == null || request.modelId == it.id }?.model?.substringBefore(',')?.trim()?.takeIf(String::isNotBlank),
-                    workspace = request.workspacePath,
-                    approvalMode = ApprovalMode.ASSISTED.id,
-                ).also { sessions.upsert(it) }
-            }
+            val now = System.currentTimeMillis()
+            val activeModel = models.activeModel()
+            val resolvedModelId = request.modelId ?: activeModel?.id
+            val resolvedVariant = request.modelVariant
+                ?: activeModel?.takeIf { request.modelId == null || request.modelId == it.id }
+                    ?.model?.substringBefore(',')?.trim()?.takeIf(String::isNotBlank)
+            // 工作流页不展示 Harness 工具审批；FULL_ACCESS 避免 GUI 试飞卡在 screen_* 待审。
+            // 危险动作仍由工作流 HUMAN_APPROVAL 节点与用户盯屏约束。
+            val existing = sessions.findById(sessionId)
+            val entity = (existing ?: HarnessSessionEntity(
+                id = sessionId,
+                title = "工作流 · ${request.nodeTitle}",
+                createdAt = now,
+                updatedAt = now,
+                modelId = resolvedModelId,
+                modelVariant = resolvedVariant,
+                workspace = request.workspacePath,
+                approvalMode = ApprovalMode.FULL_ACCESS.id,
+            )).copy(
+                title = "工作流 · ${request.nodeTitle}",
+                updatedAt = now,
+                modelId = resolvedModelId ?: existing?.modelId,
+                modelVariant = resolvedVariant ?: existing?.modelVariant,
+                workspace = request.workspacePath.ifBlank { existing?.workspace.orEmpty() },
+                approvalMode = ApprovalMode.FULL_ACCESS.id,
+            )
+            sessions.upsert(entity)
+            entity
         }
     }
 }

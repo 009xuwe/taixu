@@ -1,15 +1,19 @@
 package top.wkbin.taixu.ui.workflow
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.workflow.*
 import top.wkbin.taixu.ui.components.*
 
@@ -48,18 +52,192 @@ internal fun WorkflowElapsed(state: WorkflowRuntimeState) {
 }
 
 @Composable
-internal fun WorkflowStartDialog(definition: WorkflowDefinition, supplied: Map<String, String>, onDismiss: () -> Unit, onStart: (Map<String, String>) -> Unit) {
-    val required = remember(definition) { definition.nodes.filter { it.type == WorkflowNodeType.TRIGGER }
-        .flatMap { it.config["requiredVariables"].orEmpty().split(',') }.map { it.trim() }.filter { it.isNotEmpty() }.distinct() }
-    val values = remember(definition.id) { mutableStateMapOf<String, String>().apply { putAll(definition.defaultVariables + supplied) } }
+internal fun WorkflowStartDialog(
+    definition: WorkflowDefinition,
+    supplied: Map<String, String>,
+    models: List<AiModelEntity>,
+    onDismiss: () -> Unit,
+    onStart: (Map<String, String>) -> Unit,
+) {
+    val required = remember(definition) {
+        definition.nodes.filter { it.type == WorkflowNodeType.TRIGGER }
+            .flatMap { it.config["requiredVariables"].orEmpty().split(',') }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
+    val editableDefaults = remember(definition) {
+        definition.defaultVariables.keys.filterNot { it in required || it.startsWith("WORKFLOW_MODEL") }.sorted()
+    }
+    val needsModel = remember(definition) {
+        definition.nodes.any {
+            it.type == WorkflowNodeType.AGENT_INFERENCE ||
+                it.type == WorkflowNodeType.SUBAGENT_DELEGATE ||
+                (it.type == WorkflowNodeType.HOST_ACTION && it.config["action"] == "gui_pilot")
+        }
+    }
+    val values = remember(definition.id, supplied) {
+        mutableStateMapOf<String, String>().apply { putAll(definition.defaultVariables + supplied) }
+    }
+
+    val active = models.firstOrNull { it.isActive }
+    var selectedModelId by remember(definition.id, models) {
+        mutableStateOf(
+            values["WORKFLOW_MODEL_ID"]
+                ?.takeIf { id -> models.any { it.id == id } }
+                ?: active?.id
+                ?: models.firstOrNull()?.id.orEmpty(),
+        )
+    }
+    val selectedProfile = models.firstOrNull { it.id == selectedModelId }
+    val variants = remember(selectedProfile?.model) {
+        selectedProfile?.model.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    }
+    var selectedVariant by remember(selectedModelId, variants) {
+        mutableStateOf(
+            values["WORKFLOW_MODEL_VARIANT"]?.takeIf { it in variants }
+                ?: variants.firstOrNull().orEmpty(),
+        )
+    }
+
+    val canStart = required.all { !values[it].isNullOrBlank() } &&
+        (!needsModel || (selectedModelId.isNotBlank() && models.any { it.id == selectedModelId }))
+
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("运行 ${definition.name}") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(definition.description)
-            required.forEach { key -> OutlinedTextField(values[key].orEmpty(), { values[key] = it }, label = { Text(key) }, modifier = Modifier.fillMaxWidth()) }
-        } },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(definition.description)
+                if (needsModel) {
+                    Text("执行模型（点选即可，避免 403 请换可用账号）", style = MaterialTheme.typography.labelLarge)
+                    if (models.isEmpty()) {
+                        Text(
+                            "尚未配置可用模型。请先到设置 → 模型管理添加账号，再回来运行含智能体节点的工作流。",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        models.forEach { model ->
+                            val selected = model.id == selectedModelId
+                            Surface(
+                                onClick = {
+                                    selectedModelId = model.id
+                                    val nextVariants = model.model.split(',')
+                                        .map { it.trim() }
+                                        .filter { it.isNotEmpty() }
+                                    selectedVariant = nextVariants.firstOrNull().orEmpty()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                },
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = if (selected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.outlineVariant
+                                    },
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                    Text(
+                                        text = buildString {
+                                            append(if (selected) "✓ " else "")
+                                            append(model.name)
+                                            if (model.isActive) append("（当前默认）")
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    )
+                                    Text(
+                                        text = "${model.provider} · ${model.model.substringBefore(',').ifBlank { model.model }}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    if (model.pureChatMode) {
+                                        Text(
+                                            "纯聊天模式：可能无法调用 host 工具",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (variants.size > 1) {
+                            Text("模型变体", style = MaterialTheme.typography.labelMedium)
+                            variants.forEach { variant ->
+                                val selected = variant == selectedVariant
+                                Surface(
+                                    onClick = { selectedVariant = variant },
+                                    shape = RoundedCornerShape(50),
+                                    color = if (selected) {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerHighest
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = if (selected) "✓ $variant" else variant,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                        } else if (variants.size == 1) {
+                            Text("变体：${variants.first()}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(
+                            "此处选择只影响本次工作流，不会改全局默认模型。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                required.forEach { key ->
+                    OutlinedTextField(
+                        value = values[key].orEmpty(),
+                        onValueChange = { values[key] = it },
+                        label = { Text("$key（必填）") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                editableDefaults.forEach { key ->
+                    OutlinedTextField(
+                        value = values[key].orEmpty(),
+                        onValueChange = { values[key] = it },
+                        label = { Text(key) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
         dismissButton = { RuntimeOutlinedButton(onClick = onDismiss) { Text("取消") } },
-        confirmButton = { RuntimeButton(onClick = { onStart(values.toMap()) }, enabled = required.all { !values[it].isNullOrBlank() }) { Text("开始执行") } },
+        confirmButton = {
+            RuntimeButton(
+                onClick = {
+                    val payload = values.toMutableMap()
+                    if (needsModel && selectedModelId.isNotBlank()) {
+                        payload["WORKFLOW_MODEL_ID"] = selectedModelId
+                        val variant = selectedVariant.ifBlank { variants.firstOrNull().orEmpty() }
+                        if (variant.isNotBlank()) payload["WORKFLOW_MODEL_VARIANT"] = variant
+                    }
+                    onStart(payload)
+                },
+                enabled = canStart,
+            ) { Text("开始执行") }
+        },
     )
 }

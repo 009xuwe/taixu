@@ -128,6 +128,7 @@ class HostActionNodeExecutor @Inject constructor(
     private val gui: HostGuiController,
     private val privilegeManager: PrivilegeManager,
     private val linuxRuntime: LinuxRuntime,
+    private val guiPilot: WorkflowGuiPilot,
 ) : NodeExecutor {
     override val supportedTypes = setOf(WorkflowNodeType.HOST_ACTION)
 
@@ -148,6 +149,7 @@ class HostActionNodeExecutor @Inject constructor(
             .fold(
                 onSuccess = { it },
                 onFailure = { err ->
+                    if (err is kotlinx.coroutines.CancellationException) throw err
                     NodeExecutionOutput(
                         status = NodeRunStatus.FAILED,
                         exitCode = 1,
@@ -297,6 +299,12 @@ class HostActionNodeExecutor @Inject constructor(
                 )
             }
             "screen_click" -> gui.click(requireInt(cfg("x"), "x"), requireInt(cfg("y"), "y")).toOutput()
+            "screen_double_click" -> gui.doubleClick(requireInt(cfg("x"), "x"), requireInt(cfg("y"), "y")).toOutput()
+            "screen_long_press" -> gui.longPress(
+                requireInt(cfg("x"), "x"),
+                requireInt(cfg("y"), "y"),
+                cfg("durationMs").toLongOrNull()?.coerceIn(200L, 5_000L) ?: 800L,
+            ).toOutput()
             "screen_swipe" -> gui.swipe(
                 requireInt(cfg("x1"), "x1"),
                 requireInt(cfg("y1"), "y1"),
@@ -304,11 +312,36 @@ class HostActionNodeExecutor @Inject constructor(
                 requireInt(cfg("y2"), "y2"),
                 cfg("durationMs").toLongOrNull()?.coerceIn(50L, 5_000L) ?: 300L,
             ).toOutput()
-            "screen_input_text" -> gui.inputText(requireCfg("text")).toOutput()
+            "screen_scroll" -> {
+                val direction = when (requireCfg("direction").lowercase()) {
+                    "up" -> top.wkbin.taixu.runtime.gui.ScrollDirection.UP
+                    "down" -> top.wkbin.taixu.runtime.gui.ScrollDirection.DOWN
+                    "left" -> top.wkbin.taixu.runtime.gui.ScrollDirection.LEFT
+                    "right" -> top.wkbin.taixu.runtime.gui.ScrollDirection.RIGHT
+                    else -> error("direction 仅支持 up/down/left/right")
+                }
+                val ratio = cfg("distanceRatio").toFloatOrNull()?.coerceIn(0.15f, 0.8f) ?: 0.45f
+                val dur = cfg("durationMs").toLongOrNull()?.coerceIn(50L, 5_000L) ?: 350L
+                gui.scroll(direction, ratio, dur).toOutput()
+            }
+            "screen_input_text", "paste_text" -> gui.inputText(requireCfg("text")).toOutput()
             "screen_key" -> gui.sendKey(requireCfg("key")).toOutput()
             "screen_capture" -> gui.captureScreenshot(requireCfg("path")).toOutput(
                 artifacts = { listOf(requireCfg("path")) },
             )
+            "gui_pilot" -> {
+                val goal = cfg("goal").ifBlank { context.globalVariables["GUI_GOAL"].orEmpty() }
+                val pkg = cfg("package").ifBlank { context.globalVariables["TARGET_PACKAGE"].orEmpty() }
+                val maxSteps = cfg("maxSteps").toIntOrNull()?.coerceIn(1, 40) ?: 18
+                guiPilot.run(
+                    goal = goal,
+                    targetPackage = pkg.takeIf { it.isNotBlank() },
+                    modelId = context.globalVariables["WORKFLOW_MODEL_ID"],
+                    modelVariant = context.globalVariables["WORKFLOW_MODEL_VARIANT"],
+                    maxSteps = maxSteps,
+                    onProgress = { msg -> onProgress(NodeRunStatus.STREAMING, msg) },
+                )
+            }
             "toast" -> gui.showToast(requireCfg("text")).toOutput()
             "vibrate" -> gui.vibrate(cfg("durationMs").toLongOrNull() ?: 200L).toOutput()
             "clipboard_set" -> gui.clipboardSet(requireCfg("text")).toOutput()

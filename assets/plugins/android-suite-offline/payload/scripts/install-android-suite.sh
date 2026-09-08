@@ -235,9 +235,9 @@ if [ -s "$ARCHIVES/android-tools_aarch64.deb" ]; then
     rm -rf /tmp/taixu-adb
     mkdir -p /tmp/taixu-adb
     if command -v dpkg-deb >/dev/null 2>&1; then
-        dpkg-deb -x "$ARCHIVES/android-tools_aarch64.deb" /tmp/taixu-adb
+        dpkg-deb --fsys-tarfile "$ARCHIVES/android-tools_aarch64.deb" | tar --no-same-owner --no-same-permissions -C /tmp/taixu-adb -xf - 2>/dev/null || true
     elif command -v ar >/dev/null 2>&1; then
-        (cd /tmp/taixu-adb && ar x "$ARCHIVES/android-tools_aarch64.deb" && tar -xf data.tar.* 2>/dev/null)
+        (cd /tmp/taixu-adb && ar x "$ARCHIVES/android-tools_aarch64.deb" && tar --no-same-owner --no-same-permissions -xf data.tar.* 2>/dev/null) || true
     fi
     ADB_SOURCE=$(find /tmp/taixu-adb -type f -name adb -print -quit)
     need "$ADB_SOURCE"

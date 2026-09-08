@@ -14,6 +14,7 @@ object BuiltinWorkflows {
             atomicCommit,
             hostAutomationLab,
             hostBroadcastDemo,
+            hostAgentGuiPilot,
         ).map(WorkflowLayout::arrange)
 
     fun find(id: String): WorkflowDefinition? = all.firstOrNull { it.id == id }
@@ -427,6 +428,124 @@ object BuiltinWorkflows {
             WorkflowEdge("e7", "gate", "output", "done", conditionExpression = "exitCode != 0"),
             WorkflowEdge("e8", "write_brightness", "output", "delay"),
             WorkflowEdge("e9", "delay", "output", "done"),
+        ),
+    )
+
+    /**
+     * Agent-in-the-loop GUI pilot: privilege check → approve → optional launch →
+     * AGENT_INFERENCE that drives host(screen_*) tools to chase [GUI_GOAL].
+     */
+    val hostAgentGuiPilot = WorkflowDefinition(
+        id = "host_agent_gui_pilot",
+        name = "智能体 GUI 试飞",
+        description = "Shizuku/Root 下本地循环「感知屏幕 → 模型决策一步 → 点击/输入」完成 GUI 目标。默认：打开 QQ → 太墟群 → 发送试飞文案。请盯屏审批后再跑。",
+        category = "宿主",
+        isBuiltin = true,
+        trigger = WorkflowTrigger.Manual("/wf host_agent_gui_pilot"),
+        defaultVariables = mapOf(
+            "GUI_GOAL" to "打开 QQ，进入「太墟」相关 QQ 群聊，在输入框发送一句：「太墟牛逼（来自工作流）」。不要发红包、不要转账、不要改群设置。若找不到群名含「太墟」的群，停止并说明当前看到的会话列表。",
+            "TARGET_PACKAGE" to "com.tencent.mobileqq",
+        ),
+        nodes = listOf(
+            WorkflowNode(
+                "start",
+                WorkflowNodeType.TRIGGER,
+                "填写目标",
+                config = mapOf("requiredVariables" to "GUI_GOAL"),
+            ),
+            WorkflowNode(
+                "status",
+                WorkflowNodeType.HOST_ACTION,
+                "检查 Shizuku/Root",
+                config = mapOf("action" to "status"),
+            ),
+            WorkflowNode(
+                "priv_gate",
+                WorkflowNodeType.CONDITION_BRANCH,
+                "特权是否就绪？",
+                config = mapOf("expression" to "\${HOST_PRIVILEGED} == true"),
+                failurePolicy = FailurePolicy.CONTINUE,
+            ),
+            WorkflowNode(
+                "no_priv",
+                WorkflowNodeType.HOST_ACTION,
+                "提示缺少特权",
+                config = mapOf(
+                    "action" to "toast",
+                    "text" to "请先在设置中授权并切换到 Shizuku 或 Root，再重试本工作流",
+                ),
+            ),
+            WorkflowNode(
+                "approve",
+                WorkflowNodeType.HUMAN_APPROVAL,
+                "确认让智能体操控屏幕",
+                description = "智能体将使用 host(screen_observe/click/swipe/input_text/key/app_launch) 自动操作手机界面以完成 GUI_GOAL。\n\n" +
+                    "默认目标会打开 QQ、进入太墟群并发送「太墟牛逼（来自工作流）」。请本人盯屏；若界面跳到支付/红包，应拒绝或立刻打断。\n\n" +
+                    "拒绝则结束，不会启动操控。",
+                failurePolicy = FailurePolicy.CONTINUE,
+            ),
+            WorkflowNode(
+                "approve_gate",
+                WorkflowNodeType.CONDITION_BRANCH,
+                "用户是否批准？",
+                config = mapOf("expression" to "exitCode == 0"),
+                failurePolicy = FailurePolicy.CONTINUE,
+            ),
+            WorkflowNode(
+                "launch",
+                WorkflowNodeType.HOST_ACTION,
+                "打开目标应用（可选）",
+                config = mapOf(
+                    "action" to "app_launch",
+                    "package" to "\${TARGET_PACKAGE}",
+                ),
+                failurePolicy = FailurePolicy.CONTINUE,
+            ),
+            WorkflowNode(
+                "wait_fg",
+                WorkflowNodeType.DELAY,
+                "等待界面稳定",
+                config = mapOf("seconds" to "2"),
+            ),
+            WorkflowNode(
+                "pilot",
+                WorkflowNodeType.HOST_ACTION,
+                "GUI 试飞循环",
+                config = mapOf(
+                    "action" to "gui_pilot",
+                    "goal" to "\${GUI_GOAL}",
+                    "package" to "\${TARGET_PACKAGE}",
+                    "maxSteps" to "18",
+                ),
+                timeoutSeconds = 900,
+            ),
+            WorkflowNode(
+                "notify",
+                WorkflowNodeType.HOST_ACTION,
+                "通知试飞结束",
+                config = mapOf(
+                    "action" to "notification",
+                    "title" to "GUI 试飞结束",
+                    "text" to "智能体 GUI 试飞已结束，请查看工作流输出",
+                ),
+                failurePolicy = FailurePolicy.CONTINUE,
+            ),
+            WorkflowNode("done", WorkflowNodeType.TERMINAL_OUTPUT, "试飞报告"),
+            WorkflowNode("aborted", WorkflowNodeType.TERMINAL_OUTPUT, "已取消或缺少特权"),
+        ),
+        edges = listOf(
+            WorkflowEdge("e1", "start", "output", "status"),
+            WorkflowEdge("e2", "status", "output", "priv_gate"),
+            WorkflowEdge("e3", "priv_gate", "output", "approve", conditionExpression = "exitCode == 0"),
+            WorkflowEdge("e4", "priv_gate", "output", "no_priv", conditionExpression = "exitCode != 0"),
+            WorkflowEdge("e5", "no_priv", "output", "aborted"),
+            WorkflowEdge("e6", "approve", "output", "approve_gate"),
+            WorkflowEdge("e7", "approve_gate", "output", "launch", conditionExpression = "exitCode == 0"),
+            WorkflowEdge("e8", "approve_gate", "output", "aborted", conditionExpression = "exitCode != 0"),
+            WorkflowEdge("e9", "launch", "output", "wait_fg"),
+            WorkflowEdge("e10", "wait_fg", "output", "pilot"),
+            WorkflowEdge("e11", "pilot", "output", "notify"),
+            WorkflowEdge("e12", "notify", "output", "done"),
         ),
     )
 }

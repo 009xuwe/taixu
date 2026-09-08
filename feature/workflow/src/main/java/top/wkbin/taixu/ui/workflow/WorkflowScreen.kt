@@ -68,6 +68,7 @@ fun WorkflowScreen(
 ) {
     val definitions by viewModel.definitions.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
+    val models by viewModel.models.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); viewModel.clearError() } }
@@ -155,7 +156,12 @@ fun WorkflowScreen(
         ApprovalDialog(request, onDecision = { approved, variables -> viewModel.decide(request.nodeId, approved, variables) })
     }
     pendingRun?.let { definition ->
-        WorkflowStartDialog(definition, initialVariables, onDismiss = { pendingRun = null }) { variables ->
+        WorkflowStartDialog(
+            definition = definition,
+            supplied = initialVariables,
+            models = models,
+            onDismiss = { pendingRun = null },
+        ) { variables ->
             pendingRun = null
             viewModel.start(definition, projectName, variables)
         }
@@ -235,7 +241,7 @@ private fun WorkflowCatalog(
                 }
             }
         }
-        if (history.isNotEmpty()) item { Text("最近运行（只读记录）", style = MaterialTheme.typography.titleMedium) }
+        if (history.isNotEmpty()) item { Text("最近运行（最近 ${history.size} 条，只读）", style = MaterialTheme.typography.titleMedium) }
         items(history, key = { "history:${it.executionId}" }) { run ->
             RuntimeOutlinedButton(onClick = { onHistory(run) }, modifier = Modifier.fillMaxWidth()) {
                 Text("${run.definition.name} · ${runStatusLabel(run.status)} · ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(run.startedAt ?: 0))}", maxLines = 2, overflow = TextOverflow.Ellipsis)
