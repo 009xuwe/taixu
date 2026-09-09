@@ -529,7 +529,7 @@ fun ChatScreen(
                     }
                 }
             } else if (browserPane != null) {
-                // 单栏：智枢对话 ↔ 浏览器 左右滑动切换，一边看 harness 操作一边看浏览器变化
+                // 单栏：通过顶部入口直接切换，禁用横向手势和滑动过渡。
                 val pagerState = rememberPagerState(initialPage = 0) { 2 }
                 var lastSeenBrowserTick by remember { mutableStateOf(0L) }
                 LaunchedEffect(pagerState.currentPage, browserActivityTick) {
@@ -538,17 +538,17 @@ fun ChatScreen(
                 // 浏览器页系统返回：优先回退 WebView 历史，耗尽后切回对话页
                 BackHandler(enabled = pagerState.currentPage == 1) {
                     if (browserBackPressed?.invoke() != true) {
-                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                        coroutineScope.launch { pagerState.scrollToPage(0) }
                     }
                 }
                 Box(modifier = Modifier.fillMaxSize()) {
-                    HorizontalPager(state = pagerState) { page ->
+                    HorizontalPager(state = pagerState, userScrollEnabled = false) { page ->
                         if (page == 0) {
-                            // 对话页：顶部工具条（模型·权限·主线·轮次·浏览器）属于对话的一部分，随页滑走
+                            // 对话页：顶部工具条（模型·权限·主线·轮次·浏览器）属于对话的一部分。
                             Column(modifier = Modifier.fillMaxSize()) {
                                 chatTopBar(
                                     {
-                                        coroutineScope.launch { pagerState.animateScrollToPage(1) }
+                                        coroutineScope.launch { pagerState.scrollToPage(1) }
                                     },
                                     browserActivityTick > lastSeenBrowserTick,
                                 )
@@ -571,7 +571,7 @@ fun ChatScreen(
                             ) {
                                 browserPane(
                                     {
-                                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                                        coroutineScope.launch { pagerState.scrollToPage(0) }
                                     }
                                 )
                             }
