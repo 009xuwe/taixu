@@ -35,7 +35,9 @@ class TurnRunner @Inject constructor(
         consumeFollowUps: suspend () -> Int,
         enforceToolLimit: suspend (List<ApiToolCallSpec>, ChatResult) -> List<ApiToolCallSpec>,
         executeTools: suspend (List<ApiToolCallSpec>, ChatResult) -> Boolean,
+        remainingRounds: Int = Int.MAX_VALUE,
     ): TurnOutcome {
+        if (remainingRounds <= 0) return roundLimitReached()
         val provider = callProvider()
         if (provider is TurnProviderOutcome.Failed) return TurnOutcome.Failed(provider.message)
         provider as TurnProviderOutcome.Success
@@ -53,6 +55,8 @@ class TurnRunner @Inject constructor(
             val followUpCount = consumeFollowUps()
             return if (followUpCount == 0) {
                 TurnOutcome.Complete
+            } else if (remainingRounds == 1) {
+                roundLimitReached()
             } else {
                 TurnOutcome.Continue(
                     effectiveToolCallCount = 0,
@@ -64,9 +68,12 @@ class TurnRunner @Inject constructor(
 
         val effectiveCalls = enforceToolLimit(normalized.toolCalls, normalized.result)
         val toolsHadSuccess = executeTools(effectiveCalls, normalized.result)
+        if (remainingRounds == 1) return roundLimitReached()
         return TurnOutcome.Continue(
             effectiveToolCallCount = effectiveCalls.size,
             toolsHadSuccess = toolsHadSuccess,
         )
     }
+
+    private fun roundLimitReached() = TurnOutcome.Failed("已达到最大工具轮数，任务尚未确认完成。请简化任务或分步继续。")
 }

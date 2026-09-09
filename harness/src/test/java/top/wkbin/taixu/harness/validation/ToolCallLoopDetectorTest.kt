@@ -2,11 +2,23 @@ package top.wkbin.taixu.harness.validation
 
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolCallLoopDetectorTest {
+
+    @Test
+    fun `reordering nested argument keys does not bypass repeated failure detection`() {
+        val detector = ToolCallLoopDetector()
+        val first = Json.parseToJsonElement("""{"path":"a","options":{"limit":2,"offset":0}}""").jsonObject
+        val reordered = Json.parseToJsonElement("""{"options":{"offset":0,"limit":2},"path":"a"}""").jsonObject
+        detector.recordSettled("read", first, false)
+        detector.recordSettled("read", reordered, false)
+        assertTrue(detector.evaluate("read", first) is ToolCallLoopDetector.LoopVerdict.Block)
+    }
 
     @Test
     fun `single execution passes without warnings`() {

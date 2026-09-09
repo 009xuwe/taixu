@@ -2,6 +2,9 @@ package top.wkbin.taixu.harness
 
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -9,6 +12,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolRoundDispatcherTest {
+
+    @Test
+    fun `mutations across independent single and parallel rounds do not overlap`() = runBlocking {
+        val dispatcher = ToolRoundDispatcher()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val events = mutableListOf<Int>()
+        val first = launch {
+            dispatcher.dispatch(listOf(1), isParallelSafe = { false }) { item, _ ->
+                events += item
+                entered.complete(Unit)
+                release.await()
+            }
+        }
+        entered.await()
+        val second = launch {
+            dispatcher.dispatch(listOf(2, 3), isParallelSafe = { false }) { item, _ -> events += item }
+        }
+        repeat(5) { yield() }
+        assertEquals(listOf(1), events)
+        release.complete(Unit)
+        first.join()
+        second.join()
+        assertEquals(setOf(1, 2, 3), events.toSet())
+    }
+
+    @Test
+    fun `approval abort skips mutations already waiting for lock`() = runBlocking {
+        val dispatcher = ToolRoundDispatcher()
+        val executed = mutableListOf<Int>()
+        dispatcher.dispatch(listOf(1, 2, 3), isParallelSafe = { false }) { item, pause ->
+            executed += item
+            yield()
+            pause.abort()
+        }
+        assertEquals(1, executed.size)
+    }
 
     private data class Item(val id: Int, val parallelSafe: Boolean)
 

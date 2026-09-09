@@ -9,6 +9,9 @@
 | 模块 | 关键文件 | 职责 |
 | --- | --- | --- |
 | `harness/HarnessLoop.kt` | 主循环，多会话并发 | Agent 主循环 |
+| `harness/HarnessProviderRunner.kt` | 模型能力选择、流式请求与重试、助手回复结算 | 模型回合 |
+| `harness/HarnessToolRoundRunner.kt` | 工具参数校验、单轮限额、执行与审批暂停 | 工具回合 |
+| `harness/HarnessWorkspaceRecommendations.kt` | 工作区路径边界、MCP 推荐扫描与前台投影 | MCP 推荐 |
 | `harness/ToolExecutor.kt` | `read / write / edit / base / process / host / download / build_script / subagent` 等内置工具分派 |
 | `harness/ApprovalPolicyEngine.kt` | 工具调用的审批策略（normal / high / critical 三档） |
 | `harness/ToolRoundDispatcher.kt` | 单回合多工具并发调度（mutation 互斥 / read-only 4 并发） |

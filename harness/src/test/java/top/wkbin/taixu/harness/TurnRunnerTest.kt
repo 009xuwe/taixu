@@ -11,6 +11,57 @@ class TurnRunnerTest {
     private val runner = TurnRunner(ProviderResponseNormalizer(Json { ignoreUnknownKeys = true }))
 
     @Test
+    fun `successful tool on last round still requires another model turn`() = runBlocking {
+        var executed = false
+        val marker = "[[tool_call]]{\"name\":\"read\",\"arguments\":{\"path\":\"file.txt\"}}[[/tool_call]]"
+        val outcome = runner.run(
+            toolsEnabled = true,
+            callProvider = { TurnProviderOutcome.Success(ChatResult(marker, emptyList()), marker) },
+            persistAssistant = {}, consumeFollowUps = { error("must not consume") },
+            enforceToolLimit = { calls, _ -> calls }, executeTools = { _, _ -> executed = true; true },
+            remainingRounds = 1,
+        )
+        assertTrue(executed)
+        assertTrue(outcome is TurnOutcome.Failed)
+    }
+
+    @Test
+    fun `last round with pending follow up is not reported complete`() = runBlocking {
+        val outcome = runner.run(
+            toolsEnabled = true,
+            callProvider = { TurnProviderOutcome.Success(ChatResult(content = "done", toolCalls = emptyList()), "done") },
+            persistAssistant = {}, consumeFollowUps = { 1 },
+            enforceToolLimit = { calls, _ -> calls }, executeTools = { _, _ -> true },
+            remainingRounds = 1,
+        )
+        assertTrue(outcome is TurnOutcome.Failed)
+    }
+
+    @Test
+    fun `final answer on last allowed round can complete`() = runBlocking {
+        val outcome = runner.run(
+            toolsEnabled = true,
+            callProvider = { TurnProviderOutcome.Success(ChatResult(content = "done", toolCalls = emptyList()), "done") },
+            persistAssistant = {}, consumeFollowUps = { 0 },
+            enforceToolLimit = { calls, _ -> calls }, executeTools = { _, _ -> true },
+            remainingRounds = 1,
+        )
+        assertEquals(TurnOutcome.Complete, outcome)
+    }
+
+    @Test
+    fun `exhausted budget does not call provider`() = runBlocking {
+        val outcome = runner.run(
+            toolsEnabled = true,
+            callProvider = { error("must not call provider") },
+            persistAssistant = {}, consumeFollowUps = { error("must not consume queue") },
+            enforceToolLimit = { calls, _ -> calls }, executeTools = { _, _ -> error("must not execute") },
+            remainingRounds = 0,
+        )
+        assertTrue(outcome is TurnOutcome.Failed)
+    }
+
+    @Test
     fun `provider failure stops before publication and effects`() = runBlocking {
         var persisted = false
         var executed = false

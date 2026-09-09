@@ -49,9 +49,9 @@ class AppLogger @Inject constructor(
         androidLog: (String, Throwable?) -> Unit,
     ) {
         val safeMessage = safe(message)
-        val safeThrowable = safe(throwable)
-        androidLog(safeMessage, safeThrowable)
         val stack = throwable?.let { secretRedactor.redact(it.stackTraceToString()) }.orEmpty()
+        // Redact the entire cause/suppressed chain, not only the outer message.
+        androidLog(if (stack.isBlank()) safeMessage else "$safeMessage\n$stack", null)
         ioScope.launch {
             runCatching {
                 append(
@@ -70,7 +70,7 @@ class AppLogger @Inject constructor(
         val safeTag = safe(tag)
         val safeSessionId = safe(sessionId)
         val stack = throwable?.let { secretRedactor.redact(it.stackTraceToString()) }.orEmpty()
-        Log.d(TAG, "[$safeTag][$safeSessionId] $safeMessage", throwable)
+        Log.d(TAG, "[$safeTag][$safeSessionId] $safeMessage" + if (stack.isBlank()) "" else "\n$stack")
         ioScope.launch {
             runCatching {
                 val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
@@ -101,7 +101,7 @@ class AppLogger @Inject constructor(
     fun readAgentLogs(maxChars: Int = 100_000): String = runCatching {
         val file = existingLogFile(AGENT_LOG_FILE)
             ?: return@runCatching "暂无智能体本地日志"
-        val text = file.readText(Charsets.UTF_8)
+        val text = safe(file.readText(Charsets.UTF_8))
         when {
             text.isEmpty() -> "暂无智能体本地日志"
             text.length > maxChars -> text.takeLast(maxChars)
@@ -159,11 +159,6 @@ class AppLogger @Inject constructor(
             ?: fallbackLogFile(fileName).takeIf { it.exists() }
 
     private fun safe(value: String): String = secretRedactor.redact(value)
-
-    private fun safe(throwable: Throwable?): Throwable? = throwable?.let {
-        val message = it.message.orEmpty()
-        if (safe(message) == message) it else IllegalStateException(safe(message))
-    }
 
     private companion object {
         const val TAG = "TaiXu"

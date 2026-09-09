@@ -8,6 +8,20 @@ class SecretRedactorTest {
     private val redactor = SecretRedactor()
 
     @Test
+    fun `redacts escaped commands config prefixes and repeated secrets`() {
+        val secret = "synthetic-test-credential"
+        for (entry in listOf(
+            """Args={"command":"password = \"$secret\"\nprint('$secret')"}""",
+            """mail_smtp_pass: "$secret"""",
+            "mail_smtp_pass: $secret",
+            """--auth-password "$secret"""",
+            """{"mail_smtp_pass":"$secret"}""",
+        )) {
+            assertFalse(redactor.redact(entry).contains(secret))
+        }
+    }
+
+    @Test
     fun `redacts openai api key`() {
         val out = redactor.redact("config OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123 rest")
         assertFalse(out.contains("sk-abcdefghijklmnopqrstuvwxyz123"))

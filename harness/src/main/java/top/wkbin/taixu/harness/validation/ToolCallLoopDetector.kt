@@ -1,6 +1,8 @@
 package top.wkbin.taixu.harness.validation
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 
 /**
  * 智能体工具调用死循环与重复调用检测器。
@@ -38,7 +40,7 @@ class ToolCallLoopDetector(
      */
     @Synchronized
     fun evaluate(toolName: String, args: JsonObject): LoopVerdict {
-        val currentArgsJson = args.toString()
+        val currentArgsJson = canonical(args).toString()
         val recentCalls = callHistory.takeLast(10)
 
         // 1. 检测连续相同调用的失败历史
@@ -114,7 +116,7 @@ class ToolCallLoopDetector(
      */
     @Synchronized
     fun recordIntent(toolName: String, args: JsonObject) {
-        callHistory.add(CallRecord(toolName = toolName, argsJson = args.toString()))
+        callHistory.add(CallRecord(toolName = toolName, argsJson = canonical(args).toString()))
         // 限制历史记录上限
         if (callHistory.size > 50) {
             callHistory.removeAt(0)
@@ -126,7 +128,7 @@ class ToolCallLoopDetector(
      */
     @Synchronized
     fun recordSettled(toolName: String, args: JsonObject, success: Boolean) {
-        val currentArgsJson = args.toString()
+        val currentArgsJson = canonical(args).toString()
         val lastRecord = callHistory.lastOrNull {
             it.toolName.equals(toolName, ignoreCase = true) && it.argsJson == currentArgsJson && it.success == null
         }
@@ -134,6 +136,7 @@ class ToolCallLoopDetector(
             lastRecord.success = success
         } else {
             callHistory.add(CallRecord(toolName = toolName, argsJson = currentArgsJson, success = success))
+            if (callHistory.size > 50) callHistory.removeAt(0)
         }
     }
 
@@ -143,5 +146,11 @@ class ToolCallLoopDetector(
     @Synchronized
     fun reset() {
         callHistory.clear()
+    }
+
+    private fun canonical(value: JsonElement): JsonElement = when (value) {
+        is JsonObject -> JsonObject(value.toSortedMap().mapValues { canonical(it.value) })
+        is JsonArray -> JsonArray(value.map(::canonical))
+        else -> value
     }
 }

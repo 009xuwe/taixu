@@ -1,16 +1,11 @@
 package top.wkbin.taixu.harness
 
-import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.model.SessionRunState
-import top.wkbin.taixu.harness.mcp.McpToolApiName
-import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,23 +17,17 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import top.wkbin.taixu.harness.validation.ToolSchemaValidator
 import top.wkbin.taixu.harness.validation.ToolCallLoopDetector
 import top.wkbin.taixu.harness.metrics.RunMetrics
 import top.wkbin.taixu.harness.task.AgentStateMachine
@@ -46,22 +35,16 @@ import top.wkbin.taixu.harness.task.AgentStateMachine
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.harness.effects.RetryPolicy
-import top.wkbin.taixu.harness.effects.ToolReplayPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
 import top.wkbin.taixu.harness.recovery.RecoveryManager
 import top.wkbin.taixu.harness.recovery.RecoveryOutcome
 import top.wkbin.taixu.harness.queue.PromptQueue
 import top.wkbin.taixu.harness.queue.PromptQueueManager
-import top.wkbin.taixu.harness.compaction.CompactionManager
 import top.wkbin.taixu.harness.effects.DanglingToolCallPlanner
 import top.wkbin.taixu.harness.events.AgentEventLogger
-import top.wkbin.taixu.harness.events.CapabilityEventWriter
 import top.wkbin.taixu.harness.projection.CurrentSessionTracker
 import top.wkbin.taixu.harness.projection.SessionMessageProjector
 import top.wkbin.taixu.harness.projection.SessionStateMirrors
-import top.wkbin.taixu.harness.projection.ToolStatusDescriber
-import top.wkbin.taixu.harness.session.ApiContextAssembler
-import kotlin.time.Duration.Companion.milliseconds
 
 /** Agent 单次运行的结构化结果，外层据此设置会话状态，避免内部失败被误标为 COMPLETED。 */
 private sealed interface RunResult {
@@ -71,14 +54,6 @@ private sealed interface RunResult {
     data class Failed(val message: String) : RunResult
 }
 
-/** 已通过串行校验、待并发执行的工具调用。 */
-private data class ExecutableToolCall(
-    val spec: ApiToolCallSpec,
-    val tool: HarnessTool,
-    val toolName: String,
-    val args: JsonObject,
-)
-
 /**
  * Harness 多智能体会话并发引擎：
  * 支持多会话后台并行运行、实时状态机追踪（就绪/运行中/完成/失败）、
@@ -86,7 +61,9 @@ private data class ExecutableToolCall(
  */
 @Singleton
 class HarnessLoop @Inject constructor(
-    @ApplicationContext private val context: Context,
+    private val workspaceRecommendations: HarnessWorkspaceRecommendations,
+    private val providerRunner: HarnessProviderRunner,
+    private val toolRoundRunner: HarnessToolRoundRunner,
     private val foregroundLauncher: AgentForegroundLauncher,
     private val providerClient: ProviderClient,
     private val toolExecutor: ToolExecutor,
@@ -103,15 +80,8 @@ class HarnessLoop @Inject constructor(
     private val sessionTracker: CurrentSessionTracker,
     private val stateMirrors: SessionStateMirrors,
     private val messageProjector: SessionMessageProjector,
-    private val capabilityWriter: CapabilityEventWriter,
     private val agentEventLogger: AgentEventLogger,
-    private val systemPromptBuilder: top.wkbin.taixu.harness.prompt.SystemPromptBuilder,
-    private val contextAssembler: ApiContextAssembler,
     private val resumePolicy: top.wkbin.taixu.harness.approval.ApprovalResumePolicy,
-    private val toolRoundDispatcher: ToolRoundDispatcher,
-    private val mcpRecommender: top.wkbin.taixu.harness.mcp.McpWorkspaceRecommender,
-    private val mcpServerRepository: top.wkbin.taixu.core.database.McpServerRepository,
-    private val pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
     private val agentTaskStateMachine: AgentStateMachine,
     private val turnRunner: TurnRunner,
     private val rewindController: top.wkbin.taixu.harness.checkpoint.RewindController,
@@ -175,51 +145,16 @@ class HarnessLoop @Inject constructor(
     /** 当前会话显式选择的工程类型；空值表示由工作区内容自动识别。 */
     val projectType: StateFlow<String> = _projectType.asStateFlow()
 
-    private val _mcpRecommendations = MutableStateFlow<List<top.wkbin.taixu.harness.mcp.McpWorkspaceRecommender.Recommendation>>(emptyList())
-    /**
-     * 基于当前会话工作区内容自动推荐的 MCP 预设（已启用的会被过滤）。
-     * 仅提示、不自动启用；用户可一键启用或忽略。
-     */
-    val mcpRecommendations: StateFlow<List<top.wkbin.taixu.harness.mcp.McpWorkspaceRecommender.Recommendation>> =
-        _mcpRecommendations.asStateFlow()
+    val mcpRecommendations get() = workspaceRecommendations.recommendations
 
-    /** 用户确认启用推荐中的 MCP 预设。 */
     fun enableRecommendedMcp(presetId: String) {
-        loopScope.launch {
-            runCatching { mcpServerRepository.setEnabled(presetId, true) }
-                .onFailure { throwable -> logger.e("启用推荐 MCP 失败：$presetId", throwable) }
-            _mcpRecommendations.update { current -> current.filterNot { it.presetId == presetId } }
-        }
+        loopScope.launch { workspaceRecommendations.enable(presetId) }
     }
 
-    /** 用户忽略该推荐（本次会话加载内不再提示）。 */
-    fun dismissMcpRecommendation(presetId: String) {
-        _mcpRecommendations.update { current -> current.filterNot { it.presetId == presetId } }
-    }
+    fun dismissMcpRecommendation(presetId: String) = workspaceRecommendations.dismiss(presetId)
 
-    /** 扫描工作区内容并刷新推荐列表；未关联工作区或目录不存在时清空。 */
     private fun refreshMcpRecommendations(workspacePath: String) {
-        loopScope.launch {
-            val dir = resolveWorkspaceDir(workspacePath)
-            val recommendations = if (dir == null) emptyList() else {
-                mcpRecommender.recommend(dir)
-            }
-            val enabledIds = runCatching { mcpServerRepository.servers.first() }
-                .getOrDefault(emptyList())
-                .filter { it.isEnabled }
-                .map { it.id }
-                .toSet()
-            _mcpRecommendations.value = recommendations.filter { it.presetId !in enabledIds }
-        }
-    }
-
-    private fun resolveWorkspaceDir(workspacePath: String): java.io.File? {
-        val trimmed = workspacePath.trim()
-        if (trimmed.isEmpty()) return null
-        val relative = trimmed.removePrefix("/workspace/").removePrefix("/workspace").removePrefix("/")
-        val root = pathManager.workspaceDir
-        val dir = if (relative.isBlank()) root else java.io.File(root, relative)
-        return dir.takeIf { it.isDirectory }
+        workspaceRecommendations.refresh(loopScope, workspacePath)
     }
 
     val error: StateFlow<String?> get() = stateMirrors.error
@@ -282,7 +217,6 @@ class HarnessLoop @Inject constructor(
         stateMirrors.resetForeground()
         _pendingMessages.value = emptyList()
         _queuedPrompts.value = emptyList()
-        _mcpRecommendations.value = emptyList()
         refreshMcpRecommendations(workspace)
         return id
     }
@@ -1084,15 +1018,16 @@ class HarnessLoop @Inject constructor(
                 return RunResult.Failed("无法获取模型配置：${friendly(throwable)}")
             }
             agentEventLogger.log(sessId, "ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
-            val effectiveModel = resolveEffectiveModel(sessId, model)
+            val effectiveModel = providerRunner.resolveEffectiveModel(sessId, model)
             val assistantId = newId()
             val assistantAt = now()
 
             val turn = turnRunner.run(
+                remainingRounds = maxRounds - round,
                 toolsEnabled = !effectiveModel.pureChatMode &&
                     effectiveModel.toolCallMode != ToolCallMode.DISABLED,
                 callProvider = {
-                    callProviderWithRetry(
+                    providerRunner.callProviderWithRetry(
                         sessId = sessId,
                         model = effectiveModel,
                         sessionEntity = sessionEntity,
@@ -1118,7 +1053,7 @@ class HarnessLoop @Inject constructor(
                     )
                 },
                 persistAssistant = { normalized ->
-                    persistAssistantOutput(
+                    providerRunner.persistAssistantOutput(
                         sessId = sessId,
                         assistantId = assistantId,
                         assistantAt = assistantAt,
@@ -1141,7 +1076,7 @@ class HarnessLoop @Inject constructor(
                     followUps.size
                 },
                 enforceToolLimit = { allCalls, result ->
-                    val effectiveCalls = enforceToolRoundLimit(
+                    val effectiveCalls = toolRoundRunner.enforceToolRoundLimit(
                         sessId,
                         allCalls,
                         maxToolsPerRound,
@@ -1151,9 +1086,10 @@ class HarnessLoop @Inject constructor(
                     effectiveCalls
                 },
                 executeTools = { effectiveCalls, result ->
-                    executeToolCalls(
+                    toolRoundRunner.executeToolCalls(
                         sessId = sessId,
                         specs = effectiveCalls,
+                        loopDetector = sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() },
                         reasoning = result.reasoningContent,
                         sessionWorkspace = sessionWorkspace,
                         autoCwd = autoCwd,
@@ -1202,487 +1138,7 @@ class HarnessLoop @Inject constructor(
                 totalMs = now() - startedAt,
             ),
         )
-        return RunResult.Completed
-    }
-
-    /** 按最新用户消息中的 @提及 过滤动态 MCP 工具，并写入能力挂载记录 */
-    private suspend fun resolveEffectiveModel(sessId: String, model: ModelConfig): ModelConfig {
-        val msgs = messageProjector.messagesFlow(sessId).value
-        val latestUserMessage = msgs.filterIsInstance<UserMessage>().lastOrNull()
-        val latestUserText = latestUserMessage?.text.orEmpty()
-        val mentionedNames = MentionExtractor.parse(latestUserText)
-        val effectiveModel = if (mentionedNames.isNotEmpty()) {
-            val matchedTools = model.dynamicMcpTools.filter { tool ->
-                val sName = tool.serverName.lowercase()
-                val sId = tool.serverId.lowercase()
-                val tName = tool.name.lowercase()
-                sName in mentionedNames || sId in mentionedNames || tName in mentionedNames
-            }
-            if (matchedTools.isNotEmpty()) model.copy(dynamicMcpTools = matchedTools) else model
-        } else {
-            model
-        }
-        capabilityWriter.writeIfMentioned(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, effectiveModel)
-        return effectiveModel
-    }
-
-    /** 流式调用 + 限流/网络退避重试。恢复不了的失败以 Failed 终态返回；取消与超过重试上限的原样抛出 */
-    private suspend fun callProviderWithRetry(
-        sessId: String,
-        model: ModelConfig,
-        sessionEntity: HarnessSessionEntity?,
-        sessionWorkspace: String,
-        operationId: String,
-        assistantId: String,
-        assistantAt: Long,
-        round: Int,
-        startedAt: Long,
-        retryPolicy: RetryPolicy,
-        metrics: RunMetrics,
-    ): TurnProviderOutcome {
-        val streamText = StreamBuffer()
-        val streamReasoning = StreamBuffer(maxChars = ProviderClient.MAX_STREAM_REASONING_CHARS)
-        var streamed: ChatResult? = null
-        var netRetry = 0
-        suspend fun assembleFor(requestModel: ModelConfig) = contextAssembler.assemble(
-            sessId = sessId,
-            model = requestModel,
-            workspacePath = sessionWorkspace,
-            projectTypeOverride = sessionEntity?.projectType.orEmpty(),
-            thinkingMode = stateMirrors.requestThinkingMode(sessId),
-        )
-        fun estimateTokens(messages: List<ApiMessage>) = messages.sumOf { message ->
-            ContextWindowPolicy.estimateTokens(message.content.orEmpty()) +
-                ContextWindowPolicy.estimateTokens(message.reasoning_content.orEmpty()) +
-                message.tool_calls.orEmpty().sumOf { call ->
-                    ContextWindowPolicy.estimateTokens(call.function.name) +
-                        ContextWindowPolicy.estimateTokens(call.function.arguments)
-                } +
-                message.imageUrls.size * ESTIMATED_IMAGE_TOKENS
-        }
-        // Context and prompt remain immutable during network retries. The configured model
-        // window is authoritative: a transport heuristic must never persistently compact a
-        // valid 128k/200k conversation down to 64k.
-        val requestMessages = assembleFor(model)
-        val originalEstimatedTokens = estimateTokens(requestMessages)
-        val estimatedRequestTokens = estimateTokens(requestMessages)
-        val maxNetworkRetries = maxNetworkRetriesFor(originalEstimatedTokens, retryPolicy.maxRetries)
-        val maxAttempts = maxNetworkRetries + 1
-        if (maxNetworkRetries < retryPolicy.maxRetries) {
-            agentEventLogger.log(
-                sessId,
-                "LargeContextRetryPolicy",
-                "估算输入约 $estimatedRequestTokens tokens，大上下文网络重试限制为 $maxNetworkRetries 次",
-            )
-        }
-        while (streamed == null) {
-            try {
-                stateMirrors.setStatus(sessId, "等待模型首个响应（${netRetry + 1}/$maxAttempts）")
-                operationCoordinator.providerIntent(
-                    operationId = operationId,
-                    effectId = assistantId,
-                    round = round,
-                    attempt = netRetry + 1,
-                    maxAttempts = maxAttempts,
-                )
-                streamed = providerClient.chatStream(
-                    model,
-                    requestMessages,
-                    onReasoning = { chunk ->
-                        streamReasoning.append(chunk)
-                        stateMirrors.setThinkingLive(sessId, true)
-                        stateMirrors.recordThinkingObserved(sessId)
-                        streamReasoning.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
-                            messageProjector.streamReasoning(sessId, assistantId, assistantAt, it)
-                        }
-                    },
-                    onToolProgress = { progress ->
-                        stateMirrors.setThinkingLive(sessId, false)
-                        stateMirrors.setStatus(
-                            sessId,
-                            if (progress.name == "write") {
-                                "正在生成 write · +${progress.addedLines}"
-                            } else {
-                                "正在生成 edit · +${progress.addedLines} -${progress.deletedLines}"
-                            },
-                        )
-                    },
-                ) { chunk ->
-                    stateMirrors.setStatus(sessId, "回复中")
-                    streamText.append(chunk)
-                    streamText.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
-                        messageProjector.streamText(sessId, assistantId, assistantAt, it)
-                    }
-                }
-                // 流式传输完毕，无条件刷新一次完整内容
-                if (streamReasoning.length > 0) {
-                    messageProjector.streamReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
-                }
-                if (streamText.length > 0) {
-                    messageProjector.streamText(sessId, assistantId, assistantAt, streamText.toString())
-                }
-            } catch (cancellation: CancellationException) {
-                agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行")
-                messageProjector.remove(sessId, assistantId)
-                throw cancellation
-            } catch (rateLimit: LlmRateLimitException) {
-                currentCoroutineContext().ensureActive()
-                if (rateLimit.quotaExhausted) {
-                    stateMirrors.setThinkingLive(sessId, false)
-                    agentEventLogger.log(sessId, "QuotaExhausted", rateLimit.message.orEmpty(), rateLimit)
-                    // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史，避免下一轮注入模型上下文
-                    messageProjector.remove(sessId, assistantId)
-                    val detail = rateLimit.message?.takeIf { it.isNotBlank() }?.let { "\n\n$it" }.orEmpty()
-                    return TurnProviderOutcome.Failed("模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。$detail")
-                }
-                netRetry++
-                if (netRetry > maxNetworkRetries) throw rateLimit
-                metrics.streamRetry()
-                stateMirrors.setThinkingLive(sessId, false)
-                val waitSeconds = rateLimit.retryAfterSeconds ?: (netRetry * RETRY_BACKOFF_SEC).coerceAtMost(60L)
-                stateMirrors.setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$maxNetworkRetries）")
-                agentEventLogger.log(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$maxNetworkRetries", rateLimit)
-                streamText.clear()
-                streamReasoning.clear()
-                messageProjector.streamText(sessId, assistantId, assistantAt, "")
-                for (remaining in waitSeconds downTo 1L) {
-                    currentCoroutineContext().ensureActive()
-                    stateMirrors.setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$maxNetworkRetries）")
-                    delay(1000L.milliseconds)
-                }
-            } catch (io: IOException) {
-                currentCoroutineContext().ensureActive()
-                netRetry++
-                agentEventLogger.log(sessId, "NetworkRetry", "网络中断重试 $netRetry/$maxNetworkRetries: ${io.message}", io)
-                if (netRetry > maxNetworkRetries) throw io
-                metrics.streamRetry()
-                stateMirrors.setThinkingLive(sessId, false)
-                stateMirrors.setStatus(sessId, "网络中断，重试中（$netRetry/$maxNetworkRetries）")
-                streamText.clear()
-                streamReasoning.clear()
-                messageProjector.streamText(sessId, assistantId, assistantAt, "")
-                delay(retryPolicy.delayForRetry(netRetry).milliseconds)
-            } catch (throwable: Throwable) {
-                stateMirrors.setThinkingLive(sessId, false)
-                agentEventLogger.log(sessId, "ModelError", "LLM 调用失败: ${throwable.message}", throwable)
-                if (streamText.length > 0) {
-                    persistAssistant(
-                        sessId,
-                        assistantId,
-                        assistantAt,
-                        streamText.toString(),
-                        streamReasoning.toString().ifBlank { null },
-                        totalMs = now() - startedAt,
-                        operationId = operationId,
-                        round = round,
-                    )
-                } else {
-                    // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史
-                    messageProjector.remove(sessId, assistantId)
-                }
-                return TurnProviderOutcome.Failed(friendly(throwable))
-            }
-        }
-        messageProjector.endStreaming(sessId)
-        return TurnProviderOutcome.Success(streamed, streamText.toString())
-    }
-
-    /** 回合结束后落库助手回复；无文本时只结算 usage 记录 */
-    private suspend fun persistAssistantOutput(
-        sessId: String,
-        assistantId: String,
-        assistantAt: Long,
-        round: Int,
-        startedAt: Long,
-        operationId: String,
-        result: ChatResult,
-        effectiveModel: ModelConfig,
-        displayText: String,
-        hasToolCalls: Boolean,
-    ) {
-        if (displayText.isNotEmpty()) {
-            persistAssistant(
-                sessId,
-                assistantId,
-                assistantAt,
-                displayText,
-                result.reasoningContent,
-                totalMs = if (!hasToolCalls) now() - startedAt else null,
-                operationId = operationId,
-                round = round,
-                usage = result.usage,
-                model = effectiveModel,
-            )
-        } else {
-            val usageEntity = result.usage.takeIf { it.hasData }?.let {
-                operationCoordinator.usageEntity(
-                    sessionId = sessId,
-                    operationId = operationId,
-                    entryId = null,
-                    provider = effectiveModel.provider,
-                    modelId = effectiveModel.model,
-                    usage = it,
-                )
-            }
-            operationCoordinator.providerSettled(operationId, null, usage = usageEntity, round = round)
-        }
-    }
-
-    /** 单轮工具数上限：超出部分回填空结果并提示模型，返回保留执行的前 maxToolsPerRound 个调用 */
-    private suspend fun enforceToolRoundLimit(
-        sessId: String,
-        allCalls: List<ApiToolCallSpec>,
-        maxToolsPerRound: Int,
-        reasoning: String?,
-    ): List<ApiToolCallSpec> {
-        if (allCalls.size <= maxToolsPerRound) return allCalls
-        val dropped = allCalls.size - maxToolsPerRound
-        allCalls.drop(maxToolsPerRound).forEach { spec ->
-            appendToolCallAndResult(
-                sessId = sessId,
-                spec = spec,
-                tool = HarnessApiMapper.toolByName(spec.name),
-                args = buildJsonObject {},
-                reasoning = reasoning,
-                rawToolName = spec.name.trim(),
-                output = "本回合工具调用数量（${allCalls.size}）超过单轮上限（$maxToolsPerRound），已跳过本次多余的 $dropped 个调用。" +
-                    "请拆分任务、分步调用工具，避免一次性发起过多工具请求。",
-            )
-        }
-        return allCalls.take(maxToolsPerRound)
-    }
-
-    /** 失败工具调用的统一样板：先回放 ToolCall 气泡，再写回失败 ToolResult 让模型自我纠正 */
-    private suspend fun appendToolCallAndResult(
-        sessId: String,
-        spec: ApiToolCallSpec,
-        tool: HarnessTool,
-        args: JsonObject,
-        reasoning: String?,
-        rawToolName: String?,
-        output: String,
-    ) {
-        val toolCallId = ToolCallIdNormalizer.normalize(spec.id)
-        messageProjector.append(
-            sessId,
-            ToolCall(
-                id = toolCallId,
-                createdAt = now(),
-                tool = tool,
-                args = args,
-                reasoning = reasoning,
-                rawToolName = rawToolName,
-            ),
-        )
-        messageProjector.append(
-            sessId,
-            ToolResult(
-                id = newId(),
-                createdAt = now(),
-                toolCallId = toolCallId,
-                success = false,
-                output = output,
-            ),
-        )
-    }
-
-    /** 参数解析 → 未知工具 → Schema 校验 → 死循环检测（串行 Phase A）→ 受限并发执行与结果落盘（Phase B）；返回本回合是否有成功调用 */
-    private suspend fun executeToolCalls(
-        sessId: String,
-        specs: List<ApiToolCallSpec>,
-        reasoning: String?,
-        sessionWorkspace: String,
-        autoCwd: Boolean,
-        effectiveModel: ModelConfig,
-        operationId: String,
-        round: Int,
-        metrics: RunMetrics,
-    ): Boolean {
-        val loopDetector = sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() }
-
-        // —— Phase A：串行校验。失败立即回写结构化错误让模型自纠；
-        // 通过校验的调用收集后进入 Phase B 并发执行。
-        val executable = mutableListOf<ExecutableToolCall>()
-        specs.forEach { spec ->
-            val tool = HarnessApiMapper.toolByName(spec.name)
-            val toolNameTrimmed = spec.name.trim()
-            // 工具名校验必须在参数解析之前：名字未知时（哪怕参数为空/非法）
-            // 也要第一时间回写真实工具清单，否则模型会在"解析失败"上盲目重试。
-            if (toolNameTrimmed.lowercase() !in KNOWN_TOOL_NAMES && !toolNameTrimmed.startsWith("mcp__")) {
-                appendToolCallAndResult(
-                    sessId = sessId,
-                    spec = spec,
-                    tool = tool,
-                    args = buildJsonObject {},
-                    reasoning = reasoning,
-                    rawToolName = toolNameTrimmed,
-                    output = unknownToolGuidance(toolNameTrimmed, effectiveModel),
-                )
-                loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
-                metrics.toolCallRecorded(failed = true)
-                return@forEach
-            }
-            val parsedArgs = try {
-                // 无参数调用（arguments 为空/空白）是合法形态，兜底为空对象而不是解析失败
-                if (spec.argumentsJson.isBlank()) {
-                    buildJsonObject {}
-                } else {
-                    json.parseToJsonElement(spec.argumentsJson) as? JsonObject
-                        ?: throw IllegalArgumentException("参数不是 JSON 对象")
-                }
-            } catch (parseError: Throwable) {
-                // 尝试自动修复因 Token 截断或网络抖动未闭合的 JSON
-                val repaired = runCatching {
-                    json.parseToJsonElement(repairTruncatedJson(spec.argumentsJson)) as? JsonObject
-                }.getOrNull()
-                if (repaired != null && repaired.isNotEmpty()) {
-                    repaired
-                } else {
-                    appendToolCallAndResult(
-                        sessId = sessId,
-                        spec = spec,
-                        tool = tool,
-                        args = buildJsonObject {},
-                        reasoning = reasoning,
-                        rawToolName = toolNameTrimmed,
-                    output = "工具参数 JSON 解析失败（${friendly(parseError)}），参数可能被截断。" +
-                        "请重新发起完整的工具调用，参数必须是合法的 JSON 对象。",
-                )
-                loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
-                metrics.toolCallRecorded(failed = true)
-                return@forEach
-                }
-            }
-            var args = parsedArgs
-            if (tool == HarnessTool.BASE && autoCwd && sessionWorkspace.isNotBlank() && args["cwd"] == null) {
-                args = buildJsonObject {
-                    put("cwd", sessionWorkspace)
-                    args.forEach { (key, value) -> put(key, value) }
-                }
-            }
-            // 执行前 JSON Schema 校验：必填/枚举/范围/格式/组合约束。
-            // 失败时写回可读问题清单，让模型按 schema 自我纠正，而不是带着坏参数进入执行层。
-            val schemaProblems = ToolSchemaValidator.problemsFor(toolNameTrimmed, args, effectiveModel.dynamicMcpTools)
-            if (schemaProblems.isNotEmpty()) {
-                // 常见错配定向提示：模型想把 url 交给通用 shell 时，直接指向正确的专用工具
-                val urlHint = if (args.containsKey("url") && tool != HarnessTool.DOWNLOAD) {
-                    "提示：url 是 download 工具的参数，下载网页/图片/文件请调用 download(url, destination)。"
-                } else ""
-                appendToolCallAndResult(
-                    sessId = sessId,
-                    spec = spec,
-                    tool = tool,
-                    args = args,
-                    reasoning = reasoning,
-                    rawToolName = toolNameTrimmed,
-                    output = "工具参数校验未通过：${schemaProblems.joinToString("；")}。" +
-                        "请按工具定义修正参数后重新调用，必填字段不可省略。$urlHint",
-                )
-                loopDetector.recordSettled(toolNameTrimmed, args, success = false)
-                metrics.toolCallRecorded(failed = true)
-                return@forEach
-            }
-
-            // 执行前死循环与重复无进展调用检测：阻断重复错误重试与空转
-            val loopVerdict = loopDetector.evaluate(toolNameTrimmed, args)
-            if (loopVerdict is ToolCallLoopDetector.LoopVerdict.Block) {
-                appendToolCallAndResult(
-                    sessId = sessId,
-                    spec = spec,
-                    tool = tool,
-                    args = args,
-                    reasoning = reasoning,
-                    rawToolName = toolNameTrimmed,
-                    output = loopVerdict.guidance,
-                )
-                loopDetector.recordSettled(toolNameTrimmed, args, success = false)
-                metrics.toolCallRecorded(failed = true)
-                return@forEach
-            }
-
-            loopDetector.recordIntent(toolNameTrimmed, args)
-            executable += ExecutableToolCall(spec, tool, toolNameTrimmed, args)
-            metrics.toolCallRecorded(failed = false)
-        }
-
-        if (executable.isEmpty()) return false
-
-        // —— Phase B：受限并发执行。消息树落库（toolIntent / publishPersisted / toolSettled）
-        // 依赖 lane.leafId 串链，必须串行，由 publicationMutex 保证；
-        // 只读工具在并发许可内同时执行，变更类工具全局互斥。
-        val publicationMutex = Mutex()
-        val roundHadSuccess = AtomicBoolean(false)
-        val approvalPauseRequested = AtomicBoolean(false)
-        toolRoundDispatcher.dispatch(
-            items = executable,
-            isParallelSafe = { it.tool in PARALLEL_SAFE_TOOLS },
-        ) { item, pause ->
-            if (pause.isAborted()) return@dispatch
-            val toolCall = ToolCall(
-                // Preserve the provider protocol id prefix with a unique suffix across
-                // execution, approval, persistence and the subsequent tool result.
-                id = ToolCallIdNormalizer.normalize(item.spec.id),
-                createdAt = now(),
-                tool = item.tool,
-                args = item.args,
-                reasoning = reasoning,
-                rawToolName = item.toolName,
-            )
-            val toolStart = now()
-            val outcome = try {
-                publicationMutex.withLock {
-                    agentEventLogger.log(sessId, "ToolCall", "Tool=${item.tool.name}, RawName=${item.toolName}, Args=${item.args}")
-                    operationCoordinator.toolIntent(
-                        operationId = operationId,
-                        message = toolCall,
-                        payloadJson = item.spec.argumentsJson,
-                        replay = ToolReplayPolicy.forTool(item.tool, item.toolName),
-                        round = round,
-                    )
-                    messageProjector.publishPersisted(sessId, toolCall)
-                    stateMirrors.setStatus(sessId, ToolStatusDescriber.describe(item.tool, item.args, item.toolName))
-                }
-                toolExecutor.execute(
-                    toolCall,
-                    sessId,
-                    sessionWorkspace,
-                    progressReporter = { progress -> stateMirrors.setStatus(sessId, progress) },
-                    operationId = operationId,
-                )
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (throwable: Throwable) {
-                ToolResult(
-                    id = newId(),
-                    createdAt = now(),
-                    toolCallId = toolCall.id,
-                    success = false,
-                    output = "工具执行异常：${friendly(throwable)}",
-                )
-            }
-            val duration = now() - toolStart
-            publicationMutex.withLock {
-                agentEventLogger.log(sessId, "ToolResult", "Tool=${item.tool.name}, Success=${outcome.success}, Duration=${duration}ms, Output=${outcome.output.take(300)}")
-                loopDetector.recordSettled(item.toolName, item.args, success = outcome.success)
-                if (outcome.awaitingApproval) {
-                    metrics.approvalRequested()
-                    operationCoordinator.waitingApproval(operationId)
-                    stateMirrors.setStatus(sessId, "等待用户批准")
-                    // 触发审批暂停：中止本回合尚未开始的调用，在途调用自然完成后统一暂停，
-                    // 与原串行实现"中途暂停、后续调用不执行"的语义一致。
-                    pause.abort()
-                    approvalPauseRequested.set(true)
-                }
-                val settledOutcome = outcome.copy(durationMs = duration)
-                operationCoordinator.toolSettled(operationId, settledOutcome, round, toolName = toolCall.rawToolName ?: item.tool.name)
-                messageProjector.publishPersisted(sessId, settledOutcome)
-                if (outcome.success) roundHadSuccess.set(true)
-                metrics.toolCallRecorded(failed = !outcome.success)
-                touchSession(sessId)
-            }
-        }
-        if (approvalPauseRequested.get()) throw ApprovalPauseException()
-        return roundHadSuccess.get()
+        return RunResult.Failed("已达到最大工具轮数（$maxRounds），任务尚未确认完成")
     }
 
     private suspend fun drainSteeringMessages(sessId: String): Int {
@@ -1695,85 +1151,8 @@ class HarnessLoop @Inject constructor(
         return queued.size
     }
 
-    private fun repairTruncatedJson(raw: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return "{}"
-        var inString = false
-        var escape = false
-        val stack = mutableListOf<Char>()
-        for (ch in trimmed) {
-            if (escape) {
-                escape = false
-                continue
-            }
-            if (ch == '\\') {
-                escape = true
-                continue
-            }
-            if (ch == '"') {
-                inString = !inString
-                continue
-            }
-            if (!inString) {
-                if (ch == '{' || ch == '[') stack.add(ch)
-                else if (ch == '}' && stack.isNotEmpty() && stack.last() == '{') stack.removeAt(stack.lastIndex)
-                else if (ch == ']' && stack.isNotEmpty() && stack.last() == '[') stack.removeAt(stack.lastIndex)
-            }
-        }
-        val builder = StringBuilder(trimmed)
-        if (inString) builder.append('"')
-        while (stack.isNotEmpty()) {
-            val open = stack.removeAt(stack.lastIndex)
-            if (open == '{') builder.append('}')
-            else if (open == '[') builder.append(']')
-        }
-        return builder.toString()
-    }
-
     private fun friendly(throwable: Throwable): String =
         throwable.message?.take(200) ?: throwable::class.simpleName.orEmpty()
-
-    private suspend fun persistAssistant(
-        sessId: String,
-        id: String,
-        createdAt: Long,
-        text: String,
-        reasoning: String? = null,
-        totalMs: Long? = null,
-        operationId: String? = null,
-        round: Int = 0,
-        usage: ChatUsage? = null,
-        model: ModelConfig? = null,
-    ) {
-        val message = AssistantText(
-            id = id,
-            createdAt = createdAt,
-            text = text,
-            reasoning = reasoning,
-            totalMs = totalMs,
-            modelId = model?.model,
-            providerId = model?.provider,
-            promptTokens = usage?.inputTokens?.takeIf { it > 0 }?.toInt(),
-            completionTokens = usage?.outputTokens?.takeIf { it > 0 }?.toInt(),
-            cachedTokens = usage?.cacheReadTokens?.takeIf { it > 0 }?.toInt(),
-        )
-        if (operationId != null) {
-            val usageEntity = usage?.takeIf { it.hasData }?.let {
-                operationCoordinator.usageEntity(
-                    sessionId = sessId,
-                    operationId = operationId,
-                    entryId = id,
-                    provider = model?.provider,
-                    modelId = model?.model,
-                    usage = it,
-                )
-            }
-            operationCoordinator.providerSettled(operationId, message, usage = usageEntity, round = round)
-        } else {
-            messageStore.append(sessId, message)
-        }
-        messageProjector.publishPersisted(sessId, message)
-    }
 
     private suspend fun touchSession(sessId: String) {
         sessionDao.touch(sessId, System.currentTimeMillis())
@@ -1898,98 +1277,14 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    /**
-     * 未知工具的可纠正错误：不写死固定话术，而是列出当前真实可用的全部工具名
-     * （原生工具 + 已启用 MCP 的实际 API 名），并按编辑距离提示最接近的候选。
-     * 模型幻觉出工具名（如 fetchWebContent）时能一次拿到正确名字，不再反复编造。
-     */
-    private fun unknownToolGuidance(called: String, model: ModelConfig): String {
-        val nativeTools = listOf(
-            "read", "write", "edit", "base", "process", "host", "download", "memory",
-            "plan", "scratchpad", "history_search", "history_read", "build_script",
-            "invoke_subagent", "load_rule",
-        )
-        val mcpTools = model.dynamicMcpTools
-        val mcpList = if (mcpTools.isEmpty()) {
-            "（当前没有已启用的 MCP 工具）"
-        } else {
-            mcpTools.joinToString("；") { tool ->
-                "${McpToolApiName.encode(tool)}（${tool.serverName}·${tool.name}）"
-            }
-        }
-        val target = called.lowercase()
-        val nearest = (nativeTools + mcpTools.map { McpToolApiName.encode(it) })
-            .mapNotNull { candidate ->
-                val distance = levenshtein(target, candidate.lowercase())
-                if (distance <= (target.length / 2).coerceAtLeast(3)) candidate to distance else null
-            }
-            .minByOrNull { it.second }
-            ?.first
-        return buildString {
-            append("未知工具：$called。工具名不可编造或猜测，必须从下列清单中原样选取。")
-            append("原生工具：${nativeTools.joinToString(" / ")}。")
-            append("已启用 MCP 工具：$mcpList。")
-            nearest?.let { append("最接近的候选是 $it，是否想调用它？") }
-        }
-    }
-
-    private fun levenshtein(a: String, b: String): Int {
-        if (a == b) return 0
-        if (a.isEmpty()) return b.length
-        if (b.isEmpty()) return a.length
-        var prev = IntArray(b.length + 1) { it }
-        for (i in 1..a.length) {
-            val current = IntArray(b.length + 1)
-            current[0] = i
-            for (j in 1..b.length) {
-                current[j] = minOf(
-                    prev[j] + 1,
-                    current[j - 1] + 1,
-                    prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1,
-                )
-            }
-            prev = current
-        }
-        return prev[b.length]
-    }
-
     companion object {
-        const val MAX_ROUNDS = 200
-        // MCP 的 apiName "mcp" 只是历史回放别名，不是模型可直接调用的工具；
-        // 剔除后模型误调 "mcp" 会落入 unknownToolGuidance，拿到真实 mcp__ 工具清单自我纠正。
-        val KNOWN_TOOL_NAMES: Set<String> = HarnessTool.entries
-            .filter { it != HarnessTool.MCP }
-            .map { HarnessApiMapper.apiName(it) }
-            .toSet() + "subagent"
-        private const val LARGE_REQUEST_TOKEN_THRESHOLD = 64_000
-        private const val LARGE_REQUEST_MAX_RETRIES = 1
-        private const val ESTIMATED_IMAGE_TOKENS = 1_000
-
         internal fun maxNetworkRetriesFor(estimatedRequestTokens: Int, configuredRetries: Int): Int =
-            if (estimatedRequestTokens >= LARGE_REQUEST_TOKEN_THRESHOLD) {
-                minOf(configuredRetries, LARGE_REQUEST_MAX_RETRIES)
-            } else {
-                configuredRetries
-            }
+            HarnessProviderRunner.maxNetworkRetriesFor(estimatedRequestTokens, configuredRetries)
         const val RETRY_BACKOFF_MS = 1_000L
         const val RETRY_BACKOFF_SEC = 2L
 
-        /**
-         * 可并发执行的只读/低风险工具白名单：互不共享可变状态（Room 由 SQLite 串行化写入）。
-         * 其余工具（write/edit/base/process/host/download/build_script/subagent/mcp）具有
-         * 外部副作用，执行时全局互斥。
-         */
-        private val PARALLEL_SAFE_TOOLS: Set<HarnessTool> = setOf(
-            HarnessTool.READ,
-            HarnessTool.HISTORY_SEARCH,
-            HarnessTool.HISTORY_READ,
-            HarnessTool.LOAD_RULE,
-            HarnessTool.MEMORY,
-            HarnessTool.PLAN,
-            HarnessTool.SCRATCHPAD,
-        )
+        const val MAX_ROUNDS = 200
+        val KNOWN_TOOL_NAMES: Set<String> = HarnessToolRoundRunner.KNOWN_TOOL_NAMES
 
     }
 }
-
-private class ApprovalPauseException : RuntimeException()

@@ -23,6 +23,7 @@ import kotlinx.coroutines.sync.withPermit
  */
 @Singleton
 class ToolRoundDispatcher @Inject constructor() {
+    private val mutationMutex = Mutex()
 
     class Pause private constructor() {
         private val aborted = AtomicBoolean(false)
@@ -45,12 +46,14 @@ class ToolRoundDispatcher @Inject constructor() {
             val pause = Pause.create()
             items.forEach { item ->
                 if (pause.isAborted()) return
-                run(item, pause)
+                if (isParallelSafe(item)) run(item, pause)
+                else mutationMutex.withLock {
+                    if (!pause.isAborted()) run(item, pause)
+                }
             }
             return
         }
         val pause = Pause.create()
-        val mutationMutex = Mutex()
         val permits = Semaphore(parallelism)
         coroutineScope {
             items.forEach { item ->
@@ -58,7 +61,9 @@ class ToolRoundDispatcher @Inject constructor() {
                     permits.withPermit {
                         if (pause.isAborted()) return@withPermit
                         if (isParallelSafe(item)) run(item, pause)
-                        else mutationMutex.withLock { run(item, pause) }
+                        else mutationMutex.withLock {
+                            if (!pause.isAborted()) run(item, pause)
+                        }
                     }
                 }
             }
