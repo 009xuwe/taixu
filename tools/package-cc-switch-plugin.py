@@ -11,7 +11,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PLUGIN_DIR = os.path.join(ROOT_DIR, "assets", "plugins", "cc-switch")
 DIST_DIR = os.path.join(ROOT_DIR, "dist", "plugins")
 OUTPUT_PACKAGE = os.path.join(DIST_DIR, "taixu-plugin-cc-switch-v1.0.0-arm64.txplugin")
-EXPECTED_SHA256 = "0e16293cdab1f6a8416a06242deeda41ddd970cbf36e753f05de8ad89d6cd010"
+EXPECTED_SHA256 = "36fb9d71a370032d1545566364e775c72d984dc7c559402a55d9f77a09448450"
 DOWNLOAD_URL = "https://github.com/Laliet/cc-switch-web/releases/download/v0.21.0/cc-switch-server-linux-aarch64"
 
 def sha256_file(filepath):
