@@ -19,7 +19,9 @@ payload/
   checksums/SHA256SUMS
   scripts/install.sh
   scripts/uninstall.sh
+  scripts/verify.sh
   bin/cc-switch-daemon
+  lib/cc-switch-server
 ```
 
 ## 来源 URL 与哈希

@@ -23,7 +23,7 @@
     "/bin/sh \"$TAIXU_PLUGIN_PAYLOAD/scripts/uninstall.sh\""
   ],
   "launchCommand": "cc-switch-daemon --port 19870 --data-dir /opt/taixu/data/cc-switch",
-  "verifyCommand": "cc-switch-daemon --version",
+  "verifyCommand": "/bin/sh \"$TAIXU_PLUGIN_PAYLOAD/scripts/verify.sh\"",
   "commandLinks": ["cc-switch-daemon"],
   "environment": {
     "CC_SWITCH_PORT": "19870",

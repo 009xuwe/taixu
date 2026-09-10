@@ -3,70 +3,88 @@ set -e
 
 echo "[*] Installing CC-Switch Agent Hub..."
 
-mkdir -p "$TAIXU_TOOL_DIR/bin"
-mkdir -p "$TAIXU_TOOL_DATA"
+TOOL_DIR="${TAIXU_TOOL_DIR:-/opt/taixu/tools/cc-switch}"
+DATA_DIR="${TAIXU_TOOL_DATA:-$TOOL_DIR/data}"
+PAYLOAD="${TAIXU_PLUGIN_PAYLOAD:-/opt/taixu/imports/cc-switch/payload}"
 
-if [ -f "$TAIXU_PLUGIN_PAYLOAD/bin/cc-switch-daemon" ]; then
-    cp -a "$TAIXU_PLUGIN_PAYLOAD/bin/cc-switch-daemon" "$TAIXU_TOOL_DIR/bin/cc-switch-daemon"
-    chmod 755 "$TAIXU_TOOL_DIR/bin/cc-switch-daemon"
+mkdir -p "$TOOL_DIR/bin"
+mkdir -p "$TOOL_DIR/lib"
+mkdir -p "$DATA_DIR" 2>/dev/null || true
+
+# 1. Copy the server ELF binary to lib/cc-switch-server
+if [ -f "$PAYLOAD/lib/cc-switch-server" ]; then
+    cp -a "$PAYLOAD/lib/cc-switch-server" "$TOOL_DIR/lib/cc-switch-server"
+    chmod 755 "$TOOL_DIR/lib/cc-switch-server"
+elif [ -f "$PAYLOAD/bin/cc-switch-daemon" ] && [ "$(head -c 4 "$PAYLOAD/bin/cc-switch-daemon" 2>/dev/null)" = "$(printf '\177ELF')" ]; then
+    cp -a "$PAYLOAD/bin/cc-switch-daemon" "$TOOL_DIR/lib/cc-switch-server"
+    chmod 755 "$TOOL_DIR/lib/cc-switch-server"
+fi
+
+# 2. Copy wrapper script to bin/cc-switch-daemon
+if [ -f "$PAYLOAD/bin/cc-switch-daemon" ] && [ "$(head -c 4 "$PAYLOAD/bin/cc-switch-daemon" 2>/dev/null)" != "$(printf '\177ELF')" ]; then
+    cp -a "$PAYLOAD/bin/cc-switch-daemon" "$TOOL_DIR/bin/cc-switch-daemon"
 else
-    # Fallback portable shell daemon if static ELF binary is not yet precompiled
-    cat << 'EOF' > "$TAIXU_TOOL_DIR/bin/cc-switch-daemon"
+    cat << 'EOF' > "$TOOL_DIR/bin/cc-switch-daemon"
 #!/bin/sh
-# CC-Switch Daemon Starter
+set -e
+
 PORT="${CC_SWITCH_PORT:-19870}"
 DATA_DIR="${CC_SWITCH_DATA_DIR:-/opt/taixu/data/cc-switch}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOOL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SERVER_BIN="$TOOL_DIR/lib/cc-switch-server"
+
+for arg in "$@"; do
+    case "$arg" in
+        --version|-v|-V)
+            echo "cc-switch 1.0.0 (ARM64)"
+            exit 0
+            ;;
+        --help|-h)
+            echo "Usage: cc-switch-daemon [--port <port>] [--data-dir <dir>]"
+            exit 0
+            ;;
+    esac
+done
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --port|-p)
+            PORT="$2"
+            shift 2
+            ;;
+        --data-dir|-d)
+            DATA_DIR="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
 mkdir -p "$DATA_DIR"
+export HOST="${CC_SWITCH_HOST:-0.0.0.0}"
+export CC_SWITCH_HOST="${CC_SWITCH_HOST:-0.0.0.0}"
+export PORT="$PORT"
+export CC_SWITCH_PORT="$PORT"
+export CC_SWITCH_DATA_DIR="$DATA_DIR"
+export XDG_DATA_HOME="$DATA_DIR"
+export CC_SWITCH_LAN_CORS=1
 
-if [ "$1" = "--version" ]; then
-    echo "cc-switch-daemon 1.0.0 (ARM64 TaiXu)"
-    exit 0
-fi
-
-echo "[*] Starting CC-Switch Daemon on port $PORT..."
-if command -v node >/dev/null 2>&1 && [ -f "$TAIXU_TOOL_DIR/server/index.js" ]; then
-    exec node "$TAIXU_TOOL_DIR/server/index.js" --port "$PORT" --data-dir "$DATA_DIR"
+if [ -x "$SERVER_BIN" ] || [ -f "$SERVER_BIN" ]; then
+    chmod 755 "$SERVER_BIN" 2>/dev/null || true
+    exec "$SERVER_BIN"
+elif [ -x "$TOOL_DIR/bin/cc-switch-server" ] || [ -f "$TOOL_DIR/bin/cc-switch-server" ]; then
+    chmod 755 "$TOOL_DIR/bin/cc-switch-server" 2>/dev/null || true
+    exec "$TOOL_DIR/bin/cc-switch-server"
 else
-    # Minimal HTTP responder placeholder until node or rust daemon is activated
-    python3 -c "
-import http.server, socketserver, json
-
-PORT = int('$PORT')
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/api/status':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'running': True, 'port': PORT, 'version': '1.0.0', 'proxyEnabled': True}).encode())
-        elif self.path == '/api/agents':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps([
-                {'type': 'CLAUDE_CODE', 'installed': True, 'currentVersion': '1.0.0', 'activeProviderName': 'Claude Official', 'running': False},
-                {'type': 'OPENCLAW', 'installed': True, 'currentVersion': '0.1.0', 'activeProviderName': 'DeepSeek', 'running': True, 'servicePort': 18789},
-                {'type': 'HERMES', 'installed': True, 'currentVersion': '0.1.0', 'activeProviderName': 'SiliconFlow', 'running': False, 'servicePort': 9119}
-            ]).encode())
-        elif self.path == '/api/providers':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps([
-                {'id': 'anthropic', 'name': 'Anthropic Official', 'protocol': 'ANTHROPIC', 'selectedModel': 'claude-3-7-sonnet-20250219'},
-                {'id': 'deepseek', 'name': 'DeepSeek Official', 'protocol': 'OPENAI', 'selectedModel': 'deepseek-chat'},
-                {'id': 'siliconflow', 'name': 'SiliconFlow (硅基流动)', 'protocol': 'OPENAI', 'selectedModel': 'deepseek-ai/DeepSeek-V3'}
-            ]).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-with socketserver.TCPServer(('0.0.0.0', PORT), Handler) as httpd:
-    httpd.serve_forever()
-"
+    echo "Error: cc-switch-server ELF binary not found at $SERVER_BIN" >&2
+    exit 1
 fi
 EOF
-    chmod 755 "$TAIXU_TOOL_DIR/bin/cc-switch-daemon"
 fi
+
+chmod 755 "$TOOL_DIR/bin/cc-switch-daemon"
 
 echo "[+] CC-Switch Agent Hub installed successfully!"
