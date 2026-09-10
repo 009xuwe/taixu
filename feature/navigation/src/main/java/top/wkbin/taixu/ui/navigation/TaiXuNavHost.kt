@@ -75,6 +75,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object AgentSkillSettingsDestination : AppDestination
 @Serializable data object McpSettingsDestination : AppDestination
 @Serializable data object ToolCenterDestination : AppDestination
+@Serializable data object CcSwitchDestination : AppDestination
 @Serializable data class ToolDetailDestination(val toolId: String) : AppDestination
 @Serializable data object DistroManagementDestination : AppDestination
 @Serializable data object StorageMountSettingsDestination : AppDestination
@@ -349,6 +350,7 @@ fun TaiXuNavHost(
                         onBack = ::popBack,
                         onOpenModelProfiles = { settingsStack.push(AgentEcoSettingsDestination, ModelProfilesDestination) },
                         onOpenLocalLlm = { settingsStack.push(AgentEcoSettingsDestination, LocalLlmDestination) },
+                        onOpenCcSwitch = { settingsStack.push(AgentEcoSettingsDestination, CcSwitchDestination) },
                         onOpenToolCenter = { settingsStack.push(AgentEcoSettingsDestination, ToolCenterDestination) },
                         onOpenAgentSettings = { settingsStack.push(AgentEcoSettingsDestination, AgentSettingsDestination) },
                         onOpenSubagentSettings = { settingsStack.push(AgentEcoSettingsDestination, AgentSubagentSettingsDestination) },
@@ -454,6 +456,15 @@ fun TaiXuNavHost(
                             pendingHealingTask = HealingTask("🔧 自愈: $toolName", prompt)
                             selectedMain = MainDestination.Agent
                         },
+                    )
+                }
+            }
+            entry<CcSwitchDestination> {
+                GuardedEntry(CcSwitchDestination) {
+                    top.wkbin.taixu.ui.settings.CcSwitchScreen(
+                        onBack = ::popBack,
+                        onLaunchTerminal = { executable -> activeStack.push(CcSwitchDestination, TerminalDestination(toolId = executable)) },
+                        onOpenBrowser = { _ -> activeStack.push(CcSwitchDestination, BrowserDestination) },
                     )
                 }
             }
