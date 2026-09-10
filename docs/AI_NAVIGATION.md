@@ -20,6 +20,7 @@
 | **内置浏览器设计决策（含 Hook/CDP 引擎）** | [`docs/BROWSER_DESIGN.md`](BROWSER_DESIGN.md) | 模块拓扑、工具协议、风险矩阵、Hook 引擎与 CDP 调试 ADR |
 | **工作流定义、调度语义与安全边界** | [`docs/WORKFLOW.md`](WORKFLOW.md) | DAG 模型、并发调度、审批、执行器、入口与当前能力边界 |
 | **已知问题与避坑指南** | [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | PRoot 沙箱环境已知限制、架构设计历史考量与规避方案 |
+| **存储分类与清理边界** | [`docs/STORAGE_MANAGEMENT.md`](STORAGE_MANAGEMENT.md) | 六类空间归属、清理计划、运行时互斥与后续管理建议 |
 
 ---
 

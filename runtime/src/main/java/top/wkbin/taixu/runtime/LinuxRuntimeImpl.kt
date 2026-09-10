@@ -67,6 +67,7 @@ class LinuxRuntimeImpl @Inject constructor(
     override val installedDistros: StateFlow<List<top.wkbin.taixu.core.model.InstalledDistro>> = _installedDistros.asStateFlow()
 
     private val initializeMutex = Mutex()
+    private val storageActivities = StorageActivityGate()
     private val interactiveSessions = ConcurrentHashMap<LinuxSession, String>()
 
     override fun refreshInstalledDistros() {
@@ -490,12 +491,12 @@ class LinuxRuntimeImpl @Inject constructor(
         healthChecker.check()
     }
 
-    override suspend fun execute(command: ShellCommand, distroId: String?): CommandResult {
+    override suspend fun execute(command: ShellCommand, distroId: String?): CommandResult = storageActivities.activity {
         ensureReady()
         val safeDistro = distroId?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: _activeDistroId.value
         val mounts = storageMounts()
         val execution = resolveExecutionLayout(safeDistro, command.useQemuCompatibility)
-        return shellExecutor.execute(
+        shellExecutor.execute(
             command = prootCommandBuilder.build(
                 prootBinary = pathManager.activeProotFile(),
                 rootfsDir = execution.rootfsDir,
@@ -556,7 +557,7 @@ class LinuxRuntimeImpl @Inject constructor(
             }
         }.getOrElse { emptyList() }
 
-    override suspend fun startSession(config: SessionConfig, distroId: String?): LinuxSession {
+    override suspend fun startSession(config: SessionConfig, distroId: String?): LinuxSession = storageActivities.activity {
         ensureReady()
         val safeDistro = distroId?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: _activeDistroId.value
         val effectiveConfig = if (config.commandLine == "/bin/bash -i") {
@@ -590,7 +591,7 @@ class LinuxRuntimeImpl @Inject constructor(
                 logger.w("写入终端横幅失败，本次会话将无横幅", it)
             }
         }
-        return try {
+        try {
             val session = if (ptyManager.nativeAvailable) {
                 ptyManager.openNative(
                     command = prootCommandBuilder.buildInteractive(
@@ -684,10 +685,10 @@ class LinuxRuntimeImpl @Inject constructor(
         toolId: String?,
         type: ProcessType,
         distroId: String?,
-    ): ManagedProcess {
+    ): ManagedProcess = storageActivities.activity {
         ensureReady()
         val mounts = storageMounts()
-        return processRegistry.start(
+        processRegistry.start(
             id = id,
             command = command,
             toolId = toolId,
@@ -719,6 +720,21 @@ class LinuxRuntimeImpl @Inject constructor(
         hostBridge.stop()
         _state.value = RuntimeState.NotInitialized
         logger.i("Linux runtime shut down")
+    }
+
+    override suspend fun withStorageCleanup(block: suspend () -> Unit) {
+        check(initializeMutex.tryLock()) { "正在安装、更新或管理环境，请完成后再清理" }
+        try {
+            storageActivities.cleanup {
+                check(interactiveSessions.keys.none { it.isAlive } && processRegistry.list().none { it.session.isAlive }) {
+                    "请先关闭终端并停止后台服务，再清理存储"
+                }
+                check(_state.value !is RuntimeState.Initializing) { "环境正在初始化，请稍后再清理" }
+                block()
+            }
+        } finally {
+            initializeMutex.unlock()
+        }
     }
 
     private fun trackInteractiveSession(session: LinuxSession, distroId: String): LinuxSession {

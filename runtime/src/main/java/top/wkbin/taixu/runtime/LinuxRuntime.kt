@@ -54,6 +54,10 @@ interface LinuxRuntime {
     fun clearBackgroundLogs(idOrToolId: String) = Unit
 
     suspend fun shutdown()
+    /** Execute file cleanup only while runtime launches and installation are excluded. */
+    suspend fun withStorageCleanup(block: suspend () -> Unit) {
+        error("当前运行时不支持安全存储清理")
+    }
     fun rootfsPath(distroId: String? = null): File
     fun rootfsVersion(distroId: String? = null): String? = null
     fun workspacePath(): File
