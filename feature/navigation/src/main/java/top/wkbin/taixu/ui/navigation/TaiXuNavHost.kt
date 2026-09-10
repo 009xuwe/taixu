@@ -461,10 +461,21 @@ fun TaiXuNavHost(
             }
             entry<CcSwitchDestination> {
                 GuardedEntry(CcSwitchDestination) {
+                    val context = androidx.compose.ui.platform.LocalContext.current
                     top.wkbin.taixu.ui.settings.CcSwitchScreen(
                         onBack = ::popBack,
                         onLaunchTerminal = { executable -> activeStack.push(CcSwitchDestination, TerminalDestination(toolId = executable)) },
-                        onOpenBrowser = { _ -> activeStack.push(CcSwitchDestination, BrowserDestination) },
+                        onOpenBrowser = { url ->
+                            val targetUrl = url.ifBlank { "http://127.0.0.1:19870" }
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(targetUrl)).apply {
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            runCatching {
+                                context.startActivity(intent)
+                            }.onFailure {
+                                android.widget.Toast.makeText(context, "无法唤起外部浏览器: ${it.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
                     )
                 }
             }

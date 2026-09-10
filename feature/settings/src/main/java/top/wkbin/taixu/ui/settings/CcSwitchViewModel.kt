@@ -27,6 +27,10 @@ import top.wkbin.taixu.core.model.RuntimeRequirement
 import top.wkbin.taixu.core.tools.DependencyManager
 import top.wkbin.taixu.core.tools.ProviderRepository
 import top.wkbin.taixu.core.tools.ToolManager
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.flow.update
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.net.Inet4Address
@@ -46,10 +50,15 @@ data class CcSwitchUiState(
     val providers: List<CcProviderProfile> = emptyList(),
     val taiXuModels: List<AiModelEntity> = emptyList(),
     val deviceLanIp: String? = null,
+    val webUsername: String = "admin",
+    val webPassword: String = "admin123",
     val errorMessage: String? = null,
     val successMessage: String? = null,
     val switchingAgent: CcAgentState? = null,
     val upgradingAgent: CcAgentState? = null,
+    val installLogs: List<String> = emptyList(),
+    val showLogDialog: Boolean = false,
+    val logAgentTitle: String = "安装日志",
 ) {
     val loopbackUrl: String get() = "http://127.0.0.1:$servicePort"
     val lanUrl: String? get() = deviceLanIp?.let { "http://$it:$servicePort" }
@@ -91,10 +100,15 @@ class CcSwitchViewModel @Inject constructor(
     private val _agents = MutableStateFlow<List<CcAgentState>>(CcSwitchUiState.defaultAgents())
     private val _providers = MutableStateFlow<List<CcProviderProfile>>(emptyList())
     private val _deviceLanIp = MutableStateFlow<String?>(null)
+    private val _webUsername = MutableStateFlow("admin")
+    private val _webPassword = MutableStateFlow("admin123")
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _successMessage = MutableStateFlow<String?>(null)
     private val _switchingAgent = MutableStateFlow<CcAgentState?>(null)
     private val _upgradingAgent = MutableStateFlow<CcAgentState?>(null)
+    private val _installLogs = MutableStateFlow<List<String>>(emptyList())
+    private val _showLogDialog = MutableStateFlow(false)
+    private val _logAgentTitle = MutableStateFlow("Agent 安装日志")
 
     val uiState: StateFlow<CcSwitchUiState> = combine(
         linuxRuntime.activeDistroId,
@@ -107,10 +121,15 @@ class CcSwitchViewModel @Inject constructor(
         _providers,
         aiModelDao.observeAll(),
         _deviceLanIp,
+        _webUsername,
+        _webPassword,
         _errorMessage,
         _successMessage,
         _switchingAgent,
         _upgradingAgent,
+        _installLogs,
+        _showLogDialog,
+        _logAgentTitle,
     ) { values ->
         val distroId = values[0] as String
         val operating = values[1] as Boolean
@@ -125,10 +144,16 @@ class CcSwitchViewModel @Inject constructor(
         @Suppress("UNCHECKED_CAST")
         val models = values[8] as List<AiModelEntity>
         val lanIp = values[9] as String?
-        val err = values[10] as String?
-        val success = values[11] as String?
-        val switching = values[12] as CcAgentState?
-        val upgrading = values[13] as CcAgentState?
+        val username = values[10] as String
+        val password = values[11] as String
+        val err = values[12] as String?
+        val success = values[13] as String?
+        val switching = values[14] as CcAgentState?
+        val upgrading = values[15] as CcAgentState?
+        @Suppress("UNCHECKED_CAST")
+        val logs = values[16] as List<String>
+        val showDialog = values[17] as Boolean
+        val logTitle = values[18] as String
 
         CcSwitchUiState(
             isInstalled = true,
@@ -142,10 +167,15 @@ class CcSwitchViewModel @Inject constructor(
             providers = providers,
             taiXuModels = models,
             deviceLanIp = lanIp,
+            webUsername = username,
+            webPassword = password,
             errorMessage = err,
             successMessage = success,
             switchingAgent = switching,
             upgradingAgent = upgrading,
+            installLogs = logs,
+            showLogDialog = showDialog,
+            logAgentTitle = logTitle,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CcSwitchUiState())
 
@@ -237,15 +267,68 @@ class CcSwitchViewModel @Inject constructor(
                 )
             }
 
+            val creds = readWebCredentials()
             withContext(Dispatchers.Main.immediate) {
                 statusRes.onSuccess { _daemonStatus.value = it }
                 _agents.value = mergedAgents
                 providersRes.onSuccess { _providers.value = it }
+                _webUsername.value = creds.first
+                _webPassword.value = creds.second
             }
         } finally {
             withContext(Dispatchers.Main.immediate) {
                 _isCheckingEnvironment.value = false
                 _agents.value = _agents.value.map { it.copy(isChecking = false) }
+            }
+        }
+    }
+
+    suspend fun readWebCredentials(): Pair<String, String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val cmd = """
+                    USER_FILE="${'$'}{HOME:-/root}/.cc-switch/web_username"
+                    PASS_FILE="${'$'}{HOME:-/root}/.cc-switch/web_password"
+                    if [ ! -s "${'$'}USER_FILE" ]; then
+                        mkdir -p "${'$'}{HOME:-/root}/.cc-switch" 2>/dev/null || true
+                        printf 'admin' > "${'$'}USER_FILE" 2>/dev/null || true
+                    fi
+                    if [ ! -s "${'$'}PASS_FILE" ]; then
+                        mkdir -p "${'$'}{HOME:-/root}/.cc-switch" 2>/dev/null || true
+                        printf 'admin123' > "${'$'}PASS_FILE" 2>/dev/null || true
+                    fi
+                    chmod 600 "${'$'}USER_FILE" "${'$'}PASS_FILE" 2>/dev/null || true
+                    cat "${'$'}USER_FILE" 2>/dev/null || echo "admin"
+                    echo "---TAIXU_SPLIT---"
+                    cat "${'$'}PASS_FILE" 2>/dev/null || echo "admin123"
+                """.trimIndent()
+                val res = linuxRuntime.execute(ShellCommand(commandLine = cmd, timeoutMs = 5000L))
+                if (res.isSuccess) {
+                    val parts = res.stdout.split("---TAIXU_SPLIT---")
+                    val username = parts.getOrNull(0)?.trim().orEmpty().ifBlank { "admin" }
+                    val password = parts.getOrNull(1)?.trim().orEmpty().ifBlank { "admin123" }
+                    Pair(username, password)
+                } else {
+                    Pair("admin", "admin123")
+                }
+            } catch (_: Exception) {
+                Pair("admin", "admin123")
+            }
+        }
+    }
+
+    fun resetWebPassword(newPassword: String = "admin123") {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cmd = """
+                PASS_FILE="${'$'}{HOME:-/root}/.cc-switch/web_password"
+                mkdir -p "${'$'}{HOME:-/root}/.cc-switch" 2>/dev/null || true
+                printf '%s' "$newPassword" > "${'$'}PASS_FILE" 2>/dev/null || true
+                chmod 600 "${'$'}PASS_FILE" 2>/dev/null || true
+            """.trimIndent()
+            linuxRuntime.execute(ShellCommand(commandLine = cmd, timeoutMs = 5000L))
+            _webPassword.value = newPassword
+            withContext(Dispatchers.Main.immediate) {
+                _successMessage.value = "Web 访问密码已重置为：$newPassword（重启中枢生效）"
             }
         }
     }
@@ -428,12 +511,36 @@ class CcSwitchViewModel @Inject constructor(
         }
     }
 
+    fun showInstallLogs() {
+        _showLogDialog.value = true
+    }
+
+    fun dismissInstallLogs() {
+        _showLogDialog.value = false
+    }
+
+    fun clearInstallLogs() {
+        _installLogs.value = emptyList()
+    }
+
     fun installOrUpgradeAgent(agent: CcAgentState, targetVersion: String? = null) {
         _upgradingAgent.value = null
         _isOperating.value = true
         _installingAgentType.value = agent.type
         _errorMessage.value = null
         _successMessage.value = null
+        _logAgentTitle.value = "${agent.type.displayName} 安装与部署"
+        _showLogDialog.value = true
+
+        val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+        fun log(msg: String) {
+            val now = timeFormatter.format(Date())
+            msg.lines().filter { it.isNotBlank() }.forEach { line ->
+                _installLogs.update { (it + "[$now] $line").takeLast(1000) }
+            }
+        }
+
+        _installLogs.value = listOf("[${timeFormatter.format(Date())}] [*] 准备安装/升级 ${agent.type.displayName} (目标版本: ${targetVersion ?: "最新版本"})...")
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -449,33 +556,46 @@ class CcSwitchViewModel @Inject constructor(
                 )
 
                 if (isNodeTool) {
+                    log("[*] [步骤 1/3] 检查沙箱内 Node.js / npm 运行时环境...")
                     val hasNode = linuxRuntime.execute(
                         ShellCommand("command -v npm >/dev/null 2>&1 || [ -x /opt/taixu/bin/npm ] || [ -x /usr/local/bin/npm ]")
                     ).isSuccess
                     if (!hasNode) {
-                        logger.i("Node/npm missing in sandbox, acquiring via DependencyManager...")
+                        log("[!] 沙箱内未检测到可用 npm，正在通过太墟依赖管理器自动解析...")
                         val depRes = dependencyManager.acquire(
                             RuntimeRequirement(RuntimeName.NODE),
                             "cc-switch",
                         )
                         if (depRes is top.wkbin.taixu.core.common.result.AppResult.Failure) {
-                            // 降级使用 apt-get 安装基础环境
-                            linuxRuntime.execute(
+                            log("[!] 依赖管理器未命中预置包，降级使用 apt-get 安装 nodejs & npm (请耐心等待)...")
+                            val aptRes = linuxRuntime.execute(
                                 ShellCommand(
                                     commandLine = "apt-get update -y && apt-get install -y nodejs npm curl",
                                     environment = mapOf("DEBIAN_FRONTEND" to "noninteractive"),
                                     timeoutMs = 120_000L,
+                                    onOutput = { log(it) },
                                 ),
                             )
+                            if (!aptRes.isSuccess) {
+                                log("[-] apt-get 安装 nodejs 失败，返回码: ${aptRes.exitCode}")
+                            }
+                        } else {
+                            log("[+] Node.js 运行时依赖装载完成")
                         }
+                    } else {
+                        log("[+] Node.js / npm 运行时环境已就绪")
                     }
                 } else if (agent.type == CcAgentType.HERMES) {
+                    log("[*] [步骤 1/3] 检查沙箱内 Python3 运行时环境...")
                     val hasPython = linuxRuntime.execute(ShellCommand("command -v python3 >/dev/null 2>&1")).isSuccess
                     if (!hasPython) {
+                        log("[!] 正在装载 Python 运行时依赖...")
                         dependencyManager.acquire(
                             RuntimeRequirement(RuntimeName.PYTHON),
                             "cc-switch",
                         )
+                    } else {
+                        log("[+] Python3 运行时环境已就绪")
                     }
                 }
 
@@ -493,11 +613,14 @@ class CcSwitchViewModel @Inject constructor(
 
                 val installScript = if (agent.type == CcAgentType.HERMES) {
                     val pkg = if (targetVersion.isNullOrBlank()) "hermes-agent" else "hermes-agent==$targetVersion"
+                    log("[*] [步骤 2/3] 执行 pip 安装: $pkg...")
                     """
                     pip install --break-system-packages $pkg -i https://pypi.tuna.tsinghua.edu.cn/simple || pip install --break-system-packages $pkg
                     """.trimIndent()
                 } else {
                     val verSuffix = if (targetVersion.isNullOrBlank()) "" else "@$targetVersion"
+                    log("[*] [步骤 2/3] 执行 npm 全局安装: $npmPackage$verSuffix...")
+                    log("[*] 正在从国内加速镜像 (https://registry.npmmirror.com) 下载与构建...")
                     """
                     export PATH="/opt/taixu/bin:/usr/local/bin:${'$'}PATH"
                     npm install -g --ignore-scripts $npmPackage$verSuffix --registry=https://registry.npmmirror.com || npm install -g --ignore-scripts $npmPackage$verSuffix
@@ -526,20 +649,24 @@ class CcSwitchViewModel @Inject constructor(
                             "npm_config_registry" to "https://registry.npmmirror.com",
                         ),
                         timeoutMs = 180_000L,
+                        onOutput = { log(it) },
                     ),
                 )
 
                 // 3. 严格在沙箱内校验可执行文件是否生成
+                log("[*] [步骤 3/3] 验证沙箱可执行文件路径与版本...")
                 val verifyRes = linuxRuntime.execute(
                     ShellCommand(
                         commandLine = """
                             export PATH="/opt/taixu/bin:/usr/local/bin:${'$'}PATH"
-                            command -v "${agent.type.defaultExecutable}" >/dev/null 2>&1
+                            command -v "${agent.type.defaultExecutable}"
                         """.trimIndent(),
                     ),
                 )
 
-                if (verifyRes.isSuccess) {
+                if (verifyRes.isSuccess && verifyRes.stdout.isNotBlank()) {
+                    val binPath = verifyRes.stdout.trim()
+                    log("[+] 检测到可执行命令: $binPath")
                     val verRes = linuxRuntime.execute(
                         ShellCommand(
                             commandLine = """
@@ -548,17 +675,23 @@ class CcSwitchViewModel @Inject constructor(
                             """.trimIndent(),
                         ),
                     )
-                    val installedVer = verRes.stdout.trim().ifBlank { targetVersion ?: "最新版" }
+                    val installedVer = verRes.stdout.trim().ifBlank { targetVersion ?: "已安装" }
+                    log("[+] 版本检测结果: $installedVer")
+                    log("[+] [+] ${agent.type.displayName} 安装成功！可随时在终端中运行 '${agent.type.defaultExecutable}'")
                     withContext(Dispatchers.Main.immediate) {
                         _successMessage.value = "${agent.type.displayName} 安装成功！当前版本：$installedVer"
                     }
                 } else {
+                    log("[-] 验证失败：沙箱中未找到可执行命令 '${agent.type.defaultExecutable}'")
+                    if (cmdRes.stderr.isNotBlank()) {
+                        log("[-] 进程错误输出 (stderr):\n${cmdRes.stderr.trim()}")
+                    }
                     val lastErr = cmdRes.stderr.ifBlank { cmdRes.stdout }.lines()
                         .filter { it.isNotBlank() }
                         .takeLast(3)
                         .joinToString("; ")
                     withContext(Dispatchers.Main.immediate) {
-                        _errorMessage.value = "安装未完成：${lastErr.ifBlank { "未在沙箱中生成 ${agent.type.defaultExecutable} 命令，请检查网络" }}"
+                        _errorMessage.value = "安装未完成：${lastErr.ifBlank { "未在沙箱中生成 ${agent.type.defaultExecutable} 命令，请点击下方查看日志排查" }}"
                     }
                 }
 
@@ -566,6 +699,8 @@ class CcSwitchViewModel @Inject constructor(
                 fetchDaemonData()
             } catch (e: Exception) {
                 logger.w("Install agent failed: ${e.message}", e)
+                log("[-] 安装过程发生异常: ${e.message}")
+                log(e.stackTraceToString())
                 withContext(Dispatchers.Main.immediate) {
                     _errorMessage.value = "操作失败：${e.message}"
                 }

@@ -1,5 +1,12 @@
 package top.wkbin.taixu.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -67,8 +75,9 @@ import top.wkbin.taixu.ui.components.StatusBadge
  * - Claude Code / OpenClaw / Hermes / Codex 矩阵管理
  * - 一键热切换各 Agent 的 Provider（支持从太墟本地模型库同步）
  * - 版本查看与一键升降级
+ * - 实时安装与编译构建日志监视（支持一键复制全量报错）
  * - Token 记账与反向代理状态监控
- * - 原生 PTY 终端拉起与内置浏览器 Web 控制台访问
+ * - 原生 PTY 终端拉起与系统外部浏览器 Web 控制台访问
  */
 @Composable
 fun CcSwitchScreen(
@@ -77,6 +86,7 @@ fun CcSwitchScreen(
     onOpenBrowser: (url: String) -> Unit,
     viewModel: CcSwitchViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     Scaffold(
@@ -109,11 +119,28 @@ fun CcSwitchScreen(
         ) {
             // 提示横幅
             state.errorMessage?.let { error ->
-                NoticeBanner(
-                    text = error,
-                    isError = true,
-                    onDismiss = { viewModel.dismissMessage() },
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    NoticeBanner(
+                        text = error,
+                        isError = true,
+                        onDismiss = { viewModel.dismissMessage() },
+                    )
+                    if (state.installLogs.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            RuntimeOutlinedButton(
+                                onClick = { viewModel.showInstallLogs() },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            ) {
+                                RuntimeIcon(name = RuntimeIconName.Terminal, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("查看并复制完整报错日志", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
             }
             state.successMessage?.let { msg ->
                 NoticeBanner(
@@ -129,7 +156,18 @@ fun CcSwitchScreen(
                 onStart = { viewModel.startDaemon() },
                 onStop = { viewModel.stopDaemon() },
                 onRestart = { viewModel.restartDaemon() },
-                onOpenWebConsole = { onOpenBrowser(state.preferredWebUrl) },
+                onResetPassword = { viewModel.resetWebPassword(it) },
+                onOpenWebConsole = {
+                    val targetUrl = state.loopbackUrl.ifBlank { state.preferredWebUrl }
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching {
+                        context.startActivity(intent)
+                    }.onFailure {
+                        onOpenBrowser(targetUrl)
+                    }
+                },
             )
 
             // 2. Token & 代理记账看板
@@ -159,20 +197,32 @@ fun CcSwitchScreen(
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
-                if (state.isDaemonRunning) {
-                    RuntimeFilledTonalButton(
-                        onClick = { viewModel.refreshEnvironment() },
-                        enabled = !state.isOperating && !state.isCheckingEnvironment,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    ) {
-                        if (state.isCheckingEnvironment) {
-                            RuntimeCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 1.5.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (state.installLogs.isNotEmpty()) {
+                        RuntimeOutlinedButton(
+                            onClick = { viewModel.showInstallLogs() },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            RuntimeIcon(name = RuntimeIconName.Terminal, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("检测中...", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
-                        } else {
-                            RuntimeIcon(name = RuntimeIconName.Refresh, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("刷新检测", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                            Text("安装日志", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                        }
+                    }
+                    if (state.isDaemonRunning) {
+                        RuntimeFilledTonalButton(
+                            onClick = { viewModel.refreshEnvironment() },
+                            enabled = !state.isOperating && !state.isCheckingEnvironment,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            if (state.isCheckingEnvironment) {
+                                RuntimeCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 1.5.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("检测中...", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                            } else {
+                                RuntimeIcon(name = RuntimeIconName.Refresh, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("刷新检测", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                            }
                         }
                     }
                 }
@@ -187,6 +237,7 @@ fun CcSwitchScreen(
                     onSwitchProvider = { viewModel.openSwitchProviderDialog(agent) },
                     onInstall = { viewModel.installOrUpgradeAgent(agent, targetVersion = null) },
                     onUpgrade = { viewModel.installOrUpgradeAgent(agent, targetVersion = agent.latestVersion) },
+                    onShowLogs = { viewModel.showInstallLogs() },
                 )
             }
 
@@ -220,6 +271,21 @@ fun CcSwitchScreen(
             onConfirmUpgrade = { version -> viewModel.installOrUpgradeAgent(agent, version) },
         )
     }
+
+    // 安装与构建实时日志弹窗
+    if (state.showLogDialog) {
+        InstallLogDialog(
+            agentName = state.logAgentTitle,
+            logs = state.installLogs,
+            isOperating = state.isOperating,
+            isError = state.errorMessage != null,
+            onDismiss = { viewModel.dismissInstallLogs() },
+            onClear = { viewModel.clearInstallLogs() },
+            onCopy = { logsText ->
+                copyText(context, logsText, "已复制完整安装日志 (${state.installLogs.size} 行)")
+            },
+        )
+    }
 }
 
 @Composable
@@ -228,8 +294,10 @@ private fun DaemonServiceCard(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit,
+    onResetPassword: (String) -> Unit,
     onOpenWebConsole: () -> Unit,
 ) {
+    val context = LocalContext.current
     RuntimeCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -282,6 +350,76 @@ private fun DaemonServiceCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Web 控制台访问凭据 (HTTP Basic 认证)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            RuntimeTextButton(
+                                onClick = {
+                                    val creds = "${state.webUsername} / ${state.webPassword}"
+                                    copyText(context, creds, "已复制控制台账号密码: $creds")
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                            ) {
+                                Text("一键复制", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "账号：${state.webUsername}",
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = "密码：${state.webPassword}",
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "💡 外部浏览器访问提示登录时输入上方账号密码即可",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            RuntimeTextButton(
+                                onClick = { onResetPassword("admin123") },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                            ) {
+                                Text("重置密码", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -321,7 +459,11 @@ private fun DaemonServiceCard(
                         )
                     }
                     RuntimeButton(
-                        onClick = onOpenWebConsole,
+                        onClick = {
+                            val creds = "${state.webUsername} / ${state.webPassword}"
+                            copyText(context, creds, "已复制登录凭据: $creds")
+                            onOpenWebConsole()
+                        },
                         modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                     ) {
@@ -405,6 +547,7 @@ private fun AgentCard(
     onSwitchProvider: () -> Unit,
     onInstall: () -> Unit,
     onUpgrade: () -> Unit,
+    onShowLogs: () -> Unit,
 ) {
     RuntimeCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -414,11 +557,16 @@ private fun AgentCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
                         text = agent.type.displayName,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Surface(
@@ -430,9 +578,12 @@ private fun AgentCard(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            maxLines = 1,
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 // 状态徽章（独立占据右上角，不与长标题挤压）
                 when {
@@ -499,6 +650,7 @@ private fun AgentCard(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = when {
                                 !isDaemonRunning -> "--"
@@ -513,6 +665,8 @@ private fun AgentCard(
                                 agent.installed -> MaterialTheme.colorScheme.onSurface
                                 else -> MaterialTheme.colorScheme.outline
                             },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
 
@@ -527,6 +681,7 @@ private fun AgentCard(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = when {
                                 !isDaemonRunning -> "--"
@@ -536,6 +691,8 @@ private fun AgentCard(
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = if (agent.hasUpdate) Color(0xFFFF9800) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
 
@@ -552,6 +709,7 @@ private fun AgentCard(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Spacer(modifier = Modifier.width(12.dp))
                             Text(
                                 text = agent.activeProviderName ?: if (agent.installed) "默认网关/中转" else "未绑定",
                                 style = MaterialTheme.typography.bodySmall,
@@ -576,18 +734,21 @@ private fun AgentCard(
                     text = "$ ${agent.type.defaultExecutable}",
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.weight(1f, fill = false),
                     maxLines = 1,
-                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
                 )
 
                 Spacer(modifier = Modifier.width(8.dp))
 
                 if (isDaemonRunning) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         if (isInstalling) {
                             RuntimeOutlinedButton(
-                                onClick = {},
-                                enabled = false,
+                                onClick = onShowLogs,
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                             ) {
                                 RuntimeCircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
@@ -832,3 +993,151 @@ private fun UpgradeVersionDialog(
         },
     )
 }
+
+private fun copyText(context: Context, text: String, toast: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("TaiXu", text))
+    Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
+}
+
+@Composable
+private fun InstallLogDialog(
+    agentName: String,
+    logs: List<String>,
+    isOperating: Boolean,
+    isError: Boolean,
+    onDismiss: () -> Unit,
+    onClear: () -> Unit,
+    onCopy: (String) -> Unit,
+) {
+    val scrollState = rememberScrollState()
+    androidx.compose.runtime.LaunchedEffect(logs.size) {
+        if (logs.isNotEmpty()) {
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Terminal, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = "$agentName 日志",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                when {
+                    isOperating -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RuntimeCircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("执行中", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    isError -> {
+                        StatusBadge(text = "异常/失败", color = MaterialTheme.colorScheme.error)
+                    }
+                    logs.isNotEmpty() -> {
+                        StatusBadge(text = "已完成", color = Color(0xFF4CAF50))
+                    }
+                }
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Surface(
+                    color = Color(0xFF161616),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp, max = 360.dp),
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (logs.isEmpty()) {
+                            Text(
+                                text = "暂无命令输出日志。点击安装或升级后，将在沙箱内实时捕获并输出详细构建过程...",
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = Color(0xFF888888),
+                                modifier = Modifier.padding(12.dp),
+                            )
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(scrollState)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                logs.forEach { line ->
+                                    val textColor = when {
+                                        line.contains("[-] ") || line.contains("ERR!") || line.contains("error:") || line.contains("FAILED") -> Color(0xFFEF5350)
+                                        line.contains("[+] ") -> Color(0xFF81C784)
+                                        line.contains("[!] ") || line.contains("WARN") -> Color(0xFFFFB74D)
+                                        line.contains("[*] ") || line.contains("[步骤 ") -> Color(0xFF64B5F6)
+                                        line.contains("[PATH] ") -> Color(0xFFBA68C8)
+                                        else -> Color(0xFFDCDCDC)
+                                    }
+                                    Text(
+                                        text = line,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            lineHeight = 15.sp,
+                                        ),
+                                        color = textColor,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (logs.isNotEmpty()) {
+                    RuntimeFilledTonalButton(
+                        onClick = onClear,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Text("清空", style = MaterialTheme.typography.labelSmall)
+                    }
+                    RuntimeButton(
+                        onClick = { onCopy(logs.joinToString("\n")) },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        RuntimeIcon(name = RuntimeIconName.Copy, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("复制全部日志", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    RuntimeButton(onClick = onDismiss) {
+                        Text("确定")
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            if (logs.isNotEmpty()) {
+                RuntimeTextButton(onClick = onDismiss) {
+                    Text("关闭")
+                }
+            }
+        },
+    )
+}
+
