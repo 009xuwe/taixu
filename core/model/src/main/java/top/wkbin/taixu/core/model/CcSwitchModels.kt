@@ -3,14 +3,26 @@ package top.wkbin.taixu.core.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class CcAgentType(val id: String, val displayName: String, val defaultExecutable: String) {
-    CLAUDE_CODE("claude-code", "Claude Code", "claude"),
-    OPENCLAW("openclaw", "OpenClaw", "openclaw"),
-    HERMES("hermes-agent", "Hermes Agent", "hermes"),
-    CODEX("codex", "Codex / OpenCode", "codex");
+enum class CcAgentType(
+    val id: String,
+    val displayName: String,
+    val defaultExecutable: String,
+    val category: String = "CLI",
+    val defaultLatestVersion: String = "",
+) {
+    CLAUDE_CODE("claude-code", "Claude Code", "claude", "CLI", "2.1.267"),
+    CODEX("codex", "Codex", "codex", "CLI", "0.154.0"),
+    GEMINI_CLI("gemini-cli", "Gemini CLI", "gemini", "CLI", "0.59.0"),
+    GROK_BUILD("grok-build", "Grok Build", "grok", "CLI", "1.0.25"),
+    OPENCODE("opencode", "OpenCode", "opencode", "CLI", "1.18.30"),
+    OPENCLAW("openclaw", "OpenClaw", "openclaw", "Agent", "2026.9.3"),
+    HERMES("hermes-agent", "Hermes Agent", "hermes", "Agent", "0.4.0"),
+    PI("pi", "Pi", "pi", "Agent", "0.85.1");
 
     companion object {
-        fun fromId(id: String): CcAgentType? = entries.firstOrNull { it.id == id }
+        fun fromId(id: String): CcAgentType? = entries.firstOrNull { 
+            it.id.equals(id, ignoreCase = true) || it.name.equals(id, ignoreCase = true) 
+        }
     }
 }
 
@@ -24,11 +36,16 @@ data class CcAgentState(
     val activeProviderId: String? = null,
     val activeProviderName: String? = null,
     val activeModelName: String? = null,
+    val isChecking: Boolean = false,
+    val errorNotice: String? = null,
+    val description: String = "",
     val running: Boolean = false,
     val servicePort: Int? = null,
     val webPath: String? = null,
-    val description: String = "",
-)
+) {
+    val hasUpdate: Boolean
+        get() = installed && !currentVersion.isNullOrBlank() && !latestVersion.isNullOrBlank() && currentVersion != latestVersion
+}
 
 @Serializable
 data class CcProviderProfile(

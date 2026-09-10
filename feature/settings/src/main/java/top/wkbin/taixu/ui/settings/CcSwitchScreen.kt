@@ -137,34 +137,56 @@ fun CcSwitchScreen(
                 TokenUsageCard(daemon = daemon)
             }
 
-            // 3. Agent 矩阵列表
-            Text(
-                text = "纳管智能体矩阵 (Agent Matrix)",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            // 3. 本地环境检查矩阵
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "本地环境检查",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = if (state.isDaemonRunning) "由 CC-Switch 纳管各 CLI 与 Agent 运行环境" else "启动中枢后自动检查环境与版本",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                if (state.isDaemonRunning) {
+                    RuntimeFilledTonalButton(
+                        onClick = { viewModel.refreshEnvironment() },
+                        enabled = !state.isOperating && !state.isCheckingEnvironment,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        if (state.isCheckingEnvironment) {
+                            RuntimeCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 1.5.dp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("检测中...", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                        } else {
+                            RuntimeIcon(name = RuntimeIconName.Refresh, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("刷新检测", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            }
 
             state.agents.forEach { agent ->
                 AgentCard(
                     agent = agent,
                     isDaemonRunning = state.isDaemonRunning,
+                    isOperating = state.isOperating,
+                    isInstalling = state.installingAgentType == agent.type,
                     onSwitchProvider = { viewModel.openSwitchProviderDialog(agent) },
-                    onUpgradeVersion = { viewModel.openUpgradeDialog(agent) },
-                    onLaunch = {
-                        when (agent.type) {
-                            CcAgentType.CLAUDE_CODE -> onLaunchTerminal(agent.type.defaultExecutable)
-                            CcAgentType.OPENCLAW -> {
-                                val url = "http://127.0.0.1:${agent.servicePort ?: 18789}${agent.webPath ?: "/"}"
-                                onOpenBrowser(url)
-                            }
-                            CcAgentType.HERMES -> {
-                                val url = "http://127.0.0.1:${agent.servicePort ?: 9119}${agent.webPath ?: "/"}"
-                                onOpenBrowser(url)
-                            }
-                            CcAgentType.CODEX -> onLaunchTerminal("codex")
-                        }
-                    },
+                    onInstall = { viewModel.installOrUpgradeAgent(agent, targetVersion = null) },
+                    onUpgrade = { viewModel.installOrUpgradeAgent(agent, targetVersion = agent.latestVersion) },
                 )
             }
 
@@ -215,7 +237,10 @@ private fun DaemonServiceCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Box(
                         modifier = Modifier
                             .size(10.dp)
@@ -224,65 +249,106 @@ private fun DaemonServiceCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (state.isDaemonRunning) "CC-Switch 运行中" else "CC-Switch 已停止",
+                        text = if (state.isDaemonRunning) "CC-Switch 运行中" else "CC-Switch 未启动",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 StatusBadge(
                     text = "端口 ${state.servicePort}",
-                    color = if (state.isDaemonRunning) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                    color = if (state.isDaemonRunning) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline,
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "CC-Switch 守护进程负责本地反向代理、Claude/OpenAI 协议流式转换与多智能体配置文件同步。",
+                text = if (state.isDaemonRunning) {
+                    "CC-Switch 正在监听本地端口与沙箱环境，负责反向代理、流式协议转换与各 CLI 多模型统一切源。"
+                } else {
+                    "中枢尚未运行。启动后将自动对沙箱环境进行实时检测，获取已安装 CLI、最新版本及模型源状态。"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            if (state.isDaemonRunning) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "本地代理地址: http://127.0.0.1:${state.servicePort}${state.deviceLanIp?.let { " · 局域网: http://$it:${state.servicePort}" } ?: ""}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (state.isDaemonRunning) {
+            if (state.isDaemonRunning) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     RuntimeFilledTonalButton(
                         onClick = onRestart,
                         enabled = !state.isOperating,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                     ) {
-                        Text("重启服务", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        RuntimeIcon(name = RuntimeIconName.Refresh, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "重启",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            maxLines = 1,
+                            softWrap = false,
+                        )
                     }
                     RuntimeOutlinedButton(
                         onClick = onStop,
                         enabled = !state.isOperating,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                     ) {
-                        Text("停止服务", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        RuntimeIcon(name = RuntimeIconName.Close, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "停止",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            maxLines = 1,
+                            softWrap = false,
+                        )
                     }
                     RuntimeButton(
                         onClick = onOpenWebConsole,
-                        modifier = Modifier.weight(1.2f),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                     ) {
-                        Text("Web 控制台", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        RuntimeIcon(name = RuntimeIconName.OpenInNew, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "控制台",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            maxLines = 1,
+                            softWrap = false,
+                        )
                     }
-                } else {
-                    RuntimeButton(
-                        onClick = onStart,
-                        enabled = !state.isOperating,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (state.isOperating) {
-                            RuntimeCircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-                        Text("一键启动中枢守护进程")
+                }
+            } else {
+                RuntimeButton(
+                    onClick = onStart,
+                    enabled = !state.isOperating,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (state.isOperating) {
+                        RuntimeCircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    } else {
+                        RuntimeIcon(name = RuntimeIconName.Play, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                     }
+                    Text("启动中枢服务 (端口 ${state.servicePort})")
                 }
             }
         }
@@ -330,102 +396,240 @@ private fun TokenUsageCard(daemon: top.wkbin.taixu.core.model.CcSwitchDaemonStat
         }
     }
 }
-
 @Composable
 private fun AgentCard(
     agent: CcAgentState,
     isDaemonRunning: Boolean,
+    isOperating: Boolean,
+    isInstalling: Boolean,
     onSwitchProvider: () -> Unit,
-    onUpgradeVersion: () -> Unit,
-    onLaunch: () -> Unit,
+    onInstall: () -> Unit,
+    onUpgrade: () -> Unit,
 ) {
     RuntimeCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // 1. 顶部标题与状态徽章行
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = agent.type.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
                         Text(
-                            text = agent.type.displayName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        StatusBadge(
-                            text = agent.currentVersion?.let { "v$it" } ?: "未安装",
-                            color = if (agent.installed) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline,
+                            text = agent.type.category,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = agent.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
 
-                // 启动动作入口（PTY 终端 或 Web 控制台）
-                RuntimeFilledTonalButton(
-                    onClick = onLaunch,
-                    enabled = agent.installed,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                ) {
-                    Text(
-                        text = when (agent.type) {
-                            CcAgentType.CLAUDE_CODE, CcAgentType.CODEX -> "打开终端"
-                            CcAgentType.OPENCLAW, CcAgentType.HERMES -> "打开面板"
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                // 状态徽章（独立占据右上角，不与长标题挤压）
+                when {
+                    !isDaemonRunning -> {
+                        StatusBadge(
+                            text = "中枢未启动",
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                    agent.isChecking -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RuntimeCircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "检测中...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    agent.hasUpdate -> {
+                        StatusBadge(
+                            text = "可升级",
+                            color = Color(0xFFFF9800),
+                        )
+                    }
+                    agent.installed -> {
+                        StatusBadge(
+                            text = "已是最新",
+                            color = Color(0xFF4CAF50),
+                        )
+                    }
+                    else -> {
+                        StatusBadge(
+                            text = "未安装",
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Spacer(modifier = Modifier.height(10.dp))
 
-            // 绑定 Provider 状态行
+            // 2. 版本与环境信息表格容器（参照 CC-Switch 官方检查界面，左右对齐、从容大气）
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // 当前版本
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "当前版本",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = when {
+                                !isDaemonRunning -> "--"
+                                agent.isChecking -> "检测中..."
+                                agent.installed -> agent.currentVersion ?: "已安装"
+                                else -> "未安装"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = when {
+                                !isDaemonRunning -> MaterialTheme.colorScheme.outline
+                                agent.installed -> MaterialTheme.colorScheme.onSurface
+                                else -> MaterialTheme.colorScheme.outline
+                            },
+                        )
+                    }
+
+                    // 最新版本
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "最新版本",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = when {
+                                !isDaemonRunning -> "--"
+                                agent.isChecking -> "加载中..."
+                                else -> agent.latestVersion ?: agent.type.defaultLatestVersion.ifBlank { "--" }
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (agent.hasUpdate) Color(0xFFFF9800) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    // 当前绑定的模型提供商（若中枢已启动）
+                    if (isDaemonRunning) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "绑定模型源",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = agent.activeProviderName ?: if (agent.installed) "默认网关/中转" else "未绑定",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = if (agent.activeProviderName != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 3. 底部操作栏
+            Spacer(modifier = Modifier.height(14.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "当前绑定模型 Provider",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = agent.activeProviderName ?: "未配置 Provider",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    text = "$ ${agent.type.defaultExecutable}",
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    softWrap = false,
+                )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RuntimeOutlinedButton(
-                        onClick = onUpgradeVersion,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    ) {
-                        Text("版本", style = MaterialTheme.typography.labelSmall)
+                Spacer(modifier = Modifier.width(8.dp))
+
+                if (isDaemonRunning) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (isInstalling) {
+                            RuntimeOutlinedButton(
+                                onClick = {},
+                                enabled = false,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                RuntimeCircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("安装中...", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                            }
+                        } else if (!agent.installed) {
+                            RuntimeOutlinedButton(
+                                onClick = onInstall,
+                                enabled = !isOperating,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                RuntimeIcon(name = RuntimeIconName.Download, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("安装", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                            }
+                        } else if (agent.hasUpdate) {
+                            RuntimeFilledTonalButton(
+                                onClick = onUpgrade,
+                                enabled = !isOperating,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                RuntimeIcon(name = RuntimeIconName.ArrowUp, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("升级", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                            }
+                        }
+
+                        RuntimeButton(
+                            onClick = onSwitchProvider,
+                            enabled = !isOperating && !isInstalling,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Text("一键切源", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                        }
                     }
-                    RuntimeButton(
-                        onClick = onSwitchProvider,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    ) {
-                        Text("一键切源", style = MaterialTheme.typography.labelSmall)
-                    }
+                } else {
+                    Text(
+                        text = "启动中枢后管理",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
                 }
             }
         }
@@ -588,7 +792,7 @@ private fun UpgradeVersionDialog(
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("管理 ${agent.type.displayName} 版本") },
+        title = { Text(if (agent.installed) "升级 ${agent.type.displayName}" else "安装 ${agent.type.displayName}") },
         text = {
             Column(
                 modifier = Modifier
@@ -597,18 +801,18 @@ private fun UpgradeVersionDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 InfoRow(label = "当前版本", value = agent.currentVersion ?: "未安装")
-                InfoRow(label = "最新推荐版本", value = agent.latestVersion ?: "1.0.0")
+                InfoRow(label = "推荐版本", value = agent.latestVersion ?: agent.type.defaultLatestVersion.ifBlank { "latest" })
 
                 OutlinedTextField(
                     value = versionInput,
                     onValueChange = { versionInput = it },
-                    label = { Text("目标版本 (如 1.0.0 或 latest)") },
+                    label = { Text("目标版本 (如 1.0.0，留空即最新)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
 
                 Text(
-                    text = "确认后将通过沙箱内包管理器 (npm / pip) 执行相应版本切换与更新。",
+                    text = "确认后将在沙箱内通过包管理器执行相应版本部署与配置。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -617,9 +821,8 @@ private fun UpgradeVersionDialog(
         confirmButton = {
             RuntimeButton(
                 onClick = { onConfirmUpgrade(versionInput.trim()) },
-                enabled = versionInput.isNotBlank(),
             ) {
-                Text("确认切换")
+                Text(if (agent.installed) "确认升级" else "确认安装")
             }
         },
         dismissButton = {

@@ -87,12 +87,20 @@ done
 while [ $# -gt 0 ]; do
     case "$1" in
         --port|-p)
-            PORT="$2"
-            shift 2
+            if [ $# -ge 2 ]; then
+                PORT="$2"
+                shift 2
+            else
+                shift
+            fi
             ;;
         --data-dir|-d)
-            DATA_DIR="$2"
-            shift 2
+            if [ $# -ge 2 ]; then
+                DATA_DIR="$2"
+                shift 2
+            else
+                shift
+            fi
             ;;
         *)
             shift
@@ -100,21 +108,56 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-mkdir -p "$DATA_DIR"
+# Standardize environment for headless Rust server
+export HOME="${HOME:-/root}"
+export USER="${USER:-root}"
+export LOGNAME="${LOGNAME:-root}"
 export HOST="${CC_SWITCH_HOST:-0.0.0.0}"
-export CC_SWITCH_HOST="${CC_SWITCH_HOST:-0.0.0.0}"
+export CC_SWITCH_HOST="$HOST"
 export PORT="$PORT"
 export CC_SWITCH_PORT="$PORT"
 export CC_SWITCH_DATA_DIR="$DATA_DIR"
 export XDG_DATA_HOME="$DATA_DIR"
 export CC_SWITCH_LAN_CORS=1
+export ALLOW_LAN_CORS=1
+export ALLOW_HTTP_BASIC_OVER_HTTP=1
+export RUST_LOG="${RUST_LOG:-info}"
 
-if [ -x "$SERVER_BIN" ] || [ -f "$SERVER_BIN" ]; then
+# Ensure data directory and HOME directory layout exist
+mkdir -p "$DATA_DIR" 2>/dev/null || true
+mkdir -p "$HOME" 2>/dev/null || true
+
+# cc-switch-server stores database, credentials, and settings in ~/.cc-switch
+# We ensure ~/.cc-switch is linked or created inside the persistent tool data directory
+if [ ! -d "$HOME/.cc-switch" ]; then
+    mkdir -p "$HOME" 2>/dev/null || true
+    ln -sfn "$DATA_DIR" "$HOME/.cc-switch" 2>/dev/null || mkdir -p "$HOME/.cc-switch"
+fi
+
+# Ensure web auth credentials exist so load_or_generate_web_credentials never errors
+if [ ! -f "$HOME/.cc-switch/web_username" ]; then
+    printf 'admin' > "$HOME/.cc-switch/web_username" 2>/dev/null || true
+fi
+if [ ! -f "$HOME/.cc-switch/web_password" ]; then
+    printf 'admin123' > "$HOME/.cc-switch/web_password" 2>/dev/null || true
+fi
+chmod 600 "$HOME/.cc-switch/web_username" "$HOME/.cc-switch/web_password" 2>/dev/null || true
+
+# Binary fallback resolution
+if [ ! -f "$SERVER_BIN" ]; then
+    if [ -f "/opt/taixu/tools/cc-switch/lib/cc-switch-server" ]; then
+        SERVER_BIN="/opt/taixu/tools/cc-switch/lib/cc-switch-server"
+    elif [ -f "$TOOL_DIR/bin/cc-switch-server" ]; then
+        SERVER_BIN="$TOOL_DIR/bin/cc-switch-server"
+    elif [ -f "/opt/taixu/imports/cc-switch/payload/lib/cc-switch-server" ]; then
+        SERVER_BIN="/opt/taixu/imports/cc-switch/payload/lib/cc-switch-server"
+    fi
+fi
+
+if [ -f "$SERVER_BIN" ]; then
     chmod 755 "$SERVER_BIN" 2>/dev/null || true
+    echo "[TaiXu cc-switch-daemon] Starting CC-Switch on $HOST:$PORT (DATA_DIR=$DATA_DIR, HOME=$HOME)..."
     exec "$SERVER_BIN"
-elif [ -x "$TOOL_DIR/bin/cc-switch-server" ] || [ -f "$TOOL_DIR/bin/cc-switch-server" ]; then
-    chmod 755 "$TOOL_DIR/bin/cc-switch-server" 2>/dev/null || true
-    exec "$TOOL_DIR/bin/cc-switch-server"
 else
     echo "Error: cc-switch-server ELF binary not found at $SERVER_BIN" >&2
     exit 1
@@ -124,14 +167,14 @@ fi
         f.write(daemon_wrapper.replace("\r\n", "\n").encode("utf-8"))
 
     # 2. Write scripts/install.sh
-    install_sh = """#!/bin/sh
+    install_sh = f"""#!/bin/sh
 set -e
 
 echo "[*] Installing CC-Switch Agent Hub..."
 
-TOOL_DIR="${TAIXU_TOOL_DIR:-/opt/taixu/tools/cc-switch}"
-DATA_DIR="${TAIXU_TOOL_DATA:-$TOOL_DIR/data}"
-PAYLOAD="${TAIXU_PLUGIN_PAYLOAD:-/opt/taixu/imports/cc-switch/payload}"
+TOOL_DIR="${{TAIXU_TOOL_DIR:-/opt/taixu/tools/cc-switch}}"
+DATA_DIR="${{TAIXU_TOOL_DATA:-$TOOL_DIR/data}}"
+PAYLOAD="${{TAIXU_PLUGIN_PAYLOAD:-/opt/taixu/imports/cc-switch/payload}}"
 
 mkdir -p "$TOOL_DIR/bin"
 mkdir -p "$TOOL_DIR/lib"
@@ -151,63 +194,7 @@ if [ -f "$PAYLOAD/bin/cc-switch-daemon" ] && [ "$(head -c 4 "$PAYLOAD/bin/cc-swi
     cp -a "$PAYLOAD/bin/cc-switch-daemon" "$TOOL_DIR/bin/cc-switch-daemon"
 else
     cat << 'EOF' > "$TOOL_DIR/bin/cc-switch-daemon"
-#!/bin/sh
-set -e
-
-PORT="${CC_SWITCH_PORT:-19870}"
-DATA_DIR="${CC_SWITCH_DATA_DIR:-/opt/taixu/data/cc-switch}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TOOL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-SERVER_BIN="$TOOL_DIR/lib/cc-switch-server"
-
-for arg in "$@"; do
-    case "$arg" in
-        --version|-v|-V)
-            echo "cc-switch 1.0.0 (ARM64)"
-            exit 0
-            ;;
-        --help|-h)
-            echo "Usage: cc-switch-daemon [--port <port>] [--data-dir <dir>]"
-            exit 0
-            ;;
-    esac
-done
-
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --port|-p)
-            PORT="$2"
-            shift 2
-            ;;
-        --data-dir|-d)
-            DATA_DIR="$2"
-            shift 2
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
-mkdir -p "$DATA_DIR"
-export HOST="${CC_SWITCH_HOST:-0.0.0.0}"
-export CC_SWITCH_HOST="${CC_SWITCH_HOST:-0.0.0.0}"
-export PORT="$PORT"
-export CC_SWITCH_PORT="$PORT"
-export CC_SWITCH_DATA_DIR="$DATA_DIR"
-export XDG_DATA_HOME="$DATA_DIR"
-export CC_SWITCH_LAN_CORS=1
-
-if [ -x "$SERVER_BIN" ] || [ -f "$SERVER_BIN" ]; then
-    chmod 755 "$SERVER_BIN" 2>/dev/null || true
-    exec "$SERVER_BIN"
-elif [ -x "$TOOL_DIR/bin/cc-switch-server" ] || [ -f "$TOOL_DIR/bin/cc-switch-server" ]; then
-    chmod 755 "$TOOL_DIR/bin/cc-switch-server" 2>/dev/null || true
-    exec "$TOOL_DIR/bin/cc-switch-server"
-else
-    echo "Error: cc-switch-server ELF binary not found at $SERVER_BIN" >&2
-    exit 1
-fi
+{daemon_wrapper}
 EOF
 fi
 

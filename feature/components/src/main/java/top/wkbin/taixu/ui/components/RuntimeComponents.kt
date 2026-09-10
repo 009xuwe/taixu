@@ -1436,6 +1436,8 @@ fun StatusBadge(
                 text = text,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = color,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }

@@ -62,16 +62,26 @@ class ToolServiceController @Inject constructor(
         while (true) {
             coroutineContext.ensureActive()
             if (!process.session.isAlive) {
+                val logs = linuxRuntime.getBackgroundLogs(toolId)
+                    .filter { it.isNotBlank() }
+                    .takeLast(10)
+                    .joinToString("\n")
                 linuxRuntime.stopBackground(process.id)
-                throw IllegalStateException("网关进程启动后立即退出，请查看服务日志：$toolId")
+                val detail = if (logs.isNotBlank()) "：\n$logs" else ""
+                throw IllegalStateException("网关进程启动后立即退出，服务日志$detail")
             }
             if (isPortOpen(spec.port)) return
             if (System.currentTimeMillis() > deadline) break
             delay(spec.pollIntervalMs)
         }
+        val timeoutLogs = linuxRuntime.getBackgroundLogs(toolId)
+            .filter { it.isNotBlank() }
+            .takeLast(10)
+            .joinToString("\n")
         linuxRuntime.stopBackground(process.id)
+        val timeoutDetail = if (timeoutLogs.isNotBlank()) "：\n$timeoutLogs" else ""
         throw IllegalStateException(
-            "网关未在 ${spec.startupTimeoutMs / 1000} 秒内就绪（端口 ${spec.port} 未监听），已自动停止：$toolId",
+            "网关未在 ${spec.startupTimeoutMs / 1000} 秒内就绪（端口 ${spec.port} 未监听），已自动停止$timeoutDetail",
         )
     }
 
