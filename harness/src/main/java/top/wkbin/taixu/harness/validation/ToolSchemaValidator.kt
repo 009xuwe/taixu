@@ -32,12 +32,14 @@ object ToolSchemaValidator {
      *    还原为标准嵌套 JsonObject，兼容小参数量或特定模型打平输出对象的习惯（DeepSeek-Reasonix 规范）；
      * 3. 映射常用字段别名（path/command/oldText/newText/timeout_seconds）。
      */
-    fun normalizeArgs(raw: JsonObject): JsonObject {
+    fun normalizeArgs(raw: JsonObject, applyAliases: Boolean = true): JsonObject {
         val base = if (raw.size == 1 && (raw.containsKey("params") || raw.containsKey("arguments") || raw.containsKey("input"))) {
             (raw["params"] as? JsonObject) ?: (raw["arguments"] as? JsonObject) ?: (raw["input"] as? JsonObject) ?: raw
         } else raw
 
         val unflattened = unflattenObject(base)
+        // MCP 的 target/script/timeout 有自己的协议语义，不能套用内置文件/命令工具别名。
+        if (!applyAliases) return unflattened
 
         return kotlinx.serialization.json.buildJsonObject {
             unflattened.forEach { (k, v) -> put(k, v) }
@@ -155,14 +157,14 @@ object ToolSchemaValidator {
         args: JsonObject,
         mcpTools: List<McpToolInfo> = emptyList(),
     ): List<String> {
-        val normalized = normalizeArgs(args)
         val schema = resolveSchema(toolName, mcpTools) ?: return emptyList()
+        val normalized = normalizeArgs(args, applyAliases = !toolName.startsWith("mcp__"))
         return validateObject(schema, normalized, prefix = "")
     }
 
     /** 直接对给定 schema 校验（供自定义 schema 场景与测试使用）。 */
     fun validate(schema: JsonObject, args: JsonObject): List<String> =
-        validateObject(schema, normalizeArgs(args), prefix = "")
+        validateObject(schema, normalizeArgs(args, applyAliases = false), prefix = "")
 
     private fun resolveSchema(toolName: String, mcpTools: List<McpToolInfo>): JsonObject? {
         if (toolName.startsWith("mcp__")) {

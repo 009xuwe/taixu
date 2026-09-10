@@ -179,7 +179,9 @@ class ToolExecutor @Inject constructor(
         progressReporter: (suspend (String) -> Unit)?,
         operationId: String?,
     ): Pair<Boolean, String> {
-        val args = top.wkbin.taixu.harness.validation.ToolSchemaValidator.normalizeArgs(rawArgs)
+        val args = top.wkbin.taixu.harness.validation.ToolSchemaValidator.normalizeArgs(
+            rawArgs, applyAliases = tool != HarnessTool.MCP,
+        )
         val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
         return when (tool) {
             HarnessTool.READ -> {
