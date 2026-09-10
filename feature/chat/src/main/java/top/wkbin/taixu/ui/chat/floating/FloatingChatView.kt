@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
@@ -461,6 +462,19 @@ private fun FloatingChatPanel(
                                             )
                                         }
                                     }
+                                }
+                                is ModelSwitchEvent -> {
+                                    Text(
+                                        text = stringResource(
+                                            R.string.chat_model_switch_to_fmt,
+                                            msg.toLabel,
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 }
                                 else -> Unit
                             }

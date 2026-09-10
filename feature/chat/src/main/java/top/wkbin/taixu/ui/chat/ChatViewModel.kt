@@ -108,6 +108,7 @@ class ChatViewModel @Inject constructor(
     private val approvalRepository: AgentApprovalRepository,
     private val agentContextDao: top.wkbin.taixu.core.database.AgentContextRepository,
     private val compactionManager: top.wkbin.taixu.harness.compaction.CompactionManager,
+    private val sessionModelSwitcher: top.wkbin.taixu.harness.session.SessionModelSwitcher,
     private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
     private val laneManager: LaneManager,
 
@@ -281,8 +282,7 @@ class ChatViewModel @Inject constructor(
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val activeCompaction: StateFlow<top.wkbin.taixu.harness.compaction.CompactionSnapshot?> =
-        combine(harnessLoop.currentSessionId, harnessLoop.status) { sessionId, _ -> sessionId }
-            .distinctUntilChanged()
+        combine(harnessLoop.currentSessionId, messages) { sessionId, _ -> sessionId }
             .flatMapLatest { sessionId ->
                 kotlinx.coroutines.flow.flow {
                     emit(if (sessionId.isBlank()) null else compactionManager.latestSnapshot(sessionId))
@@ -353,6 +353,20 @@ class ChatViewModel @Inject constructor(
     val models: StateFlow<List<AiModelEntity>> = aiModelDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * 当前会话绑定的模型档案。占用圆环 / 压缩预算必须跟会话走，
+     * 不能回落到创建会话时的全局 isActive 默认模型。
+     */
+    private val sessionBoundModel: StateFlow<AiModelEntity?> = combine(
+        models,
+        sessions,
+        currentSessionId,
+    ) { currentModels, currentSessions, sessionId ->
+        val session = currentSessions.firstOrNull { it.id == sessionId }
+        session?.modelId?.let { id -> currentModels.firstOrNull { it.id == id } }
+            ?: currentModels.firstOrNull { it.isActive }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val workspaces: StateFlow<List<WorkspaceProject>> = workspaceManager.observeProjects()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -389,14 +403,14 @@ class ChatViewModel @Inject constructor(
      */
     val contextUsage: StateFlow<ContextUsage> = combine(
         messages,
-        models,
+        sessionBoundModel,
         allSkills,
         mcpServers,
         settingsDataStore.contextBudgetTokens,
-    ) { currentMessages, currentModels, skills, mcps, defaultBudget ->
+    ) { currentMessages, boundModel, skills, mcps, defaultBudget ->
         ContextUsageInputs(
             currentMessages = currentMessages,
-            activeModel = currentModels.firstOrNull { it.isActive },
+            activeModel = boundModel,
             skills = skills,
             mcps = mcps,
             defaultBudget = defaultBudget,
@@ -418,7 +432,7 @@ class ChatViewModel @Inject constructor(
         val subagentTokens = if (toolDisabled) 0 else ContextWindowPolicy.DEFAULT_SUBAGENT_TOKENS
 
         val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
-        val budget = (activeModel?.contextTokens ?: inputs.defaultBudget).coerceAtLeast(1)
+        val budget = ContextWindowPolicy.resolveBudget(activeModel?.contextTokens, inputs.defaultBudget)
 
         val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
             messages = inputs.currentMessages,
@@ -1002,11 +1016,13 @@ class ChatViewModel @Inject constructor(
 
     fun selectModel(id: String, subModel: String? = null) {
         viewModelScope.launch {
-            val entity = aiModelDao.findById(id) ?: return@launch
             val sessionId = currentSessionId.value.takeIf { it.isNotBlank() } ?: return@launch
-            val variant = subModel?.trim()?.takeIf { it.isNotBlank() }
-                ?: entity.model.substringBefore(',').trim().takeIf { it.isNotBlank() }
-            sessionDao.setModelSelection(sessionId, entity.id, variant, System.currentTimeMillis())
+            sessionModelSwitcher.switchModel(
+                sessionId = sessionId,
+                profileId = id,
+                variant = subModel,
+                compactIfNeeded = !running.value,
+            )
         }
     }
 
@@ -1063,9 +1079,13 @@ class ChatViewModel @Inject constructor(
         val trimmed = modelId.trim()
         if (trimmed.isBlank()) return
         viewModelScope.launch {
-            val profile = aiModelDao.findById(profileId) ?: return@launch
             val sessionId = currentSessionId.value.takeIf { it.isNotBlank() } ?: return@launch
-            sessionDao.setModelSelection(sessionId, profile.id, trimmed, System.currentTimeMillis())
+            sessionModelSwitcher.switchModel(
+                sessionId = sessionId,
+                profileId = profileId,
+                variant = trimmed,
+                compactIfNeeded = !running.value,
+            )
             closeProviderModelPicker()
         }
     }

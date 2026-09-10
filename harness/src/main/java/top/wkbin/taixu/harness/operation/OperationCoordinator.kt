@@ -323,4 +323,5 @@ private fun HarnessMessage.serialType(): String = when (this) {
     is top.wkbin.taixu.harness.ToolCall -> "tool_call"
     is top.wkbin.taixu.harness.ToolResult -> "tool_result"
     is top.wkbin.taixu.harness.CapabilityEvent -> "capability_event"
+    is top.wkbin.taixu.harness.ModelSwitchEvent -> "model_switch"
 }

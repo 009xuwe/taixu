@@ -1009,8 +1009,9 @@ class HarnessLoop @Inject constructor(
             metrics.roundStarted()
             metrics.steeringInjected(drainSteeringMessages(sessId))
             stateMirrors.setStatus(sessId, "思考中")
+            val latestBinding = sessionDao.findById(sessId) ?: sessionEntity
             val model = try {
-                providerClient.resolveConfigured(sessionEntity?.modelId, sessionEntity?.modelVariant)
+                providerClient.resolveConfigured(latestBinding?.modelId, latestBinding?.modelVariant)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {

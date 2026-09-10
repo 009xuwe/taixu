@@ -17,6 +17,7 @@ import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.HarnessApiMapper
+import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.ProviderClient
@@ -282,7 +283,9 @@ internal fun isolatedProviderMessages(
     val taskStart = messages.indexOfLast { it is top.wkbin.taixu.harness.UserMessage }
         .takeIf { it >= 0 } ?: messages.size
     messages.drop(taskStart).forEach { message ->
-        if (message !is CapabilityEvent) add(HarnessApiMapper.toApiMessage(message))
+        if (message !is CapabilityEvent && message !is ModelSwitchEvent) {
+            add(HarnessApiMapper.toApiMessage(message))
+        }
     }
 }
 

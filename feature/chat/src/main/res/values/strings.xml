@@ -377,6 +377,11 @@
     <string name="chat_mcp_badge">MCP</string>
     <string name="chat_capability_skill_fmt">Skill: %1$s</string>
     <string name="chat_capability_mcp_fmt">MCP: %1$s</string>
+    <string name="chat_model_switch_to_fmt">已切换到 %1$s</string>
+    <string name="chat_model_switch_from_to_fmt">从 %1$s 切换到 %2$s</string>
+    <string name="chat_model_switch_window_fmt">当前上下文窗口 %1$s</string>
+    <string name="chat_model_switch_compacted_fmt">已按 %1$s 窗口压缩 %2$d 条早期消息</string>
+    <string name="chat_model_switch_pending_fmt">将在下一轮按 %1$s 窗口压缩早期消息</string>
     <string name="chat_collapse">收起</string>
     <string name="chat_expand_more">展开更多 %1$d 步（共 %2$d 步）%3$s</string>
     <!-- 附件菜单与处理 -->

@@ -254,4 +254,11 @@ class ContextWindowPolicyTest {
         assertTrue(bd.conversationTokens > 0)
         assertEquals(bd.totalTokens, usage.totalTokens)
     }
+
+    @Test
+    fun `resolveBudget prefers the current model window then the fallback`() {
+        assertEquals(128_000, ContextWindowPolicy.resolveBudget(null, 128_000))
+        assertEquals(1, ContextWindowPolicy.resolveBudget(0, 128_000))
+        assertEquals(128_000, ContextWindowPolicy.resolveBudget(128_000, 1_000_000))
+    }
 }

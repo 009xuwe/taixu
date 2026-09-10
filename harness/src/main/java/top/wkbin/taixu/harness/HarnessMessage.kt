@@ -49,6 +49,21 @@ data class CapabilityEvent(
     enum class Kind { SKILL, MCP }
 }
 
+/** UI-only model switch record. Persisted in the transcript, never sent to the provider. */
+@Serializable
+@SerialName("model_switch")
+data class ModelSwitchEvent(
+    override val id: String,
+    override val createdAt: Long,
+    val fromLabel: String = "",
+    val toLabel: String,
+    val fromContextTokens: Int? = null,
+    val toContextTokens: Int,
+    val compacted: Boolean = false,
+    val foldedMessageCount: Int = 0,
+    val compactionPending: Boolean = false,
+) : HarnessMessage
+
 @Serializable
 @SerialName("user")
 data class UserMessage(

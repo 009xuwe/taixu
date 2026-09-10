@@ -8,6 +8,7 @@ import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.HarnessApiMapper
 import top.wkbin.taixu.harness.ModelConfig
+import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.ProviderClient
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolCallMode
@@ -42,8 +43,10 @@ class ApiContextAssembler @Inject constructor(
         thinkingMode: Boolean = false,
     ): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
-        val budgetTokens = model.contextTokens
-            ?: runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000)
+        val budgetTokens = ContextWindowPolicy.resolveBudget(
+            model.contextTokens,
+            runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000),
+        )
         val toolCallMode = if (model.pureChatMode) ToolCallMode.DISABLED else model.toolCallMode
 
         var compactedContext = compactionManager.project(sessId)
@@ -112,7 +115,7 @@ class ApiContextAssembler @Inject constructor(
             )
             while (i < msgs.size) {
                 val message = msgs[i]
-                if (message is CapabilityEvent) {
+                if (message is CapabilityEvent || message is ModelSwitchEvent) {
                     i++
                     continue
                 }

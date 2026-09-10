@@ -9,6 +9,7 @@ import top.wkbin.taixu.core.database.HarnessRuntimeRepository
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
@@ -136,10 +137,12 @@ class SessionTreeStore @Inject constructor(
         is ToolCall -> "tool_call"
         is ToolResult -> "tool_result"
         is CapabilityEvent -> "capability_event"
+        is ModelSwitchEvent -> "model_switch"
     }
 
     private fun searchableText(message: HarnessMessage): String = when (message) {
         is CapabilityEvent -> "${message.kind} ${message.name} ${message.details}"
+        is ModelSwitchEvent -> "${message.fromLabel} ${message.toLabel}"
         is UserMessage -> message.text
         is AssistantText -> "${message.text}\n${message.reasoning.orEmpty()}"
         is ToolCall -> "${message.rawToolName.orEmpty()} ${message.tool} ${message.args} ${message.reasoning.orEmpty()}"

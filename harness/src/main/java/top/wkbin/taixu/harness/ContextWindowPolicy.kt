@@ -114,6 +114,22 @@ object ContextWindowPolicy {
     const val DEFAULT_RULES_TOKENS = 1_400
     const val DEFAULT_SUBAGENT_TOKENS = 1_100
 
+    /** Session occupancy and compaction must share the same budget: current model, then the global fallback. */
+    fun resolveBudget(profileContextTokens: Int?, defaultBudget: Int): Int =
+        (profileContextTokens ?: defaultBudget).coerceAtLeast(1)
+
+    fun estimateReservedPromptTokens(
+        pureChat: Boolean,
+        toolDisabled: Boolean,
+        skillTokens: Int = 0,
+        mcpTokens: Int = 0,
+        summaryTokens: Int = 0,
+    ): Int {
+        if (pureChat) return summaryTokens
+        val toolTokens = if (toolDisabled) 0 else DEFAULT_NATIVE_TOOL_TOKENS + DEFAULT_SUBAGENT_TOKENS
+        return DEFAULT_SYSTEM_PROMPT_TOKENS + DEFAULT_RULES_TOKENS + toolTokens + skillTokens + mcpTokens + summaryTokens
+    }
+
     /** Estimate the payload after the same token-budget compaction used by [HarnessLoop]. */
     fun estimateEffectiveUsage(
         messages: List<HarnessMessage>,
@@ -141,7 +157,7 @@ object ContextWindowPolicy {
         var toolTokens = 0
         messages.drop(keepFrom).forEach { message ->
             when (message) {
-                is CapabilityEvent -> Unit
+                is CapabilityEvent, is ModelSwitchEvent -> Unit
                 is UserMessage -> {
                     conversationTokens += estimateTokens(message.text) + message.imageUrls.size * 1_000
                 }
@@ -201,7 +217,7 @@ object ContextWindowPolicy {
         var used = 0
         for (index in messages.indices.reversed()) {
             val tokens = when (val message = messages[index]) {
-                is CapabilityEvent -> 0
+                is CapabilityEvent, is ModelSwitchEvent -> 0
                 is UserMessage -> estimateTokens(message.text) + message.imageUrls.size * 1_000
                 is AssistantText -> estimateTokens(assistantTextForContext(message.text)) +
                     estimateTokens(message.reasoning.orEmpty())

@@ -606,6 +606,7 @@ class ToolExecutor @Inject constructor(
 
     private fun historyLabel(message: HarnessMessage, full: Boolean = false): String = when (message) {
         is CapabilityEvent -> "能力事件 ${message.name}: ${message.details}"
+        is ModelSwitchEvent -> "切换模型 ${message.fromLabel} → ${message.toLabel}"
         is UserMessage -> "用户：${message.text.take(if (full) MAX_HISTORY_READ_OUTPUT else 240)}"
         is AssistantText -> "助手：${message.text.take(if (full) MAX_HISTORY_READ_OUTPUT else 240)}" +
             if (full && !message.reasoning.isNullOrBlank()) "\nreasoning:\n${message.reasoning.take(MAX_HISTORY_READ_OUTPUT)}" else ""
