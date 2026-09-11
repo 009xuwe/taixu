@@ -4,6 +4,7 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.model.InstalledDistro
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.shell.CommandResult
+import top.wkbin.taixu.runtime.shell.InteractiveLaunchSpec
 import top.wkbin.taixu.runtime.shell.LinuxSession
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import top.wkbin.taixu.runtime.shell.ProcessType
@@ -37,6 +38,15 @@ interface LinuxRuntime {
 
     suspend fun execute(command: ShellCommand, distroId: String? = null): CommandResult
     suspend fun startSession(config: SessionConfig = SessionConfig(), distroId: String? = null): LinuxSession
+
+    /**
+     * Build host argv/env for an interactive console owned by Termux TerminalSession JNI,
+     * without opening our NativePty. Used by the matrix terminal UI.
+     */
+    suspend fun buildInteractiveLaunch(
+        config: SessionConfig = SessionConfig(),
+        distroId: String? = null,
+    ): InteractiveLaunchSpec = error("当前运行时不支持交互式终端启动规格")
 
     suspend fun startBackground(
         id: String,

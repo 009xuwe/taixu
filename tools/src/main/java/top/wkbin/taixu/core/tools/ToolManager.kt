@@ -254,7 +254,8 @@ class ToolManager @Inject constructor(
 
     /** Stop a running gateway service for the given tool. */
     suspend fun stopGateway(toolId: String) {
-        serviceController.stop(toolId)
+        val spec = serviceSpec(toolId)
+        serviceController.stop(toolId, spec)
     }
 
     /**

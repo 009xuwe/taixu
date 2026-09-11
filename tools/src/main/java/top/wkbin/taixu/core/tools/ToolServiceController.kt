@@ -22,10 +22,16 @@ class ToolServiceController @Inject constructor(
             it.toolId == toolId && it.session.isAlive && (spec == null || isPortOpen(spec.port))
         }
 
-    suspend fun stop(toolId: String) {
+    suspend fun stop(toolId: String, spec: LocalServiceSpec? = null) {
         linuxRuntime.listBackground()
             .filter { it.toolId == toolId }
             .forEach { linuxRuntime.stopBackground(it.id) }
+        if (spec != null) {
+            val deadline = System.currentTimeMillis() + 2500L
+            while (isPortOpen(spec.port) && System.currentTimeMillis() < deadline) {
+                delay(150)
+            }
+        }
     }
 
     suspend fun restart(
@@ -33,7 +39,7 @@ class ToolServiceController @Inject constructor(
         adapter: ToolRuntimeAdapter,
         spec: LocalServiceSpec?,
     ): ManagedProcess {
-        stop(toolId)
+        stop(toolId, spec)
         return start(toolId, adapter, spec)
     }
 
@@ -42,6 +48,12 @@ class ToolServiceController @Inject constructor(
         adapter: ToolRuntimeAdapter,
         spec: LocalServiceSpec?,
     ): ManagedProcess {
+        if (spec != null && isPortOpen(spec.port)) {
+            val deadline = System.currentTimeMillis() + 2000L
+            while (isPortOpen(spec.port) && System.currentTimeMillis() < deadline) {
+                delay(150)
+            }
+        }
         val process = requireNotNull(adapter.startService()) { "工具不提供后台服务：$toolId" }
         if (spec != null) awaitPortOrThrow(toolId, process, spec)
         return process

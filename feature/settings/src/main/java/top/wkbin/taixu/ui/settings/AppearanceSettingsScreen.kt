@@ -77,6 +77,7 @@ fun AppearanceSettingsScreen(
     val terminalFontSize by viewModel.terminalFontSize.collectAsStateWithLifecycle()
     val terminalColorScheme by viewModel.terminalColorScheme.collectAsStateWithLifecycle()
     val terminalHapticsEnabled by viewModel.terminalHapticsEnabled.collectAsStateWithLifecycle()
+    val slidePageTransitionsEnabled by viewModel.slidePageTransitionsEnabled.collectAsStateWithLifecycle()
     val appFontScale by viewModel.appFontScale.collectAsStateWithLifecycle()
     val backgroundUri by viewModel.chengmingBackgroundUri.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -251,6 +252,14 @@ fun AppearanceSettingsScreen(
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                 )
                 SettingsGroup {
+                    ToggleRow(
+                        icon = RuntimeIconName.Reverse,
+                        title = stringResource(R.string.settings_page_transitions),
+                        subtitle = stringResource(R.string.settings_page_transitions_description),
+                        checked = slidePageTransitionsEnabled,
+                        change = viewModel::setSlidePageTransitionsEnabled,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ThemeOptionRow(
                         title = stringResource(R.string.settings_theme_xuantong),
                         subtitle = stringResource(R.string.settings_theme_xuantong_description),

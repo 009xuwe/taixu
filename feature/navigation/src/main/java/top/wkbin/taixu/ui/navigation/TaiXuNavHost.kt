@@ -5,9 +5,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -29,6 +33,9 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
+import androidx.navigation3.ui.defaultPopTransitionSpec
+import androidx.navigation3.ui.defaultPredictivePopTransitionSpec
+import androidx.navigation3.ui.defaultTransitionSpec
 import top.wkbin.taixu.ui.chat.ChatScreen
 import top.wkbin.taixu.ui.chat.ChatViewModel
 import top.wkbin.taixu.ui.components.MainDestination
@@ -127,11 +134,32 @@ fun TaiXuNavHost(
     val settingsStack = rememberNavBackStack(SettingsDestination)
     var pendingHealingTask by remember { mutableStateOf<HealingTask?>(null) }
     var selectedMain by rememberSaveable { mutableStateOf(MainDestination.Home) } // 默认进入太墟开辟主界
+    var lastNavTime by remember { mutableLongStateOf(0L) }
+    var navTransitionLockedUntil by remember { mutableLongStateOf(0L) }
+
+    fun isNavTransitionLocked(): Boolean =
+        System.currentTimeMillis() < navTransitionLockedUntil
+
+    fun lockNavTransition() {
+        navTransitionLockedUntil =
+            System.currentTimeMillis() + ActivityStylePageTransitions.DurationMs + 40L
+    }
+
+    /** Programmatic stack mutation (bus / workflow) — still transition-locks. */
+    fun NavBackStack<NavKey>.pushRaw(destination: NavKey, lock: Boolean = true) {
+        if (isNavTransitionLocked()) return
+        if (lastOrNull() == destination) return
+        lastNavTime = System.currentTimeMillis()
+        add(destination)
+        if (lock) lockNavTransition()
+    }
 
     LaunchedEffect(chatViewModel) {
         chatViewModel.workflowLaunchRequests.collect { request ->
             selectedMain = MainDestination.Agent
-            agentStack.add(WorkflowDestination(request.projectName, request.workflowId, request.initialVariables))
+            agentStack.pushRaw(
+                WorkflowDestination(request.projectName, request.workflowId, request.initialVariables),
+            )
         }
     }
 
@@ -142,12 +170,12 @@ fun TaiXuNavHost(
                     selectedMain = MainDestination.Settings
                     if (settingsStack.lastOrNull() != AdbLogcatDestination) {
                         if (settingsStack.lastOrNull() == SettingsDestination) {
-                            settingsStack.add(SystemDevSettingsDestination)
+                            settingsStack.pushRaw(SystemDevSettingsDestination, lock = false)
                         }
                         if (settingsStack.lastOrNull() == SystemDevSettingsDestination) {
-                            settingsStack.add(AdbLogcatDestination)
+                            settingsStack.pushRaw(AdbLogcatDestination)
                         } else if (settingsStack.lastOrNull() != AdbLogcatDestination) {
-                            settingsStack.add(AdbLogcatDestination)
+                            settingsStack.pushRaw(AdbLogcatDestination)
                         }
                     }
                     globalNavigationBus.clearLatest(target)
@@ -155,8 +183,6 @@ fun TaiXuNavHost(
             }
         }
     }
-
-    var lastNavTime by remember { mutableStateOf(0L) }
 
     val activeStack = when (selectedMain) {
         MainDestination.Home -> homeStack
@@ -166,23 +192,29 @@ fun TaiXuNavHost(
     }
 
     fun navigateMain(destination: MainDestination) {
+        // Tab swaps are instantaneous (key(selectedMain)); do not transition-lock them.
         selectedMain = destination
     }
 
     fun NavBackStack<NavKey>.push(from: NavKey, destination: NavKey) {
+        if (isNavTransitionLocked()) return
         val now = System.currentTimeMillis()
         if (now - lastNavTime < 120L) return
         if (lastOrNull() == from && lastOrNull() != destination) {
             lastNavTime = now
             add(destination)
+            lockNavTransition()
         }
     }
 
     fun popBack() {
+        if (isNavTransitionLocked()) return
         val now = System.currentTimeMillis()
         if (now - lastNavTime < 120L) return
+        if (activeStack.size <= 1) return
         lastNavTime = now
-        if (activeStack.size > 1) activeStack.removeLastOrNull()
+        activeStack.removeLastOrNull()
+        lockNavTransition()
     }
 
     @Composable
@@ -608,17 +640,46 @@ fun TaiXuNavHost(
     val showLiquidBottomBar = liquidGlassBackdrop != null &&
         activeStack.size == 1 &&
         WindowInsets.ime.getBottom(density) == 0
-    Box(Modifier.fillMaxSize()) {
-        NavDisplay(
-            backStack = activeStack,
+    val slidePageTransitions by settingsViewModel.slidePageTransitionsEnabled.collectAsStateWithLifecycle()
+    // Hoist decorators so tab switches (key below) do not drop entry Saveable/ViewModel state.
+    // Explicit <NavKey>: outside NavDisplay's parameter context, listOf cannot infer T.
+    val entryDecorators = listOf(
+        rememberSaveableStateHolderNavEntryDecorator<NavKey>(),
+        rememberViewModelStoreNavEntryDecorator<NavKey>(),
+    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        // App background under NavDisplay so a rare uncovered frame never shows window black.
+        Surface(
             modifier = Modifier.fillMaxSize(),
-            onBack = ::popBack,
-            entryDecorators = listOf(
-                rememberSaveableStateHolderNavEntryDecorator(),
-                rememberViewModelStoreNavEntryDecorator(),
-            ),
-            entryProvider = appEntryProvider,
-        )
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            // key(selectedMain): swapping the bottom tab replaces NavDisplay instead of animating
+            // between two unrelated back stacks (which looked like a page transition).
+            key(selectedMain) {
+                NavDisplay(
+                    backStack = activeStack,
+                    modifier = Modifier.fillMaxSize(),
+                    onBack = ::popBack,
+                    entryDecorators = entryDecorators,
+                    transitionSpec = if (slidePageTransitions) {
+                        ActivityStylePageTransitions.forward()
+                    } else {
+                        defaultTransitionSpec()
+                    },
+                    popTransitionSpec = if (slidePageTransitions) {
+                        ActivityStylePageTransitions.pop()
+                    } else {
+                        defaultPopTransitionSpec()
+                    },
+                    predictivePopTransitionSpec = if (slidePageTransitions) {
+                        ActivityStylePageTransitions.predictivePop()
+                    } else {
+                        defaultPredictivePopTransitionSpec()
+                    },
+                    entryProvider = appEntryProvider,
+                )
+            }
+        }
         if (liquidGlassBackdrop != null) {
             // Keep the expensive glass layers composed while a secondary destination is open.
             // Recreating both backdrop render layers in the same frame as the root screen was

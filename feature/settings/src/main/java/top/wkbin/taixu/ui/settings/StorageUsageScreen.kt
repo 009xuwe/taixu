@@ -68,6 +68,58 @@ import top.wkbin.taixu.ui.components.RuntimeTextButton
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import java.util.Locale
 
+/** Keep diagnostic paths out of the main storage overview. */
+@Composable
+private fun StorageScanNotice(warnings: List<String>) {
+    var showDetails by remember(warnings) { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        RuntimeIcon(
+            name = RuntimeIconName.Info,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "部分目录未计入统计",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        RuntimeTextButton(onClick = { showDetails = true }) {
+            Text("详情", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+    }
+    if (showDetails) {
+        RuntimeAlertDialog(
+            onDismissRequest = { showDetails = false },
+            title = { Text("扫描详情") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("部分目录未能完整读取，显示的占用可能低于实际值。以下为扫描时记录的详细信息（最多 20 条）。")
+                    warnings.forEach { warning ->
+                        Text(
+                            warning,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                RuntimeTextButton(onClick = { showDetails = false }) { Text("关闭") }
+            },
+        )
+    }
+}
+
 @Composable
 fun StorageUsageScreen(
     onBack: () -> Unit,
@@ -262,7 +314,16 @@ fun StorageUsageScreen(
 
             usage?.scanWarnings?.takeIf { it.isNotEmpty() }?.let { warnings ->
                 item(key = "scan_warnings") {
-                    Text("部分目录无法读取，统计可能不完整：${warnings.joinToString("；")}", style = MaterialTheme.typography.bodySmall)
+                    StorageScanNotice(warnings)
+                }
+            }
+            usage?.excludedMountPointCount?.takeIf { it > 0 }?.let { count ->
+                item(key = "excluded_mount_points") {
+                    Text(
+                        "已跳过 $count 个受限挂载入口，工作区与附件按实际目录统计。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 

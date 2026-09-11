@@ -2,11 +2,14 @@ package top.wkbin.taixu.runtime
 
 import android.content.Context
 import android.os.StatFs
+import android.system.Os
+import android.system.OsConstants
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
 import java.nio.file.FileVisitResult
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -24,6 +27,7 @@ import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
+import top.wkbin.taixu.runtime.proot.ProotMountLayout
 
 /** 风险描述删除后果；READONLY 表示需要通过所属业务管理，而非文件批量删除。 */
 enum class StorageRiskLevel { SAFE, CAUTION, DANGEROUS, READONLY }
@@ -61,6 +65,7 @@ data class StorageUsage(
     val scannedAt: Long = System.currentTimeMillis(),
     val projectCleanableBytes: Long = 0L,
     val scanWarnings: List<String> = emptyList(),
+    val excludedMountPointCount: Int = 0,
 ) {
     /** 文件逻辑大小，不等同于 Android 设置中的应用磁盘分配量。 */
     val totalManagedBytes: Long get() = categories.sumOf { it.bytes }
@@ -114,11 +119,25 @@ class StorageManager @Inject constructor(
         val warnings = mutableListOf<String>()
         val seenKeys = mutableSetOf<Any>()
         val roots = managedRoots()
+        val mountCandidates = children(pathManager.distrosDir).filter { it.isDirectory }
+            .flatMap { ProotMountLayout.placeholderCandidates(pathManager.rootfsDir(it.name)) }.toSet()
+        val excludedMountPoints = mutableSetOf<Path>()
+        fun excludeMountPoint(path: Path): Boolean {
+            if (path !in mountCandidates || !safePath(path)) return false
+            val stat = runCatching { Os.lstat(path.toString()) }.getOrNull() ?: return false
+            val excluded = ProotMountLayout.isRestrictedPlaceholder(
+                path, mountCandidates, OsConstants.S_ISDIR(stat.st_mode), stat.st_mode and 0xFFF,
+                stat.st_uid, android.os.Process.myUid(),
+            )
+            if (excluded) excludedMountPoints.add(path)
+            return excluded
+        }
         for (root in roots) {
             if (!safePath(root) || !Files.exists(root, NOFOLLOW_LINKS)) continue
             Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
                 override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
                     coroutine.ensureActive()
+                    if (excludeMountPoint(dir)) return FileVisitResult.SKIP_SUBTREE
                     return FileVisitResult.CONTINUE
                 }
                 override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
@@ -135,11 +154,13 @@ class StorageManager @Inject constructor(
                     return FileVisitResult.CONTINUE
                 }
                 override fun visitFileFailed(file: Path, exc: IOException?): FileVisitResult {
-                    if (warnings.size < 20) warnings.add("无法读取：$file")
+                    if (excludeMountPoint(file)) return FileVisitResult.CONTINUE
+                    if (warnings.size < 20) warnings.add(scanFailureDetails(file, exc))
                     return FileVisitResult.CONTINUE
                 }
                 override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
-                    if (exc != null && warnings.size < 20) warnings.add("未完整扫描：$dir")
+                    if (exc != null && excludeMountPoint(dir)) return FileVisitResult.CONTINUE
+                    if (exc != null && warnings.size < 20) warnings.add(scanFailureDetails(dir, exc))
                     return FileVisitResult.CONTINUE
                 }
             })
@@ -168,6 +189,7 @@ class StorageManager @Inject constructor(
         return StorageUsage(
             availableBytes = availableBytes(),
             categories = categories, scannedAt = now, scanWarnings = warnings,
+            excludedMountPointCount = excludedMountPoints.size,
             safeCleanableBytes = entries.filter { it.second.riskLevel == StorageRiskLevel.SAFE }.sumOf { it.second.reclaimableBytes },
             cautionCleanableBytes = entries.filter { it.second.riskLevel == StorageRiskLevel.CAUTION }.sumOf { it.second.reclaimableBytes },
             projectCleanableBytes = entries.filter { it.first.cleanup == Cleanup.PROJECT_CACHE }.sumOf { it.second.reclaimableBytes },
@@ -265,6 +287,34 @@ class StorageManager @Inject constructor(
     private fun children(dir: File): List<File> = if (safePath(storagePath(dir))) dir.listFiles().orEmpty().filter {
         !Files.isSymbolicLink(it.toPath())
     } else emptyList()
+
+    /** lstat inspects the entry itself, including dangling links, without following its target. */
+    private fun scanFailureDetails(path: Path, error: IOException?): String = buildString {
+        append("未完整读取：").append(path)
+        append("\n错误：").append(error?.javaClass?.simpleName ?: "未知读取错误")
+        (error as? FileSystemException)?.reason?.takeIf { it.isNotBlank() }?.let {
+            append(" · ").append(it)
+        }
+        // Mirrors the useful metadata inspection in MTDataFilesProvider, not its SAF export.
+        // No chmod: a scan must not alter guest permissions or expose app-private files.
+        runCatching {
+            val stat = Os.lstat(path.toString())
+            append("\n权限：").append(Integer.toOctalString(stat.st_mode and 0xFFF))
+            append(" · UID：").append(stat.st_uid).append(" · GID：").append(stat.st_gid)
+            append(" · 应用 UID：").append(android.os.Process.myUid())
+            if (OsConstants.S_ISLNK(stat.st_mode)) {
+                append("\n链接目标：").append(Os.readlink(path.toString()))
+            } else if (OsConstants.S_ISDIR(stat.st_mode) && stat.st_uid == android.os.Process.myUid()) {
+                val needed = OsConstants.S_IRUSR or OsConstants.S_IXUSR
+                if (stat.st_mode and needed != needed) {
+                    append("\n该目录的所有者权限缺少读取或进入权限；与共享存储授权不同。")
+                }
+            }
+        }.onFailure {
+            append("\n元数据读取失败：").append(it.javaClass.simpleName)
+            it.message?.let { message -> append(" · ").append(message) }
+        }
+    }
 
     /** Resolve only the trusted Android app root alias, never an arbitrary child symlink. */
     private fun storagePath(file: File): Path {

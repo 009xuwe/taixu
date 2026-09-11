@@ -18,6 +18,8 @@
     <string name="settings_terminal_font_size">终端字体大小</string>
     <string name="settings_terminal_haptics">终端触觉按键反馈</string>
     <string name="settings_terminal_haptics_description">点击辅助按键条与回车时产生微弱触觉震动</string>
+    <string name="settings_page_transitions">页面侧滑转场</string>
+    <string name="settings_page_transitions_description">开启后进入从右侧滑入并压暗下层，返回顶页向右滑出、下层由暗变亮；关闭则使用系统默认淡入淡出</string>
     <string name="settings_theme_style">主题风格</string>
     <string name="settings_theme_xuantong">玄同 · Xuantong</string>
     <string name="settings_theme_xuantong_description">默认主题：源自《老子》「万物同归于玄」，曜石夜空与温润素白</string>
