@@ -102,6 +102,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
 @Serializable data object BrowserDestination : AppDestination
+@Serializable data class GitRepositoryDestination(val projectName: String) : AppDestination
 @Serializable data class WorkflowDestination(
     val projectName: String = "",
     val workflowId: String? = null,
@@ -277,6 +278,9 @@ fun TaiXuNavHost(
                         browserBackPressed = { browserViewModel.handleBackImmediate() },
                         onOpenFile = { projectName, relativePath ->
                             agentStack.push(AgentDestination, CodeEditorDestination(projectName, relativePath))
+                        },
+                        onOpenRepository = { projectName ->
+                            agentStack.push(AgentDestination, GitRepositoryDestination(projectName))
                         },
                     )
                 }
@@ -631,6 +635,14 @@ fun TaiXuNavHost(
             entry<BrowserDestination> {
                 GuardedEntry(BrowserDestination) {
                     BrowserScreen(onBack = ::popBack, viewModel = browserViewModel)
+                }
+            }
+            entry<GitRepositoryDestination> { destination ->
+                GuardedEntry(destination) {
+                    top.wkbin.taixu.ui.git.GitScreen(
+                        projectName = destination.projectName,
+                        onBack = ::popBack,
+                    )
                 }
             }
     }

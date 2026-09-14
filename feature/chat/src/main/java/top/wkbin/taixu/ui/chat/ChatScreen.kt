@@ -126,6 +126,7 @@ fun ChatScreen(
     browserPane: (@Composable (onExit: (() -> Unit)?) -> Unit)? = null,
     browserActivityTick: Long = 0L,
     browserBackPressed: (() -> Boolean)? = null,
+    onOpenRepository: ((projectName: String) -> Unit)? = null,
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
@@ -332,6 +333,8 @@ fun ChatScreen(
     // 模型·权限·主线·轮次 工具条：单栏浏览器分页模式下随对话页一起滑走（浏览器页全屏），
     // 双栏/纯对话模式固定在顶部。提出为局部 lambda 避免三处重复传参。
     // onOpenBrowser 非空时工具条末尾追加"浏览器"入口（agent 有新动态时高亮）。
+    // onOpenRepository 非空即追加"仓库"入口（Git 分支管理）；未绑定项目时点击给提示而非隐藏。
+    val noProjectHint = stringResource(R.string.chat_repository_no_project)
     val chatTopBar: @Composable (onOpenBrowser: (() -> Unit)?, browserHighlight: Boolean) -> Unit =
         { onOpenBrowser, browserHighlight ->
             ChatTopBar(
@@ -350,6 +353,16 @@ fun ChatScreen(
                 onOpenRuntime = { showRuntimeTimeline = true },
                 onOpenBrowser = onOpenBrowser,
                 browserHighlight = browserHighlight,
+                onOpenRepository = onOpenRepository?.let { open ->
+                    {
+                        val project = activeWorkspaceProject
+                        if (project != null) {
+                            open(project.name)
+                        } else {
+                            android.widget.Toast.makeText(appContext, noProjectHint, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
             )
         }
 

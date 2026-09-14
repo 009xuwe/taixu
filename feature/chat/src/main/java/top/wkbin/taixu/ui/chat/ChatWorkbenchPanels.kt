@@ -97,6 +97,7 @@ internal fun CollapsibleChatWorkbenchStrip(
     modifier: Modifier = Modifier,
     onOpenBrowser: (() -> Unit)? = null,
     browserHighlight: Boolean = false,
+    onOpenRepository: (() -> Unit)? = null,
 ) {
     val roundCount = runtimeEvents.count { it is HarnessEvent.ProviderRoundStarted }
     val activeModelName = activeModel?.let { entity ->
@@ -165,7 +166,18 @@ internal fun CollapsibleChatWorkbenchStrip(
                 onClick = onOpenRuntime,
             )
 
-            // 5. 浏览器入口（轮次之后）：agent 在浏览器产生新动态时高亮提示
+            // 5. Git 仓库/分支管理入口（参考 MGit）：提交树/分支/推送拉取
+            if (onOpenRepository != null) {
+                StatusDivider()
+                WorkbenchStatusItem(
+                    icon = RuntimeIconName.GitBranch,
+                    label = stringResource(R.string.chat_repository),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    onClick = onOpenRepository,
+                )
+            }
+
+            // 6. 浏览器入口（轮次之后）：agent 在浏览器产生新动态时高亮提示
             if (onOpenBrowser != null) {
                 StatusDivider()
                 WorkbenchStatusItem(

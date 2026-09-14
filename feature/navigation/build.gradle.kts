@@ -44,6 +44,7 @@ dependencies {
     implementation(project(":feature:developer"))
     implementation(project(":feature:custom_iteration"))
     implementation(project(":feature:browser"))
+    implementation(project(":feature:git"))
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.lifecycle.viewmodel.navigation3)

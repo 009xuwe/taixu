@@ -22,6 +22,7 @@ enum class RuntimeIconName {
     Brain, Sparkles, Vibrate, FolderDownload, Document, SdCard, Server, Compress,
     Prompt, Wrench, Model, Network, Community, FolderOpen, Speed, Cable, Admin, Link,
     Reverse, PowerSettingsNew, Visibility, VisibilityOff, Sponsor, Mail,
+    GitBranch, GitCommit,
 }
 
 /**
@@ -124,6 +125,8 @@ fun RuntimeIcon(
         RuntimeIconName.VisibilityOff -> R.drawable.components_ic_visibilityoff
         RuntimeIconName.Sponsor -> R.drawable.components_ic_sponsor
         RuntimeIconName.Mail -> R.drawable.components_ic_mail
+        RuntimeIconName.GitBranch -> R.drawable.components_ic_gitbranch
+        RuntimeIconName.GitCommit -> R.drawable.components_ic_gitcommit
     }
 
     // 彩色品牌 Logo 保持原色；单色图标跟随内容色，可被显式 tint 覆盖

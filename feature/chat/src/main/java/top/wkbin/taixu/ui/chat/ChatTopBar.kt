@@ -53,6 +53,7 @@ internal fun ChatTopBar(
     onOpenRuntime: () -> Unit,
     onOpenBrowser: (() -> Unit)? = null,
     browserHighlight: Boolean = false,
+    onOpenRepository: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(
@@ -144,6 +145,7 @@ internal fun ChatTopBar(
             onOpenRuntime = onOpenRuntime,
             onOpenBrowser = onOpenBrowser,
             browserHighlight = browserHighlight,
+            onOpenRepository = onOpenRepository,
         )
     }
 }

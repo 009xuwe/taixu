@@ -183,6 +183,7 @@ dependencies {
     implementation(project(":feature:custom_iteration"))
     implementation(project(":feature:onboarding"))
     implementation(project(":feature:theme"))
+    implementation(project(":feature:git"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
