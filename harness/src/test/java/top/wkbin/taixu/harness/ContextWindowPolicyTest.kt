@@ -261,4 +261,134 @@ class ContextWindowPolicyTest {
         assertEquals(1, ContextWindowPolicy.resolveBudget(0, 128_000))
         assertEquals(128_000, ContextWindowPolicy.resolveBudget(128_000, 1_000_000))
     }
+
+    @Test
+    fun `oversized single turn is split inside the turn instead of kept whole`() {
+        // 单个用户轮次自身超预算：最后一个用户轮次包含 10 条大 assistant 消息
+        val messages = buildList<HarnessMessage> {
+            add(UserMessage("u0", 1, "start"))
+            add(AssistantText("a0", 2, "ok"))
+            add(UserMessage("u1", 3, "huge task"))
+            repeat(10) { index ->
+                add(AssistantText("a-$index", 4L + index, "step $index " + "x".repeat(2_000)))
+            }
+        }
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+
+        // 旧行为会把整个巨型轮次保留（keepFrom == 2 起点且 kept 超限）；split-turn 必须切在轮内
+        assertTrue(keepFrom > 2)
+        val firstKept = messages[keepFrom]
+        assertTrue(
+            "boundary must be user/assistant/tool_call, was $firstKept",
+            firstKept is UserMessage || firstKept is AssistantText || firstKept is ToolCall,
+        )
+        val keptTokens = messages.drop(keepFrom).sumOf { message ->
+            when (message) {
+                is UserMessage -> ContextWindowPolicy.estimateTokens(message.text)
+                is AssistantText -> ContextWindowPolicy.estimateTokens(message.text)
+                is ToolCall -> ContextWindowPolicy.estimateTokens(message.args.toString())
+                is ToolResult -> ContextWindowPolicy.estimateTokens(message.output)
+                else -> 0
+            }
+        }
+        assertTrue("kept tokens $keptTokens must fit the limit", keptTokens < 18_000 * 0.75)
+    }
+
+    @Test
+    fun `split turn boundary never separates a tool call from its result`() {
+        val messages = buildList<HarnessMessage> {
+            add(UserMessage("u0", 1, "start"))
+            add(UserMessage("u1", 3, "huge task"))
+            repeat(8) { index ->
+                add(ToolCall("call-$index", 4L + index * 3, HarnessTool.BASE, kotlinx.serialization.json.buildJsonObject {}))
+                add(ToolResult("result-$index", 5L + index * 3, "call-$index", true, "x".repeat(3_000)))
+                add(AssistantText("note-$index", 6L + index * 3, "n".repeat(1_500)))
+            }
+        }
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val kept = messages.drop(keepFrom)
+
+        if (keepFrom > 0) {
+            val keptCallIds = kept.filterIsInstance<ToolCall>().mapTo(mutableSetOf()) { it.id }
+            assertTrue(
+                kept.filterIsInstance<ToolResult>().all { it.toolCallId in keptCallIds },
+            )
+        }
+    }
+
+    @Test
+    fun `keepRecentTokens override tightens the retained window`() {
+        val messages = buildList<HarnessMessage> {
+            repeat(20) { index ->
+                add(UserMessage("u-$index", index * 2L, "request $index " + "a".repeat(300)))
+                add(AssistantText("a-$index", index * 2L + 1, "answer $index " + "b".repeat(300)))
+            }
+        }
+
+        val base = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        assertTrue(base > 0)
+
+        val tightened = ContextWindowPolicy.computeKeepFromIndex(
+            messages,
+            budget = 18_000,
+            systemTokens = 10,
+            keepRecentTokens = 400,
+        )
+
+        assertTrue("tightened($tightened) should be beyond base($base)", tightened > base)
+        val keptTokens = messages.drop(tightened).sumOf { message ->
+            when (message) {
+                is UserMessage -> ContextWindowPolicy.estimateTokens(message.text)
+                is AssistantText -> ContextWindowPolicy.estimateTokens(message.text)
+                else -> 0
+            }
+        }
+        assertTrue("kept tokens $keptTokens should stay near the 400 cap", keptTokens < 1_600)
+    }
+
+    @Test
+    fun `keepRecentTokens is inert while the budget still fits`() {
+        val messages = buildList<HarnessMessage> {
+            repeat(5) { index ->
+                add(UserMessage("u-$index", index * 2L, "request $index"))
+                add(AssistantText("a-$index", index * 2L + 1, "answer $index"))
+            }
+        }
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(
+            messages,
+            budget = 128_000,
+            systemTokens = 10,
+            keepRecentTokens = 100,
+        )
+
+        assertEquals(0, keepFrom)
+    }
+
+    @Test
+    fun `per-model reserveTokens override raises the compaction threshold`() {
+        val messages = buildList<HarnessMessage> {
+            repeat(10) { index ->
+                add(UserMessage("u-$index", index * 2L, "request $index " + "a".repeat(600)))
+                add(AssistantText("a-$index", index * 2L + 1, "answer $index " + "b".repeat(600)))
+            }
+        }
+
+        val withDefaultReserve = ContextWindowPolicy.computeKeepFromIndex(
+            messages,
+            budget = 128_000,
+            systemTokens = 10,
+        )
+        assertEquals(0, withDefaultReserve)
+
+        val withHugeReserve = ContextWindowPolicy.computeKeepFromIndex(
+            messages,
+            budget = 128_000,
+            systemTokens = 10,
+            reserveTokens = 90_000,
+        )
+        assertTrue(withHugeReserve > 0)
+    }
 }

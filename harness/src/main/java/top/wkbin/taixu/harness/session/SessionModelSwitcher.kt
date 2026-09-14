@@ -10,6 +10,7 @@ import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.ModelSwitchEvent
+import top.wkbin.taixu.harness.ProviderClient
 import top.wkbin.taixu.harness.compaction.CompactionManager
 import top.wkbin.taixu.harness.projection.LiveMessagePort
 
@@ -26,6 +27,7 @@ class SessionModelSwitcher @Inject constructor(
     private val modelDao: AiModelRepository,
     private val settingsDataStore: AgentPreferences,
     private val compactionManager: CompactionManager,
+    private val providerClient: ProviderClient? = null,
     private val messagePort: LiveMessagePort,
 ) {
     data class Result(
@@ -76,10 +78,16 @@ class SessionModelSwitcher @Inject constructor(
             pureChat = profile.pureChatMode,
             toolDisabled = profile.pureChatMode ||
                 profile.toolCallMode.equals("disabled", ignoreCase = true),
-            summaryTokens = ContextWindowPolicy.estimateTokens(context.summary.orEmpty()),
+            summaryTokens = ContextWindowPolicy.estimateTokens(context.summaryLayer),
         )
         val keepFrom = if (compactionEnabled) {
-            ContextWindowPolicy.computeKeepFromIndex(context.messages, toBudget, systemTokens)
+            ContextWindowPolicy.computeKeepFromIndex(
+                context.messages,
+                toBudget,
+                systemTokens,
+                keepRecentTokens = profile.compactionKeepRecentTokens ?: 0,
+                reserveTokens = profile.compactionReserveTokens,
+            )
         } else {
             0
         }
@@ -89,7 +97,11 @@ class SessionModelSwitcher @Inject constructor(
         var pending = false
         if (keepFrom > 0) {
             if (compactIfNeeded) {
-                compactionManager.compact(sessionId, context, keepFrom)
+                // 切换模型立即压缩：用目标模型生成 LLM 结构化摘要（解析失败回退机械摘要）
+                val targetModelConfig = providerClient?.let { client ->
+                    runCatching { client.resolveSavedModelProfile(profile.id, resolvedVariant) }.getOrNull()
+                }
+                compactionManager.compact(sessionId, context, keepFrom, model = targetModelConfig)
                 compacted = true
                 folded = keepFrom
             } else {

@@ -85,6 +85,7 @@ class HarnessLoop @Inject constructor(
     private val agentTaskStateMachine: AgentStateMachine,
     private val turnRunner: TurnRunner,
     private val rewindController: top.wkbin.taixu.harness.checkpoint.RewindController,
+    private val branchSummarizer: top.wkbin.taixu.harness.compaction.BranchSummarizer,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -514,7 +515,21 @@ class HarnessLoop @Inject constructor(
     suspend fun activateBranch(leafId: String?, targetSessionId: String? = null): Boolean {
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
         if (sessId.isBlank() || isSessionBusy(sessId)) return false
+        val oldLeafId = messageStore.laneLeafId(sessId)
         messageStore.moveTo(sessId, leafId)
+        // 分支摘要（对齐 pi /tree）：切换后把被放弃分支生成摘要注入新位置，
+        // 保留旧方案的关键结论。失败不影响切换本身。
+        if (leafId != null && oldLeafId != null && oldLeafId != leafId) {
+            runCatching {
+                val session = sessionDao.findById(sessId)
+                val model = session?.modelId?.let { boundId ->
+                    runCatching { providerClient.resolveConfigured(boundId, session.modelVariant) }.getOrNull()
+                }
+                branchSummarizer.summarizeAbandonedBranch(sessId, oldLeafId, leafId, model = model)
+            }.onFailure { throwable ->
+                logger.w("分支摘要生成失败（不影响分支切换）：${throwable.message}")
+            }
+        }
         val history = messageProjector.loadHistory(sessId)
         messageProjector.replaceAll(sessId, history)
         return true

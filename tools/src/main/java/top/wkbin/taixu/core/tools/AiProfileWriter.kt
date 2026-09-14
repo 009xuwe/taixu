@@ -42,6 +42,10 @@ class AiProfileWriter @Inject constructor(
         val reasoningEffort: String? = null,
         val toolCallMode: String? = null,
         val contextTokens: Int? = null,
+        /** 每模型压缩预算覆盖：压缩触发时保留的最近 token 上限（null = 不启用）。 */
+        val compactionKeepRecentTokens: Int? = null,
+        /** 每模型压缩预算覆盖：为 LLM 响应预留的 token（null = 内置默认）。 */
+        val compactionReserveTokens: Int? = null,
         val customHeaders: String = "",
         val pureChatMode: Boolean = false,
         val visionEnabled: Boolean = true,
@@ -75,6 +79,8 @@ class AiProfileWriter @Inject constructor(
                 reasoningEffort = request.reasoningEffort?.ifBlank { null },
                 toolCallMode = request.toolCallMode?.ifBlank { null },
                 contextTokens = request.contextTokens,
+                compactionKeepRecentTokens = request.compactionKeepRecentTokens,
+                compactionReserveTokens = request.compactionReserveTokens,
                 customHeaders = request.customHeaders.trim(),
                 pureChatMode = request.pureChatMode,
                 visionEnabled = request.visionEnabled,

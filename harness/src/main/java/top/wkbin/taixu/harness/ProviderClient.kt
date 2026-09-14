@@ -472,6 +472,13 @@ data class ModelConfig(
     val dynamicMcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList(),
     /** 上下文 Token 容量上限（如 128000，超出时滑动窗口压缩）。 */
     val contextTokens: Int? = null,
+    /**
+     * 每模型压缩预算覆盖（对齐 pi compaction.modelOverrides）：
+     * 压缩触发时保留的最近 token 上限（null = 不启用该收紧）。
+     */
+    val compactionKeepRecentTokens: Int? = null,
+    /** 为 LLM 响应预留的 token（null = 使用内置默认 8192）。 */
+    val compactionReserveTokens: Int? = null,
     /** 自定义请求头（多行 Key: Value 格式）。 */
     val customHeaders: String = "",
     /** 纯净排查模式：不注入系统提示词与工具。 */
@@ -970,6 +977,8 @@ class ProviderClient @Inject constructor(
                     else -> ToolCallMode.NATIVE
                 },
                 contextTokens = contextTokens,
+                compactionKeepRecentTokens = compactionKeepRecentTokens,
+                compactionReserveTokens = compactionReserveTokens,
                 customHeaders = customHeaders,
                 pureChatMode = pureChatMode,
                 visionEnabled = visionEnabled,

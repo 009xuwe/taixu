@@ -80,25 +80,35 @@ class ApiContextAssembler @Inject constructor(
 
             // 预算驱动的滑动窗口：从最近一轮往回累加 token，超出预算则更早的历史进入压缩态。
             // 是否裁剪原文只由真实 token 预算决定，不再按用户轮次阈值强制折叠。
+            // 每模型压缩预算覆盖（pi 式 modelOverrides）：keepRecent 收紧 + reserve 预留。
             val computedKeepFromIndex = if (compactionEnabled) {
                 ContextWindowPolicy.computeKeepFromIndex(
                     msgs,
                     budgetTokens,
                     ContextWindowPolicy.estimateTokens(systemPrompt) +
-                        ContextWindowPolicy.estimateTokens(compactedContext.summary.orEmpty()),
+                        ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer),
+                    keepRecentTokens = model.compactionKeepRecentTokens ?: 0,
+                    reserveTokens = model.compactionReserveTokens,
                 )
             } else {
                 0
             }
             if (computedKeepFromIndex > 0) {
-                compactedContext = compactionManager.compact(sessId, compactedContext, computedKeepFromIndex)
+                // LLM 结构化压缩摘要（pi 式）：当前模型生成，失败回退机械摘要
+                compactedContext = compactionManager.compact(
+                    sessId,
+                    compactedContext,
+                    computedKeepFromIndex,
+                    model = model,
+                )
                 msgs = compactedContext.messages
             }
-            if (!compactedContext.summary.isNullOrBlank()) {
+            val summaryLayer = compactedContext.summaryLayer
+            if (summaryLayer.isNotBlank()) {
                 add(
                     ApiMessage(
                         role = "system",
-                        content = compactedContext.summary,
+                        content = summaryLayer,
                     ),
                 )
             }

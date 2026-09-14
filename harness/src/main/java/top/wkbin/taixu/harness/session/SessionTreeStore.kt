@@ -25,6 +25,10 @@ class SessionTreeStore @Inject constructor(
         repository.ensureLane(sessionId, MAIN_LANE)
     }
 
+    /** 当前 lane 的叶子条目 id（无 lane 或空 lane 时为 null）。 */
+    suspend fun laneLeafId(sessionId: String, laneName: String = MAIN_LANE): String? =
+        runCatching { repository.findLane(sessionId, laneName)?.leafId }.getOrNull()
+
     suspend fun load(sessionId: String, laneName: String = MAIN_LANE): List<HarnessMessage> = runCatching {
         val lane = repository.ensureLane(sessionId, laneName)
         repository.branchTail(sessionId, lane.leafId, MAX_LIVE_ENTRIES).mapNotNull(::decode)
