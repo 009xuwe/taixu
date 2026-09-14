@@ -87,7 +87,8 @@ class HarnessProviderRunner @Inject constructor(
         // Context and prompt remain immutable during network retries. The configured model
         // window is authoritative: a transport heuristic must never persistently compact a
         // valid 128k/200k conversation down to 64k.
-        val requestMessages = assembleFor(model)
+        var requestMessages = assembleFor(model)
+        var imageStripped = false
         val estimatedRequestTokens = estimateTokens(requestMessages)
         val maxNetworkRetries = maxNetworkRetriesFor(estimatedRequestTokens, retryPolicy.maxRetries)
         val maxAttempts = maxNetworkRetries + 1
@@ -187,6 +188,27 @@ class HarnessProviderRunner @Inject constructor(
                 delay(retryPolicy.delayForRetry(netRetry).milliseconds)
             } catch (throwable: Throwable) {
                 stateMirrors.setThinkingLive(sessId, false)
+                // 模型不支持图片输入（HTTP 400）时，剥离全部图片降级重试一次，避免整轮中断
+                val lowerMsg = throwable.message.orEmpty().lowercase()
+                val pendingImages = requestMessages.sumOf { it.imageUrls.size }
+                if (!imageStripped && pendingImages > 0 &&
+                    ("do not support image" in lowerMsg || "does not support image" in lowerMsg ||
+                        "image input" in lowerMsg || "supports image" in lowerMsg ||
+                        "image not supported" in lowerMsg ||
+                        "不支持图片" in lowerMsg || "不支持图像" in lowerMsg ||
+                        "图片输入" in lowerMsg || "图像输入" in lowerMsg)
+                ) {
+                    imageStripped = true
+                    requestMessages = requestMessages.map { it.copy(imageUrls = emptyList()) }
+                    agentEventLogger.log(
+                        sessId, "VisionFallback",
+                        "模型不支持图片输入，已剥离 $pendingImages 张图片降级重试", throwable,
+                    )
+                    streamText.clear()
+                    streamReasoning.clear()
+                    messageProjector.remove(sessId, assistantId)
+                    continue
+                }
                 agentEventLogger.log(sessId, "ModelError", "LLM 调用失败: ${throwable.message}", throwable)
                 if (streamText.length > 0) {
                     persistAssistant(

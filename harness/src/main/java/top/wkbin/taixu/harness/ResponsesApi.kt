@@ -55,6 +55,9 @@ internal class ResponsesApi(
                     if (response.code == 429) {
                         throw ProviderClient.rateLimitException(response.code, body, response.header("Retry-After"))
                     }
+                    if (response.code in 500..599) {
+                        throw ProviderClient.transientHttpException(response.code, body, response.header("Retry-After"))
+                    }
                     throw IllegalStateException("Responses 请求失败 HTTP ${response.code}：${extractError(body)}")
                 }
                 parseFinalResponse(body)
@@ -88,6 +91,9 @@ internal class ResponsesApi(
                     val rawBody = response.body.string().take(512)
                     if (response.code == 429) {
                         throw ProviderClient.rateLimitException(response.code, rawBody, response.header("Retry-After"))
+                    }
+                    if (response.code in 500..599) {
+                        throw ProviderClient.transientHttpException(response.code, rawBody, response.header("Retry-After"))
                     }
                     throw IllegalStateException("Responses 请求失败 HTTP ${response.code}：${extractError(rawBody)}")
                 }

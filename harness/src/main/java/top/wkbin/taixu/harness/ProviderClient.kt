@@ -39,6 +39,13 @@ class LlmRateLimitException(
     val quotaExhausted: Boolean = false,
 ) : IOException(message)
 
+/** 上游临时故障（5xx，如 Cloudflare 524 origin timeout）：可退避重试，由网络重试路径统一处理。 */
+class TransientHttpException(
+    message: String,
+    val httpCode: Int,
+    val retryAfterSeconds: Long? = null,
+) : IOException(message)
+
 /** 可独立测试的 HTTP 层：OpenAI 兼容 chat/completions 请求与响应解析。 */
 internal class ChatApi(
     private val okHttpClient: OkHttpClient,
@@ -51,6 +58,9 @@ internal class ChatApi(
                 if (!response.isSuccessful) {
                     if (response.code == 429) {
                         throw ProviderClient.rateLimitException(response.code, body, response.header("Retry-After"))
+                    }
+                    if (response.code in 500..599) {
+                        throw ProviderClient.transientHttpException(response.code, body, response.header("Retry-After"))
                     }
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
                 }
@@ -137,6 +147,9 @@ internal class ChatApi(
                     val rawBody = response.body.string().take(512)
                     if (response.code == 429) {
                         throw ProviderClient.rateLimitException(response.code, rawBody, response.header("Retry-After"))
+                    }
+                    if (response.code in 500..599) {
+                        throw ProviderClient.transientHttpException(response.code, rawBody, response.header("Retry-After"))
                     }
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, rawBody))
                 }
@@ -1038,6 +1051,13 @@ class ProviderClient @Inject constructor(
                         .toEpochSecond() - System.currentTimeMillis() / 1000L
                 }.getOrNull()?.takeIf { it > 0 }?.coerceAtMost(300L)
             return LlmRateLimitException(message, retrySeconds, quotaExhausted)
+        }
+
+        /** 5xx 上游临时故障（如 Cloudflare 524 origin timeout）：包装为可退避重试的 IOException。 */
+        internal fun transientHttpException(code: Int, rawBody: String, retryAfter: String?): TransientHttpException {
+            val message = formatHttpErrorMessage(code, rawBody)
+            val retrySeconds = retryAfter?.trim()?.toLongOrNull()?.coerceIn(1L, 300L)
+            return TransientHttpException(message, code, retrySeconds)
         }
 
         internal const val READ_TIMEOUT_MS = 5 * 60 * 1000L

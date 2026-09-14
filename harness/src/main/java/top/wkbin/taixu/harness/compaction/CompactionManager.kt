@@ -1,5 +1,6 @@
 package top.wkbin.taixu.harness.compaction
 
+import android.util.Log
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -94,6 +95,11 @@ class CompactionManager @Inject constructor(
             payloadJson = json.encodeToString(CompactionPayload.serializer(), payload),
         )
         repository.appendToLane(sessionId, laneName, entry)
+        Log.d(
+            "ContextCompaction",
+            "压缩会话 $sessionId：折叠 ${collapsed.size} 条（累计 ${payload.cumulativeCompactedMessageCount}），" +
+                "保留 ${retained.size} 条，摘要 ${summary?.length ?: 0} 字符，压缩前估算 ${payload.estimatedTokensBefore} tokens",
+        )
         return CompactedContext(summary, retained)
     }
 

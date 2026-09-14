@@ -13,6 +13,14 @@ object ContextWindowPolicy {
     private const val TOOL_SCHEMA_RESERVE_TOKENS = 4_096
     private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
     private const val MIN_SYSTEM_PROMPT_TOKENS = 512
+    /**
+     * 历史消息占用的绝对安全上限（token）。无论模型标称窗口多高，
+     * 压缩触发线都不超过此值，避免 flash 级模型在超高 token 下参数生成崩塌。
+     */
+    const val SAFE_GENERATION_CAP = 96_000
+    private const val MIN_HISTORY_TOKENS = 8_000
+    /** 预算上限：防止标称窗口过大导致系统提示词完全不截断。 */
+    const val MAX_CONTEXT_BUDGET = 200_000
     private const val APPROX_CHARS_PER_TOKEN = 4
 
     /**
@@ -116,7 +124,7 @@ object ContextWindowPolicy {
 
     /** Session occupancy and compaction must share the same budget: current model, then the global fallback. */
     fun resolveBudget(profileContextTokens: Int?, defaultBudget: Int): Int =
-        (profileContextTokens ?: defaultBudget).coerceAtLeast(1)
+        (profileContextTokens ?: defaultBudget).coerceIn(1, MAX_CONTEXT_BUDGET)
 
     fun estimateReservedPromptTokens(
         pureChat: Boolean,
@@ -209,8 +217,11 @@ object ContextWindowPolicy {
         if (budget <= 0) {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
-        val limit = (budget * INPUT_BUDGET_FRACTION).toInt() -
+        val rawLimit = (budget * INPUT_BUDGET_FRACTION).toInt() -
             systemTokens - RESERVED_OUTPUT_TOKENS - TOOL_SCHEMA_RESERVE_TOKENS
+        // 安全上限：标称窗口再大，历史也最多占 SAFE_GENERATION_CAP，
+        // 防止超大 contextTokens 把折叠触发线撑到永不生效。
+        val limit = minOf(rawLimit, SAFE_GENERATION_CAP).coerceAtLeast(MIN_HISTORY_TOKENS)
         if (limit <= 0) {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
@@ -225,7 +236,10 @@ object ContextWindowPolicy {
                 is ToolCall -> estimateTokens(message.args.toString()) + estimateTokens(message.reasoning.orEmpty())
             }
             if (used + tokens > limit) {
-                val tokenBoundary = alignKeepFromIndex(messages, (index + 1).coerceIn(0, messages.lastIndex))
+                // 强制保留最近 2 条（即使某条自身超 limit），避免全折叠导致失忆
+                val candidate = (index + 1).coerceIn(0, messages.lastIndex)
+                    .coerceAtMost((messages.size - 2).coerceAtLeast(0))
+                val tokenBoundary = alignKeepFromIndex(messages, candidate)
                 return tokenBoundary
             }
             used += tokens
