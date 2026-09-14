@@ -1,7 +1,10 @@
 package top.wkbin.taixu.ui.git
 
+import top.wkbin.taixu.runtime.LinuxRuntime
+import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
 import java.io.IOException
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +18,7 @@ import org.eclipse.jgit.api.errors.InvalidRemoteException
 import org.eclipse.jgit.api.errors.RefAlreadyExistsException
 import org.eclipse.jgit.errors.RepositoryNotFoundException
 import org.eclipse.jgit.errors.TransportException
+import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.lib.BranchConfig
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.Ref
@@ -23,6 +27,8 @@ import org.eclipse.jgit.lib.RepositoryBuilder
 import org.eclipse.jgit.revwalk.RevCommit
 import org.eclipse.jgit.revwalk.RevSort
 import org.eclipse.jgit.revwalk.RevWalk
+import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import java.io.ByteArrayOutputStream
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.RemoteRefUpdate
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
@@ -45,11 +51,338 @@ sealed class GitOpResult {
 @Singleton
 class GitManager @Inject constructor(
     private val credentialsStore: GitCredentialsStore,
+    private val linuxRuntime: dagger.Lazy<LinuxRuntime>,
 ) {
 
     fun isRepository(hostPath: String): Boolean = runCatching {
         RepositoryBuilder().findGitDir(File(hostPath)).gitDir != null
     }.getOrDefault(false)
+
+    /** 是否浅克隆（.git/shallow 存在）：浅克隆只有 depth 条提交，提交树/远程分支不完整 */
+    fun isShallow(hostPath: String): Boolean = runCatching {
+        val git = openRepository(hostPath)
+        try {
+            File(git.repository.directory, "shallow").isFile
+        } finally {
+            git.close()
+        }
+    }.getOrDefault(false)
+
+    /**
+     * 补全浅克隆历史（git fetch --unshallow）。
+     * JGit 不支持 unshallow，走沙箱 CLI git（与「从 Git 导入」克隆同一执行通道）。
+     * [linuxPath] 是项目在沙箱内的路径（/workspace/...）。
+     */
+    suspend fun unshallow(linuxPath: String, onProgress: (String) -> Unit): GitOpResult =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val result = linuxRuntime.get().execute(
+                    ShellCommand(
+                        commandLine = "git -C ${shellEscape(linuxPath)} fetch --unshallow --progress origin",
+                        timeoutMs = 10 * 60_000L,
+                        onOutput = { line -> if (line.isNotBlank()) onProgress(line.trim()) },
+                    ),
+                )
+                if (result.isSuccess) {
+                    GitOpResult.Ok("已补全完整提交历史")
+                } else {
+                    val output = (result.stderr + "\n" + result.stdout).trim().takeLast(300)
+                    GitOpResult.Failed(
+                        "补全历史失败：" + output.ifBlank { "请确认沙箱已安装 Git 且网络可用（私有仓库需先在终端配置凭据）" },
+                    )
+                }
+            }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+        }
+
+    private fun shellEscape(value: String): String {
+        val trimmed = value.trim()
+        return if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() }) "\"$trimmed\"" else trimmed
+    }
+
+    // ------------------------------------------------------------------
+    // 提交（改动文件 → 暂存 → commit）
+    // ------------------------------------------------------------------
+
+    /** 单个文件的改动类型 */
+    enum class ChangeType { ADDED, MODIFIED, DELETED, UNTRACKED, CONFLICT }
+
+    data class GitFileChange(
+        val path: String,
+        val changeType: ChangeType,
+        val staged: Boolean,
+    )
+
+    /** 工作区全部改动（暂存区 + 未暂存 + 未跟踪），按路径排序 */
+    suspend fun listChanges(hostPath: String): List<GitFileChange> = withContext(Dispatchers.IO) {
+        withGit(hostPath) { git ->
+            val status = git.status().call()
+            val merged = mutableListOf<GitFileChange>()
+            fun put(paths: Set<String>, type: ChangeType, staged: Boolean) {
+                paths.forEach { filePath ->
+                    // 同一文件可能同时出现在多个集合（如 staged modified + 又有改动），
+                    // 后加的覆盖先加的：保持"最新状态"一条
+                    merged.removeAll { it.path == filePath }
+                    merged.add(GitFileChange(filePath, type, staged))
+                }
+            }
+            put(status.conflicting.toSet(), ChangeType.CONFLICT, staged = true)
+            put(status.added.toSet(), ChangeType.ADDED, staged = true)
+            put(status.changed.toSet(), ChangeType.MODIFIED, staged = true)
+            put(status.removed.toSet(), ChangeType.DELETED, staged = true)
+            put(status.modified.toSet(), ChangeType.MODIFIED, staged = false)
+            put(status.missing.toSet(), ChangeType.DELETED, staged = false)
+            put(status.untracked.toSet(), ChangeType.UNTRACKED, staged = false)
+            merged.sortedBy { it.path }
+        }
+    }
+
+    /** 暂存 / 取消暂存单个文件 */
+    suspend fun stageFile(hostPath: String, path: String, stage: Boolean): GitOpResult =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                withGit(hostPath) { git ->
+                    if (stage) {
+                        git.add().addFilepattern(path).call()
+                    } else {
+                        git.reset().addPath(path).call()
+                    }
+                    GitOpResult.Ok("")
+                }
+            }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+        }
+
+    /** 暂存全部改动（冲突文件除外，需手动解决） */
+    suspend fun stageAll(hostPath: String): GitOpResult = withContext(Dispatchers.IO) {
+        runCatching {
+            withGit(hostPath) { git ->
+                git.add().addFilepattern(".").call()
+                GitOpResult.Ok("")
+            }
+        }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+    }
+
+    /** 提交暂存区；message 为空则失败（不产生空信息提交） */
+    suspend fun commit(hostPath: String, message: String): GitOpResult = withContext(Dispatchers.IO) {
+        runCatching {
+            if (message.isBlank()) return@withContext GitOpResult.Failed("提交信息不能为空")
+            withGit(hostPath) { git ->
+                ensureUserIdent(git.repository)
+                val result = git.commit().setMessage(message.trim()).call()
+                GitOpResult.Ok("已提交 ${result.id.abbreviate(7).name()}：${result.shortMessage}")
+            }
+        }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+    }
+
+    /**
+     * 生成供 AI 拟写 commit message 的改动摘要：
+     * 文件类型清单 + 真实 unified diff 内容（单文件 1500 字符截断，总量 [maxTotalChars]）。
+     */
+    suspend fun buildDiffSummary(hostPath: String, maxTotalChars: Int = 8000): String =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val changes = listChanges(hostPath)
+                if (changes.isEmpty()) return@withContext "（无改动）"
+                val sb = StringBuilder()
+                sb.append("改动文件：\n")
+                changes.forEach { c ->
+                    sb.append("- [").append(
+                        when (c.changeType) {
+                            ChangeType.ADDED -> "新增"
+                            ChangeType.MODIFIED -> "修改"
+                            ChangeType.DELETED -> "删除"
+                            ChangeType.UNTRACKED -> "未跟踪"
+                            ChangeType.CONFLICT -> "冲突"
+                        },
+                    ).append("] ").append(c.path).append('\n')
+                }
+                sb.append("\n工作区 diff（含未暂存改动）：\n")
+                sb.append(formatWorkingDiff(hostPath, maxTotalChars))
+                sb.toString()
+            }.getOrDefault("（无法生成改动摘要）")
+        }
+
+    /** 工作区 unified diff 文本；单文件 1500 字符截断、总量 [maxTotalChars] 截断 */
+    private fun formatWorkingDiff(hostPath: String, maxTotalChars: Int): String {
+        withGit(hostPath) { git ->
+            val sb = StringBuilder()
+            val entries = runCatching { git.diff().call() }.getOrDefault(emptyList())
+            for (entry in entries) {
+                if (sb.length >= maxTotalChars) break
+                val entryOut = ByteArrayOutputStream()
+                DiffFormatter(entryOut).use { formatter ->
+                    formatter.setRepository(git.repository)
+                    formatter.setDetectRenames(true)
+                    runCatching { formatter.format(entry) }
+                }
+                var chunk = entryOut.toString("UTF-8")
+                if (chunk.length > 1500) chunk = chunk.take(1500) + "\n…（该文件 diff 已截断）\n"
+                sb.append(chunk)
+            }
+            return sb.toString().take(maxTotalChars)
+        }
+        return ""
+    }
+
+    /** 单个提交的完整信息（含 diff：与第一父提交比较；根提交与空树比较） */
+    suspend fun getCommitDetail(hostPath: String, hash: String): String = withContext(Dispatchers.IO) {
+        runCatching {
+            withGit(hostPath) { git ->
+                val repo = git.repository
+                val walk = RevWalk(repo)
+                val commit = walk.parseCommit(repo.resolve(hash) ?: return@withGit "提交不存在")
+                walk.use {
+                    val sb = StringBuilder()
+                    sb.append("commit ").append(commit.id.name()).append('\n')
+                    sb.append("Author: ").append(commit.authorIdent.name)
+                        .append(" <").append(commit.authorIdent.emailAddress).append(">\n")
+                    sb.append("Date:   ").append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(java.util.Date(commit.commitTime * 1000L))).append("\n\n")
+                    sb.append(commit.fullMessage.trim()).append("\n\n")
+                    sb.append(formatCommitDiff(walk, repo, commit))
+                    sb.toString().take(20_000)
+                }
+            }
+        }.getOrDefault("无法读取提交详情")
+    }
+
+    private fun formatCommitDiff(walk: RevWalk, repo: Repository, commit: RevCommit): String {
+        val parent = commit.parents.firstOrNull()
+        val parentIter = CanonicalTreeParser().apply {
+            val treeId = parent?.let { walk.parseCommit(it).tree } ?: emptyTreeId(repo)
+            repo.newObjectReader().use { reader -> reset(reader, treeId) }
+        }
+        val commitIter = CanonicalTreeParser().apply {
+            repo.newObjectReader().use { reader -> reset(reader, commit.tree) }
+        }
+        val out = ByteArrayOutputStream()
+        DiffFormatter(out).use { formatter ->
+            formatter.setRepository(repo)
+            formatter.setDetectRenames(true)
+            runCatching {
+                formatter.format(parentIter, commitIter)
+            }
+        }
+        return out.toString("UTF-8").take(16_000)
+    }
+
+    /** 空树 ObjectId：根提交与"无父"比较时用（Git 的固定空树哈希） */
+    private fun emptyTreeId(@Suppress("UNUSED_PARAMETER") repo: Repository): org.eclipse.jgit.lib.ObjectId =
+        org.eclipse.jgit.lib.ObjectId.fromString("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+
+    /** 取消全部暂存（index 重置到 HEAD，工作区文件不动） */
+    suspend fun unstageAll(hostPath: String): GitOpResult = withContext(Dispatchers.IO) {
+        runCatching {
+            withGit(hostPath) { git ->
+                git.reset().call()
+                GitOpResult.Ok("已取消全部暂存")
+            }
+        }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+    }
+
+    /**
+     * 丢弃单个文件的改动（危险操作）：
+     * - 已跟踪文件：checkout 恢复到 HEAD 版本；
+     * - 未跟踪文件：直接删除。
+     */
+    suspend fun discardFile(hostPath: String, path: String): GitOpResult = withContext(Dispatchers.IO) {
+        runCatching {
+            withGit(hostPath) { git ->
+                val changes = listChanges(hostPath)
+                val change = changes.firstOrNull { it.path == path }
+                    ?: return@withGit GitOpResult.Failed("文件不在改动列表：$path")
+                if (change.changeType == ChangeType.UNTRACKED) {
+                    val target = File(File(hostPath).canonicalFile, path)
+                    if (target.exists()) target.delete()
+                    GitOpResult.Ok("已删除未跟踪文件 $path")
+                } else {
+                    git.checkout().addPath(path).call()
+                    GitOpResult.Ok("已还原 $path")
+                }
+            }
+        }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+    }
+
+    /** 推送预览：当前分支领先远程的提交（哈希 + 主题），供确认对话框展示 */
+    suspend fun pushPreview(hostPath: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            withGit(hostPath) { git ->
+                val repo = git.repository
+                val headId = repo.resolve(Constants.HEAD) ?: return@withContext emptyList()
+                val branch = repo.branch ?: return@withContext emptyList()
+                val remoteId = BranchConfig(repo.config, branch).trackingBranch?.let { repo.resolve(it) }
+                if (remoteId == null) {
+                    // 无上游：整个分支都是待推送内容
+                    RevWalk(repo).use { walk ->
+                        walk.sort(RevSort.COMMIT_TIME_DESC)
+                        walk.markStart(walk.parseCommit(headId))
+                        walk.take(30).map { it.abbreviate(7).name() to it.shortMessage }
+                    }
+                } else {
+                    RevWalk(repo).use { walk ->
+                        walk.sort(RevSort.COMMIT_TIME_DESC)
+                        walk.markStart(walk.parseCommit(headId))
+                        walk.markUninteresting(walk.parseCommit(remoteId))
+                        walk.take(30).map { it.abbreviate(7).name() to it.shortMessage }
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    // ------------------------------------------------------------------
+    // 标签管理
+    // ------------------------------------------------------------------
+
+    data class GitTagInfo(val name: String, val commitId: String, val message: String?)
+
+    suspend fun listTags(hostPath: String): List<GitTagInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            withGit(hostPath) { git ->
+                val repo = git.repository
+                repo.refDatabase.getRefsByPrefix(Constants.R_TAGS)
+                    .map { ref ->
+                        val peeled = ref.peeledObjectId ?: ref.objectId
+                        val message = runCatching {
+                            RevWalk(repo).use { walk ->
+                                (walk.parseTag(peeled)?.let { tag ->
+                                    tag.fullMessage.take(200)
+                                })
+                            }
+                        }.getOrNull()
+                        GitTagInfo(
+                            name = ref.name.removePrefix(Constants.R_TAGS),
+                            commitId = peeled.name(),
+                            message = message,
+                        )
+                    }
+                    .sortedByDescending { it.name }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    /** 创建标签：[message] 非空为附注标签，否则轻量标签 */
+    suspend fun createTag(hostPath: String, name: String, message: String): GitOpResult =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (name.isBlank()) return@withContext GitOpResult.Failed("标签名不能为空")
+                withGit(hostPath) { git ->
+                    if (message.isBlank()) {
+                        git.tag().setName(name.trim()).call()
+                    } else {
+                        git.tag().setName(name.trim()).setMessage(message.trim()).call()
+                    }
+                    GitOpResult.Ok("已创建标签 ${name.trim()}")
+                }
+            }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+        }
+
+    suspend fun deleteTag(hostPath: String, name: String): GitOpResult = withContext(Dispatchers.IO) {
+        runCatching {
+            withGit(hostPath) { git ->
+                git.tagDelete().setTags(name).call()
+                GitOpResult.Ok("已删除标签 $name")
+            }
+        }.getOrElse { GitOpResult.Failed(friendlyError(it)) }
+    }
 
     private fun openRepository(hostPath: String): Git {
         val dir = File(hostPath)
@@ -172,7 +505,7 @@ class GitManager @Inject constructor(
     // 提交记录树（MGit 风格泳道图）
     // ------------------------------------------------------------------
 
-    suspend fun loadCommitGraph(hostPath: String, limit: Int = 500): List<GitCommitRow> =
+    suspend fun loadCommitGraph(hostPath: String, limit: Int = 300): List<GitCommitRow> =
         withContext(Dispatchers.IO) {
             withGit(hostPath) { git ->
                 val repo = git.repository

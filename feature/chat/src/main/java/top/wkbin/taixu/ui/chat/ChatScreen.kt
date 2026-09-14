@@ -104,6 +104,14 @@ private val AgentBottomBarHeight = 82.dp
 // 浏览器 URL 栏贴合版：与底栏总占位一致（8 + 64 + 8 = 80dp），零缝隙直接贴在底栏上方
 private val BrowserBottomBarHeight = 80.dp
 
+/** 会改动工作区文件的工具：这些工具执行后「仓库」入口按需高亮提示新改动 */
+private val REPOSITORY_HIGHLIGHT_TOOLS = setOf(
+    top.wkbin.taixu.harness.HarnessTool.WRITE,
+    top.wkbin.taixu.harness.HarnessTool.EDIT,
+    top.wkbin.taixu.harness.HarnessTool.BASE,
+    top.wkbin.taixu.harness.HarnessTool.PROCESS,
+)
+
 @Composable
 private fun chatBottomInsets(bottomBarHeight: Dp): WindowInsets {
     val bottomBarInsets = WindowInsets.navigationBars.add(WindowInsets(bottom = bottomBarHeight))
@@ -239,6 +247,15 @@ fun ChatScreen(
     val liveThinkingMessageId = lastAssistantMessageId
     val currentBranch = remember(branches) { branches.firstOrNull { it.isCurrent } }
 
+    // Agent 联动：上次访问「仓库」页之后 agent 又写过文件（write/edit/base/process），
+    // 则工作条「仓库」入口高亮，提示有新改动可提交；进入仓库页即熄灭。
+    var lastRepositoryVisitAt by rememberSaveable { mutableStateOf(0L) }
+    val repositoryHighlight = remember(messages, lastRepositoryVisitAt) {
+        messages.filterIsInstance<ToolCall>().any { call ->
+            call.createdAt > lastRepositoryVisitAt && call.tool in REPOSITORY_HIGHLIGHT_TOOLS
+        }
+    }
+
     val isImeVisible = WindowInsets.isImeVisible
     val coroutineScope = rememberCoroutineScope()
 
@@ -357,12 +374,14 @@ fun ChatScreen(
                     {
                         val project = activeWorkspaceProject
                         if (project != null) {
+                            lastRepositoryVisitAt = System.currentTimeMillis()
                             open(project.name)
                         } else {
                             android.widget.Toast.makeText(appContext, noProjectHint, android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
                 },
+                repositoryHighlight = repositoryHighlight,
             )
         }
 

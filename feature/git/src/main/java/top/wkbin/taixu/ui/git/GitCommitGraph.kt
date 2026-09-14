@@ -40,11 +40,14 @@ private val LANE_COLORS = listOf(
     Color(0xFFD81B60),
     Color(0xFF00897B),
     Color(0xFF8D6E63),
+    Color(0xFF5C6BC0),
+    Color(0xFFF06292),
+    Color(0xFF9575CD),
 )
 
-private const val MAX_LANES = 7
-private val LANE_WIDTH = 16.dp
-private val ROW_HEIGHT = 54.dp
+private const val MAX_LANES = 10
+private val LANE_WIDTH = 14.dp
+private val ROW_HEIGHT = 62.dp
 
 private fun laneColor(lane: Int): Color = LANE_COLORS[lane.coerceIn(0, LANE_COLORS.lastIndex)]
 
@@ -112,12 +115,17 @@ internal fun CommitGraphRow(row: GitCommitRow) {
                     ),
                     color = laneColor(row.lane),
                 )
-                row.refs.take(4).forEach { ref -> RefBadge(ref) }
+                // refs 最多 3 个，避免长徽章（origin/HEAD 等）把日期挤出换行
+                row.refs.take(3).forEach { ref -> RefBadge(ref) }
                 Spacer(Modifier.weight(1f))
+                // 日期单行不换行：之前未限制 maxLines 导致 "09-14" 被挤成 "09/-1/4" 三行
                 Text(
                     text = formatDate(row.commitTime),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    softWrap = false,
                 )
             }
             Text(

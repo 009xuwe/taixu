@@ -1,8 +1,12 @@
 package top.wkbin.taixu.ui.git
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -82,7 +86,18 @@ fun GitScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showCreateBranch by remember { mutableStateOf(false) }
     var showCredentials by remember { mutableStateOf(false) }
+    var showCreateTag by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<GitBranchInfo?>(null) }
+    var deleteTagTarget by remember { mutableStateOf<String?>(null) }
+    var discardTarget by remember { mutableStateOf<GitManager.GitFileChange?>(null) }
+    var pushPreview by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
+
+    // 从其他页面/后台返回时自动刷新（agent 可能改了工作区）。
+    // 轻量版：跳过提交树 RevWalk 全量遍历，避免返回时 IO/GC 压力拖累转场动画。
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.refreshLight()
+        onPauseOrDispose { }
+    }
 
     // 与 TerminalScreen/CodeEditorScreen 对齐：不透明背景，避免转场动画期间下层页面透出
     // （无背景时转场中下层 ChatScreen 仍全量渲染并可见，既视觉怪异又掉帧）
@@ -151,7 +166,17 @@ fun GitScreen(
                         operation = state.operation,
                         progress = state.progress,
                         onPull = viewModel::pull,
-                        onPush = viewModel::push,
+                        onPush = { viewModel.loadPushPreview { preview -> pushPreview = preview } },
+                    )
+                }
+
+                // 浅克隆提示：--depth 1 导入的仓库只有最近 1 个提交，需补全历史才能看到完整提交树
+                if (state.isShallow) {
+                    ShallowRepoCard(
+                        busy = state.busy,
+                        operation = state.operation,
+                        progress = state.progress,
+                        onUnshallow = viewModel::unshallow,
                     )
                 }
 
@@ -172,15 +197,62 @@ fun GitScreen(
                 }
 
                 TabRow(selectedTabIndex = selectedTab) {
+                    // 页签文案统一两字 + 数量角标，防止窄屏下换行（"提交记录"曾折成两行）
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        text = { Text(stringResource(R.string.fgit_tab_branches)) },
+                        text = {
+                            Text(
+                                if (state.overview == null || state.overview!!.localBranches.isEmpty()) {
+                                    stringResource(R.string.fgit_tab_branches)
+                                } else {
+                                    stringResource(R.string.fgit_tab_branches_count, state.overview!!.localBranches.size)
+                                },
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        },
                     )
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = { Text(stringResource(R.string.fgit_tab_commits)) },
+                        text = {
+                            Text(
+                                stringResource(R.string.fgit_tab_commits),
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        },
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = {
+                            Text(
+                                if (state.changes.isEmpty()) {
+                                    stringResource(R.string.fgit_tab_changes)
+                                } else {
+                                    stringResource(R.string.fgit_tab_changes_count, state.changes.size)
+                                },
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        },
+                    )
+                    Tab(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
+                        text = {
+                            Text(
+                                if (state.tags.isEmpty()) {
+                                    stringResource(R.string.fgit_tab_tags)
+                                } else {
+                                    stringResource(R.string.fgit_tab_tags_count, state.tags.size)
+                                },
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        },
                     )
                 }
 
@@ -191,7 +263,26 @@ fun GitScreen(
                         onDelete = { deleteTarget = it },
                         onCreate = { showCreateBranch = true },
                     )
-                    else -> CommitsTab(state)
+                    1 -> CommitsTab(
+                        state = state,
+                        onToggleDetail = viewModel::loadCommitDetail,
+                    )
+                    2 -> ChangesTab(
+                        state = state,
+                        onToggleStage = viewModel::stageFile,
+                        onStageAll = viewModel::stageAll,
+                        onUnstageAll = viewModel::unstageAll,
+                        onDiscard = { discardTarget = it },
+                        onCommit = viewModel::commit,
+                        onCommitAndPush = viewModel::commitAndPush,
+                        onGenerateMessage = { viewModel.generateCommitMessage() },
+                        onMessageChange = viewModel::updateCommitMessageDraft,
+                    )
+                    else -> TagsTab(
+                        state = state,
+                        onCreate = { showCreateTag = true },
+                        onDelete = { deleteTagTarget = it },
+                    )
                 }
             }
         }
@@ -233,6 +324,96 @@ fun GitScreen(
             },
             dismissButton = {
                 RuntimeTextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.fgit_cancel)) }
+            },
+        )
+    }
+
+    deleteTagTarget?.let { tagName ->
+        RuntimeAlertDialog(
+            onDismissRequest = { deleteTagTarget = null },
+            title = { Text(stringResource(R.string.fgit_delete_tag_title)) },
+            text = { Text(stringResource(R.string.fgit_delete_tag_confirm, tagName)) },
+            confirmButton = {
+                RuntimeTextButton(onClick = {
+                    viewModel.deleteTag(tagName)
+                    deleteTagTarget = null
+                }) { Text(stringResource(R.string.fgit_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                RuntimeTextButton(onClick = { deleteTagTarget = null }) { Text(stringResource(R.string.fgit_cancel)) }
+            },
+        )
+    }
+
+    discardTarget?.let { change ->
+        RuntimeAlertDialog(
+            onDismissRequest = { discardTarget = null },
+            title = { Text(stringResource(R.string.fgit_discard_title)) },
+            text = { Text(stringResource(R.string.fgit_discard_confirm, change.path)) },
+            confirmButton = {
+                RuntimeTextButton(onClick = {
+                    viewModel.discardFile(change)
+                    discardTarget = null
+                }) { Text(stringResource(R.string.fgit_discard), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                RuntimeTextButton(onClick = { discardTarget = null }) { Text(stringResource(R.string.fgit_cancel)) }
+            },
+        )
+    }
+
+    pushPreview?.let { preview ->
+        RuntimeAlertDialog(
+            onDismissRequest = { pushPreview = null },
+            title = { Text(stringResource(R.string.fgit_push_preview_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (preview.isEmpty()) {
+                        Text(stringResource(R.string.fgit_push_preview_empty), style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text(
+                            stringResource(R.string.fgit_push_preview_count, preview.size),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.verticalScroll(rememberScrollState()),
+                        ) {
+                            preview.forEach { (hash, subject) ->
+                                Text(
+                                    text = "$hash  $subject",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                RuntimeTextButton(
+                    onClick = {
+                        pushPreview = null
+                        viewModel.push()
+                    },
+                    enabled = preview.isNotEmpty(),
+                ) { Text(stringResource(R.string.fgit_push_confirm)) }
+            },
+            dismissButton = {
+                RuntimeTextButton(onClick = { pushPreview = null }) { Text(stringResource(R.string.fgit_cancel)) }
+            },
+        )
+    }
+
+    if (showCreateTag) {
+        CreateTagDialog(
+            onDismiss = { showCreateTag = false },
+            onCreate = { name, message ->
+                showCreateTag = false
+                viewModel.createTag(name, message)
             },
         )
     }
@@ -417,6 +598,78 @@ private fun ActionChip(
 }
 
 // ----------------------------------------------------------------------
+// 浅克隆提示卡：--depth 1 导入的仓库只有 1 个提交，补全历史后才能看到完整树
+// ----------------------------------------------------------------------
+
+@Composable
+private fun ShallowRepoCard(
+    busy: Boolean,
+    operation: GitOperation?,
+    progress: GitProgress?,
+    onUnshallow: () -> Unit,
+) {
+    val inProgress = busy && operation == GitOperation.UNSHALLOW
+    RuntimeCard(
+        containerColor = Color(0xFFB25E00).copy(alpha = 0.10f),
+        borderColor = Color(0xFFB25E00).copy(alpha = 0.4f),
+        contentPadding = PaddingValues(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RuntimeIcon(RuntimeIconName.Info, Modifier.size(16.dp), Color(0xFFB25E00))
+                Text(
+                    text = stringResource(R.string.fgit_shallow_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFB25E00),
+                    modifier = Modifier.weight(1f),
+                )
+                Surface(
+                    onClick = onUnshallow,
+                    enabled = !busy,
+                    color = if (busy) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFB25E00).copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(
+                        text = stringResource(
+                            if (inProgress) R.string.fgit_unshallow_running else R.string.fgit_unshallow,
+                        ),
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (busy) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFB25E00),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
+            }
+            Text(
+                text = stringResource(R.string.fgit_shallow_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (inProgress) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    progress?.let { p ->
+                        Text(
+                            text = p.title,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            color = Color(0xFFB25E00),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
 // 分支页签
 // ----------------------------------------------------------------------
 
@@ -566,7 +819,10 @@ private fun BranchRow(
 // ----------------------------------------------------------------------
 
 @Composable
-private fun CommitsTab(state: GitUiState) {
+private fun CommitsTab(
+    state: GitUiState,
+    onToggleDetail: (String) -> Unit,
+) {
     if (state.commitsLoading && state.commits.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             RuntimeCircularProgressIndicator(Modifier.size(24.dp))
@@ -584,7 +840,126 @@ private fun CommitsTab(state: GitUiState) {
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 32.dp),
     ) {
         items(state.commits, key = { it.hash }) { row ->
-            CommitGraphRow(row)
+            var expanded by rememberSaveable(row.hash) { mutableStateOf(false) }
+            Column {
+                // 点击行加载并展开提交详情（完整信息 + diff）
+                RuntimeCard(
+                    containerColor = Color.Transparent,
+                    contentPadding = PaddingValues(0.dp),
+                    onClick = {
+                        expanded = !expanded
+                        if (expanded) onToggleDetail(row.hash)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    CommitGraphRow(row)
+                }
+                androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+                    val detail = state.commitDetails[row.hash]
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 4.dp, bottom = 6.dp),
+                    ) {
+                        Text(
+                            text = detail ?: stringResource(R.string.fgit_detail_loading),
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, lineHeight = 16.sp),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .padding(10.dp)
+                                .horizontalScroll(rememberScrollState()),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// 标签页签
+// ----------------------------------------------------------------------
+
+@Composable
+private fun TagsTab(
+    state: GitUiState,
+    onCreate: () -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.fgit_tags_title, state.tags.size),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                Surface(
+                    onClick = onCreate,
+                    enabled = !state.busy,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(13.dp), MaterialTheme.colorScheme.primary)
+                        Text(
+                            stringResource(R.string.fgit_new_tag),
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
+        if (state.tags.isEmpty()) {
+            item { EmptyHint(stringResource(R.string.fgit_no_tags)) }
+        } else {
+            items(state.tags, key = { it.name }) { tag ->
+                RuntimeCard(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    contentPadding = PaddingValues(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.GitCommit, Modifier.size(17.dp), Color(0xFF2E9E5B))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                tag.name,
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                tag.commitId.take(7) + (tag.message?.let { " · ${it.lineSequence().firstOrNull().orEmpty().take(40)}" } ?: ""),
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        RuntimeIconButton(onClick = { onDelete(tag.name) }, modifier = Modifier.size(30.dp)) {
+                            RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -597,6 +972,260 @@ private fun EmptyHint(text: String) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// ----------------------------------------------------------------------
+// 改动页签：选文件暂存 → AI/手写 message → 提交
+// ----------------------------------------------------------------------
+
+@Composable
+private fun ChangesTab(
+    state: GitUiState,
+    onToggleStage: (GitManager.GitFileChange) -> Unit,
+    onStageAll: () -> Unit,
+    onUnstageAll: () -> Unit,
+    onDiscard: (GitManager.GitFileChange) -> Unit,
+    onCommit: (String) -> Unit,
+    onCommitAndPush: (String) -> Unit,
+    onGenerateMessage: () -> Unit,
+    onMessageChange: (String) -> Unit,
+) {
+    // message 草稿来自 ViewModel：返回聊天页后 AI 生成的结果不丢
+    val message = state.commitMessageDraft
+    val stagedCount = state.changes.count { it.staged }
+    val canCommit = !state.busy && stagedCount > 0 && message.isNotBlank()
+
+    Column(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (state.changes.isEmpty()) {
+                item {
+                    EmptyHint(stringResource(R.string.fgit_no_changes))
+                }
+            } else {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.fgit_staged_count, stagedCount, state.changes.size),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (stagedCount < state.changes.size) {
+                            Surface(
+                                onClick = onStageAll,
+                                enabled = !state.busy,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.fgit_stage_all),
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                )
+                            }
+                        }
+                        if (stagedCount > 0) {
+                            Surface(
+                                onClick = onUnstageAll,
+                                enabled = !state.busy,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.fgit_unstage_all),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                items(state.changes, key = { it.path }) { change ->
+                    ChangeRow(
+                        change = change,
+                        enabled = !state.busy,
+                        onToggle = { onToggleStage(change) },
+                        onDiscard = { onDiscard(change) },
+                    )
+                }
+            }
+        }
+
+        // 底部提交栏：message 输入 + AI 生成 + 提交按钮
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = message,
+                        onValueChange = onMessageChange,
+                        placeholder = { Text(stringResource(R.string.fgit_message_placeholder), style = MaterialTheme.typography.bodySmall) },
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        minLines = 1,
+                        maxLines = 4,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (state.operation == GitOperation.AI_MESSAGE) {
+                        RuntimeCircularProgressIndicator(Modifier.size(22.dp))
+                    } else {
+                        Surface(
+                            onClick = onGenerateMessage,
+                            enabled = !state.busy && state.changes.isNotEmpty(),
+                            color = Color(0xFF7C4DFF).copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                RuntimeIcon(RuntimeIconName.Sparkles, Modifier.size(15.dp), Color(0xFF7C4DFF))
+                                Text(
+                                    stringResource(R.string.fgit_ai_message),
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = Color(0xFF7C4DFF),
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        onClick = { onCommit(message) },
+                        enabled = canCommit,
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (canCommit) Color(0xFF2E9E5B).copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            text = if (state.operation == GitOperation.COMMIT) {
+                                stringResource(R.string.fgit_committing)
+                            } else {
+                                stringResource(
+                                    if (stagedCount > 0) R.string.fgit_commit_n else R.string.fgit_commit_no_staged,
+                                    stagedCount,
+                                )
+                            },
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (canCommit) Color(0xFF2E9E5B) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 10.dp),
+                        )
+                    }
+                    // 提交并推送：commit 成功后立即 push（省一次点击）
+                    Surface(
+                        onClick = { onCommitAndPush(message) },
+                        enabled = canCommit,
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (canCommit) Color(0xFF3F8FFF).copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.ArrowUp, Modifier.size(15.dp), if (canCommit) Color(0xFF3F8FFF) else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                stringResource(R.string.fgit_commit_push),
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = if (canCommit) Color(0xFF3F8FFF) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChangeRow(
+    change: GitManager.GitFileChange,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    onDiscard: () -> Unit,
+) {
+    val (typeLabel, typeTint) = when (change.changeType) {
+        GitManager.ChangeType.ADDED -> "新增" to Color(0xFF2E9E5B)
+        GitManager.ChangeType.MODIFIED -> "修改" to Color(0xFF3F8FFF)
+        GitManager.ChangeType.DELETED -> "删除" to MaterialTheme.colorScheme.error
+        GitManager.ChangeType.UNTRACKED -> "未跟踪" to Color(0xFFB25E00)
+        GitManager.ChangeType.CONFLICT -> "冲突" to MaterialTheme.colorScheme.error
+    }
+    RuntimeCard(
+        containerColor = if (change.staged) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = if (change.staged) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.Transparent,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+        onClick = if (enabled) onToggle else null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // 勾选框：已暂存 ✓，未暂存空框
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .background(
+                        if (change.staged) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        RoundedCornerShape(4.dp),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (change.staged) {
+                    RuntimeIcon(RuntimeIconName.Check, Modifier.size(12.dp), MaterialTheme.colorScheme.onPrimary)
+                } else {
+                    Box(
+                        Modifier
+                            .size(17.dp)
+                            .background(Color.Transparent, RoundedCornerShape(4.dp))
+                            .border(1.2.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp)),
+                    )
+                }
+            }
+            MiniBadge(typeLabel, typeTint)
+            Text(
+                text = change.path,
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            // 丢弃：未跟踪=删除文件，已跟踪=还原到 HEAD（危险操作，外层有确认对话框）
+            if (enabled) {
+                RuntimeIconButton(onClick = onDiscard, modifier = Modifier.size(30.dp)) {
+                    RuntimeIcon(RuntimeIconName.Reverse, Modifier.size(15.dp), MaterialTheme.colorScheme.error)
+                }
+            }
+            if (change.staged) {
+                Text(
+                    stringResource(R.string.fgit_staged),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
     }
 }
 
@@ -638,6 +1267,50 @@ private fun CreateBranchDialog(
             RuntimeTextButton(
                 onClick = { if (name.isNotBlank()) onCreate(name) },
             ) { Text(stringResource(R.string.fgit_create)) }
+        },
+        dismissButton = {
+            RuntimeTextButton(onClick = onDismiss) { Text(stringResource(R.string.fgit_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun CreateTagDialog(
+    onDismiss: () -> Unit,
+    onCreate: (name: String, message: String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.fgit_new_tag)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(R.string.fgit_create_tag_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.trim().take(64) },
+                    label = { Text(stringResource(R.string.fgit_tag_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = message,
+                    onValueChange = { message = it.take(500) },
+                    label = { Text(stringResource(R.string.fgit_tag_message)) },
+                    placeholder = { Text(stringResource(R.string.fgit_tag_message_placeholder)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            RuntimeTextButton(onClick = { if (name.isNotBlank()) onCreate(name, message) }) {
+                Text(stringResource(R.string.fgit_create))
+            }
         },
         dismissButton = {
             RuntimeTextButton(onClick = onDismiss) { Text(stringResource(R.string.fgit_cancel)) }

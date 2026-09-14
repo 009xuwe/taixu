@@ -3,7 +3,8 @@
     <string name="fgit_title">分支管理</string>
     <string name="fgit_loading">正在读取仓库…</string>
     <string name="fgit_tab_branches">分支</string>
-    <string name="fgit_tab_commits">提交记录</string>
+    <string name="fgit_tab_branches_count">分支 %1$d</string>
+    <string name="fgit_tab_commits">提交</string>
 
     <string name="fgit_not_repo_title">当前工作区不是 Git 仓库</string>
     <string name="fgit_not_repo_hint">让智能体执行 git init / git clone，或在创建项目时选择「从 Git 导入」，之后即可在这里管理分支与提交</string>
@@ -29,6 +30,45 @@
     <string name="fgit_cancel">取消</string>
 
     <string name="fgit_no_commits">暂无提交记录</string>
+
+    <string name="fgit_shallow_title">浅克隆仓库</string>
+    <string name="fgit_shallow_hint">当前项目按 --depth 1 导入，本地只有最近 1 个提交。点击「补全完整历史」从远程拉取全部提交记录与分支（需沙箱已安装 Git）。</string>
+    <string name="fgit_unshallow">补全完整历史</string>
+    <string name="fgit_unshallow_running">补全中…</string>
+
+    <string name="fgit_tab_changes">改动</string>
+    <string name="fgit_tab_changes_count">改动 %1$d</string>
+    <string name="fgit_no_changes">工作区很干净，没有待提交的改动</string>
+    <string name="fgit_staged_count">已暂存 %1$d / %2$d</string>
+    <string name="fgit_stage_all">全部暂存</string>
+    <string name="fgit_staged">已暂存</string>
+    <string name="fgit_message_placeholder">提交信息…</string>
+    <string name="fgit_ai_message">AI 生成</string>
+    <string name="fgit_commit_n">提交（%1$d 个文件）</string>
+    <string name="fgit_commit_no_staged">提交（请先选择文件）</string>
+    <string name="fgit_committing">提交中…</string>
+    <string name="fgit_commit_push">提交并推送</string>
+    <string name="fgit_unstage_all">取消暂存</string>
+    <string name="fgit_discard_title">丢弃改动</string>
+    <string name="fgit_discard_confirm">确定丢弃 %1$s 的改动吗？未跟踪文件将被删除，已跟踪文件将还原到最近提交，不可恢复。</string>
+    <string name="fgit_discard">丢弃</string>
+    <string name="fgit_detail_loading">正在加载提交详情…</string>
+    <string name="fgit_push_preview_title">推送预览</string>
+    <string name="fgit_push_preview_count">将推送以下 %1$d 个提交：</string>
+    <string name="fgit_push_preview_empty">没有待推送的提交（或本地与远程已同步）。</string>
+    <string name="fgit_push_confirm">确认推送</string>
+
+    <string name="fgit_tab_tags">标签</string>
+    <string name="fgit_tab_tags_count">标签 %1$d</string>
+    <string name="fgit_tags_title">标签（%1$d）</string>
+    <string name="fgit_new_tag">新建标签</string>
+    <string name="fgit_no_tags">暂无标签</string>
+    <string name="fgit_create_tag_hint">在当前提交上创建标签；填写说明则为附注标签，留空为轻量标签</string>
+    <string name="fgit_tag_name">标签名</string>
+    <string name="fgit_tag_message">说明（可选）</string>
+    <string name="fgit_tag_message_placeholder">如：v1.0.0 发布</string>
+    <string name="fgit_delete_tag_title">删除标签</string>
+    <string name="fgit_delete_tag_confirm">确定删除标签 %1$s 吗？</string>
 
     <string name="fgit_credentials_title">Git 远程凭据</string>
     <string name="fgit_credentials_hint">HTTPS 推送/拉取需要用户名与 Personal Access Token（GitHub/GitLab/码云在设置中生成）。Token 使用系统密钥库加密存储。</string>

@@ -26,6 +26,8 @@ dependencies {
     implementation(project(":core:common"))
     implementation(project(":core:security"))
     implementation(project(":runtime"))
+    // ProviderClient：AI 生成 commit message 的单次非会话调用
+    implementation(project(":harness"))
     implementation(project(":feature:components"))
     implementation(project(":feature:theme"))
     implementation(libs.androidx.activity.compose)
