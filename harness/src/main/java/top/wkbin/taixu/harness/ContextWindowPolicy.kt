@@ -124,7 +124,7 @@ object ContextWindowPolicy {
 
     /** Session occupancy and compaction must share the same budget: current model, then the global fallback. */
     fun resolveBudget(profileContextTokens: Int?, defaultBudget: Int): Int =
-        (profileContextTokens ?: defaultBudget).coerceIn(1, MAX_CONTEXT_BUDGET)
+        (profileContextTokens ?: defaultBudget).coerceAtLeast(1)
 
     fun estimateReservedPromptTokens(
         pureChat: Boolean,

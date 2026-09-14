@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import top.wkbin.taixu.ui.chat.safeScrollToLastItem
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -228,7 +229,7 @@ private fun FloatingChatPanel(
 
     LaunchedEffect(displayMessages.size, running) {
         if (displayMessages.isNotEmpty()) {
-            listState.animateScrollToItem(displayMessages.size - 1)
+            listState.safeScrollToLastItem(animated = true)
         }
     }
 

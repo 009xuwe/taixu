@@ -43,7 +43,8 @@ class ApiContextAssembler @Inject constructor(
         thinkingMode: Boolean = false,
     ): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
-        // Keep resolveBudget (model → fallback) and apply remote MAX_CONTEXT_BUDGET cap.
+        // resolveBudget keeps the real model/fallback window for UI + switcher;
+        // MAX_CONTEXT_BUDGET only clamps the assembly path (same as upstream PR).
         val budgetTokens = ContextWindowPolicy.resolveBudget(
             model.contextTokens,
             runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000),

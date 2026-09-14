@@ -29,6 +29,7 @@ import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.model.McpTransportType
 import top.wkbin.taixu.harness.events.AgentEventLogger
+import top.wkbin.taixu.runtime.LinuxRuntime
 import kotlin.time.Duration.Companion.milliseconds
 
 /** Thin MCP registry coordinator; transports own protocol and process details. */
@@ -38,6 +39,7 @@ class McpManager @Inject constructor(
     private val stdio: McpStdioTransport,
     private val http: McpHttpTransport,
     private val commandBuilder: McpCommandBuilder,
+    private val linuxRuntime: LinuxRuntime,
     private val logger: AppLogger,
     private val agentEventLogger: AgentEventLogger,
 ) {
@@ -89,9 +91,18 @@ class McpManager @Inject constructor(
         val enabledServers = servers.filter { it.isEnabled }
         if (enabledServers.isEmpty()) return@withContext emptyList()
 
+        val needsLinux = enabledServers.any { it.transportType == McpTransportType.STDIO }
+        val linuxReady = !needsLinux || awaitLinuxRuntimeReady(linuxRuntime.state)
+
         coroutineScope {
             enabledServers.map { server ->
                 async {
+                    if (server.transportType == McpTransportType.STDIO && !linuxReady) {
+                        lastErrors[server.id] = RUNTIME_NOT_READY_MSG
+                        state(server.id, McpConnectionState.OFFLINE)
+                        logger.w("MCP[${server.name}] 工具发现推迟：Linux runtime 尚未就绪，下一轮对话将重试")
+                        return@async emptyList()
+                    }
                     val fingerprint = fingerprint(server)
                     cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools
                         ?: discoveryMutexes.getOrPut(server.id) { Mutex() }.withLock {
@@ -192,5 +203,7 @@ class McpManager @Inject constructor(
 
         /** 工具发现无会话上下文，agent 事件日志用占位 sessionId。 */
         const val DISCOVERY_LOG_SESSION = "-"
+
+        const val RUNTIME_NOT_READY_MSG = "Linux runtime is not ready. Call initialize() first."
     }
 }

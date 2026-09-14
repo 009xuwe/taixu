@@ -7,9 +7,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
-import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -23,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -32,11 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.minimumInteractiveComponentSize
 import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.MaterialTheme
@@ -48,78 +43,43 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.termux.view.TerminalView
+import kotlinx.coroutines.delay
 import top.wkbin.taixu.feature.terminal.R
+import top.wkbin.taixu.runtime.terminal.TerminalSessionHandle
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SpotlightGuideOverlay
 import top.wkbin.taixu.ui.components.rememberSpotlightAnchor
 import top.wkbin.taixu.ui.components.spotlightAnchor
-import top.wkbin.taixu.runtime.terminal.TerminalSessionHandle
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 
 private const val MIN_TERMINAL_FONT_SIZE_SP = 10f
 private const val MAX_TERMINAL_FONT_SIZE_SP = 24f
-/** Keeps IME Send/Enter enabled when the proxy field looks empty. */
-private const val IME_KEEPALIVE = "\u200B"
-
-/**
- * Returns text committed by the IME since [previous].
- * Keeps a zero-width keepalive so empty Enter still fires ImeAction.Send.
- */
-private fun terminalInputDelta(previous: TextFieldValue, current: TextFieldValue): String {
-    if (current.text.isEmpty() || current.text == IME_KEEPALIVE) return ""
-
-    val committedPrefix = previous.composition?.let { composition ->
-        previous.text.substring(0, composition.start.coerceIn(0, previous.text.length))
-    } ?: previous.text
-
-    val normalizedPrefix = committedPrefix.removePrefix(IME_KEEPALIVE)
-    val normalizedCurrent = current.text.removePrefix(IME_KEEPALIVE)
-
-    return if (normalizedCurrent.startsWith(normalizedPrefix)) {
-        normalizedCurrent.removePrefix(normalizedPrefix)
-    } else if (current.text.startsWith(committedPrefix)) {
-        current.text.removePrefix(committedPrefix).replace(IME_KEEPALIVE, "")
-    } else {
-        normalizedCurrent
-    }
-}
-
-private fun keepaliveField(): TextFieldValue =
-    TextFieldValue(IME_KEEPALIVE, TextRange(IME_KEEPALIVE.length))
 
 /**
  * 太墟 · 矩阵控制台 — Termux TerminalView + PRoot argv via TerminalSession JNI.
+ * Input is owned by TerminalView (same as Android-PRoot-Engine TerminalBridge).
  */
 @Composable
 fun TerminalScreen(
@@ -162,24 +122,14 @@ fun TerminalScreen(
     }
     // Attach before AndroidView layout so the first PTY callbacks aren't dropped.
     bridge.attachToRouter()
-    val imeFocusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
-    var imeValue by remember { mutableStateOf(keepaliveField()) }
 
-    DisposableEffect(bridge, keyboardController) {
+    DisposableEffect(bridge) {
         bridge.onFontScale = { increase ->
             fontSizeSp = (fontSizeSp + if (increase) 1f else -1f)
                 .coerceIn(MIN_TERMINAL_FONT_SIZE_SP, MAX_TERMINAL_FONT_SIZE_SP)
             viewModel.setTerminalFontSize(fontSizeSp.roundToInt())
         }
-        bridge.onRequestIme = {
-            runCatching {
-                imeFocusRequester.requestFocus()
-                keyboardController?.show()
-            }
-        }
         onDispose {
-            bridge.onRequestIme = null
             bridge.onFontScale = null
             bridge.detachFromRouter()
         }
@@ -358,148 +308,119 @@ fun TerminalScreen(
                                 else -> {
                                     val session = activeHandle.termuxSession
                                     val fontPx = with(density) { fontSizeSp.sp.toPx().roundToInt().coerceAtLeast(8) }
-                                    var appliedFontPx by remember { mutableStateOf(0) }
-                                    AndroidView(
-                                        factory = { ctx ->
-                                            // Host FrameLayout: Termux XML parents use a ViewGroup so
-                                            // TerminalView can take descendant focus and get real size.
-                                            FrameLayout(ctx).apply {
-                                                descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
-                                                isFocusable = false
-                                                isFocusableInTouchMode = false
-                                                val view = TerminalView(ctx, null).apply {
-                                                    isFocusable = true
-                                                    isFocusableInTouchMode = true
-                                                    isClickable = true
+                                    // key(session): recreate view only on session switch — avoids
+                                    // Compose update{} calling updateSize every frame (that resets mTopRow).
+                                    key(activeHandle.id) {
+                                        var appliedFontPx by remember { mutableStateOf(fontPx) }
+                                        AndroidView(
+                                            factory = { ctx ->
+                                                TaiXuTerminalHost(ctx).also { host ->
+                                                    // Client before attachSession (updateSize → onEmulatorSet).
+                                                    bridge.terminalView = host.terminalView
+                                                    host.terminalView.setTextSize(fontPx)
+                                                    appliedFontPx = fontPx
+                                                    host.terminalView.attachSession(session)
                                                 }
-                                                // Client must be set BEFORE attachSession/updateSize
-                                                // (updateSize calls mClient.onEmulatorSet).
-                                                bridge.terminalView = view
-                                                view.setTextSize(fontPx)
-                                                appliedFontPx = fontPx
-                                                view.attachSession(session)
-                                                view.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-                                                    val tv = v as? TerminalView ?: return@addOnLayoutChangeListener
-                                                    if (tv.width > 0 && tv.height > 0) {
-                                                        tv.updateSize()
-                                                    }
-                                                }
-                                                addView(
-                                                    view,
-                                                    FrameLayout.LayoutParams(
-                                                        ViewGroup.LayoutParams.MATCH_PARENT,
-                                                        ViewGroup.LayoutParams.MATCH_PARENT,
-                                                    ),
-                                                )
-                                                // After the host is attached, force a size pass once
-                                                // measured — zero-height parents used to leave mEmulator null.
-                                                post {
-                                                    try {
-                                                        if (view.width > 0 && view.height > 0) {
-                                                            view.updateSize()
-                                                            android.util.Log.i(
-                                                                "TaiXuTerminal",
-                                                                "pty ready pid=${session.pid} " +
-                                                                    "size=${view.width}x${view.height} " +
-                                                                    "emulator=${session.emulator != null}",
-                                                            )
-                                                        } else {
-                                                            android.util.Log.w(
-                                                                "TaiXuTerminal",
-                                                                "TerminalView still 0-sized after layout " +
-                                                                    "host=${width}x${height}",
-                                                            )
-                                                        }
-                                                    } catch (t: Throwable) {
-                                                        android.util.Log.e(
-                                                            "TaiXuTerminal",
-                                                            "PTY updateSize failed",
-                                                            t,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        update = { host ->
-                                            val view = host.getChildAt(0) as? TerminalView ?: return@AndroidView
-                                            bridge.terminalView = view
-                                            view.isFocusable = true
-                                            view.isFocusableInTouchMode = true
-                                            if (appliedFontPx != fontPx) {
-                                                view.setTextSize(fontPx)
-                                                appliedFontPx = fontPx
-                                            }
-                                            if (view.currentSession !== session) {
-                                                view.attachSession(session)
-                                            }
-                                            // Re-sync if attach happened while height was still 0.
-                                            if (view.width > 0 && view.height > 0) {
-                                                view.updateSize()
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                    // Compose IME proxy: soft keyboards under Compose often never reach
-                                    // TerminalView's InputConnection; forward committed text to the PTY.
-                                    BasicTextField(
-                                        value = imeValue,
-                                        onValueChange = { next ->
-                                            val previous = imeValue
-                                            val delta = terminalInputDelta(previous, next)
-                                            if (delta.isNotEmpty()) {
-                                                bridge.sendString(delta)
-                                            }
-                                            imeValue = when {
-                                                next.composition != null -> next
-                                                next.text.isEmpty() || next.text == IME_KEEPALIVE -> keepaliveField()
-                                                else -> next
-                                            }
-                                        },
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                                        keyboardActions = KeyboardActions(
-                                            onSend = {
-                                                bridge.sendString("\r")
-                                                imeValue = keepaliveField()
                                             },
-                                        ),
-                                        cursorBrush = SolidColor(Color.Transparent),
-                                        modifier = Modifier
-                                            .align(Alignment.BottomStart)
-                                            .size(1.dp)
-                                            .alpha(0.01f)
-                                            .focusRequester(imeFocusRequester),
-                                    )
+                                            update = { host ->
+                                                val view = host.terminalView
+                                                if (bridge.terminalView !== view) {
+                                                    bridge.terminalView = view
+                                                }
+                                                if (appliedFontPx != fontPx) {
+                                                    view.setTextSize(fontPx)
+                                                    appliedFontPx = fontPx
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                // PC-standard two-row ExtraKeys (Android-PRoot-Engine):
+                // Row1: ESC TAB / - ~ HOME ▲ END
+                // Row2: CTRL ALT | ^C ^D ◀ ▼ ▶
+                var ctrlActive by remember { mutableStateOf(false) }
+                var altActive by remember { mutableStateOf(false) }
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
-                    ExtraKey("ESC", isAccent = true, hapticsEnabled = hapticsEnabled) { bridge.sendString("\u001B") }
-                    ExtraKey("Tab", isAccent = true, hapticsEnabled = hapticsEnabled) { bridge.sendString("\u0009") }
-                    ExtraKey("Ctrl", isAccent = true, hapticsEnabled = hapticsEnabled) { bridge.toggleControlKey() }
-                    ExtraKey("Alt", hapticsEnabled = hapticsEnabled) { bridge.toggleAltKey() }
-                    ExtraKey("Ctrl+C", isDanger = true, hapticsEnabled = hapticsEnabled) { bridge.sendString("\u0003") }
-                    ExtraKey("Ctrl+D", hapticsEnabled = hapticsEnabled) { bridge.sendString("\u0004") }
-                    ExtraKey("Ctrl+Z", hapticsEnabled = hapticsEnabled) { bridge.sendString("\u001A") }
-                    ExtraKey("↑", hapticsEnabled = hapticsEnabled) { bridge.sendString("\u001B[A") }
-                    ExtraKey("↓", hapticsEnabled = hapticsEnabled) { bridge.sendString("\u001B[B") }
-                    ExtraKey("←", hapticsEnabled = hapticsEnabled) { bridge.sendString("\u001B[D") }
-                    ExtraKey("→", hapticsEnabled = hapticsEnabled) { bridge.sendString("\u001B[C") }
-                    ExtraKey("|", hapticsEnabled = hapticsEnabled) { bridge.sendString("|") }
-                    ExtraKey("/", hapticsEnabled = hapticsEnabled) { bridge.sendString("/") }
-                    ExtraKey("-", hapticsEnabled = hapticsEnabled) { bridge.sendString("-") }
-                    ExtraKey("~", hapticsEnabled = hapticsEnabled) { bridge.sendString("~") }
-                    ExtraKey("$", hapticsEnabled = hapticsEnabled) { bridge.sendString("$") }
-                    ExtraKey("&&", hapticsEnabled = hapticsEnabled) { bridge.sendString(" && ") }
-                    ExtraKey("cd ..", hapticsEnabled = hapticsEnabled) { bridge.sendString("cd ..\r") }
-                    ExtraKey("Clear", hapticsEnabled = hapticsEnabled) { bridge.sendString("clear\r") }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        ExtraKey("ESC", Modifier.weight(1f), isAccent = true, hapticsEnabled = hapticsEnabled) {
+                            bridge.sendEscape()
+                        }
+                        ExtraKey("TAB", Modifier.weight(1f), isAccent = true, hapticsEnabled = hapticsEnabled) {
+                            bridge.sendTab()
+                        }
+                        ExtraKey("/", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendString("/")
+                        }
+                        ExtraKey("-", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendString("-")
+                        }
+                        ExtraKey("~", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendString("~")
+                        }
+                        ExtraKey("HOME", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendHome()
+                        }
+                        ExtraKey("▲", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendArrowUp()
+                        }
+                        ExtraKey("END", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendEnd()
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        ExtraKey(
+                            "CTRL",
+                            Modifier.weight(1f),
+                            isAccent = true,
+                            isActive = ctrlActive,
+                            hapticsEnabled = hapticsEnabled,
+                        ) {
+                            bridge.toggleControlKey()
+                            ctrlActive = bridge.isControlKeyActive()
+                        }
+                        ExtraKey(
+                            "ALT",
+                            Modifier.weight(1f),
+                            isActive = altActive,
+                            hapticsEnabled = hapticsEnabled,
+                        ) {
+                            bridge.toggleAltKey()
+                            altActive = bridge.isAltKeyActive()
+                        }
+                        ExtraKey("|", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendString("|")
+                        }
+                        ExtraKey("^C", Modifier.weight(1f), isDanger = true, hapticsEnabled = hapticsEnabled) {
+                            bridge.sendSigInt()
+                        }
+                        ExtraKey("^D", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendEof()
+                        }
+                        ExtraKey("◀", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendArrowLeft()
+                        }
+                        ExtraKey("▼", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendArrowDown()
+                        }
+                        ExtraKey("▶", Modifier.weight(1f), hapticsEnabled = hapticsEnabled) {
+                            bridge.sendArrowRight()
+                        }
+                    }
                 }
             }
         }
@@ -961,32 +882,39 @@ private fun CloseSessionConfirmDialog(
 @Composable
 private fun ExtraKey(
     label: String,
+    modifier: Modifier = Modifier,
     isAccent: Boolean = false,
     isDanger: Boolean = false,
+    isActive: Boolean = false,
     hapticsEnabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val bg = when {
+        isActive && isAccent -> MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+        isActive -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.22f)
         isDanger -> MaterialTheme.colorScheme.errorContainer
-        isAccent -> MaterialTheme.colorScheme.primaryContainer
+        isAccent -> MaterialTheme.colorScheme.surfaceContainerHigh
         else -> MaterialTheme.colorScheme.surfaceContainerHigh
     }
     val textCol = when {
+        isActive && isAccent -> MaterialTheme.colorScheme.primary
+        isActive -> MaterialTheme.colorScheme.tertiary
         isDanger -> MaterialTheme.colorScheme.onErrorContainer
-        isAccent -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurface
     }
     val borderCol = when {
+        isActive && isAccent -> MaterialTheme.colorScheme.primary
+        isActive -> MaterialTheme.colorScheme.tertiary
         isDanger -> MaterialTheme.colorScheme.error.copy(alpha = 0.35f)
-        isAccent -> MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
         else -> MaterialTheme.colorScheme.outlineVariant
     }
 
     Surface(
-        modifier = Modifier
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(8.dp))
+        modifier = modifier
+            // Fixed short height → wider-than-tall keys (not square), saves console space.
+            .height(28.dp)
+            .clip(RoundedCornerShape(3.dp))
             .clickable(onClick = {
                 if (hapticsEnabled) {
                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
@@ -994,19 +922,26 @@ private fun ExtraKey(
                 onClick()
             }),
         color = bg,
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(3.dp),
         border = BorderStroke(1.dp, borderCol),
     ) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp,
-            ),
-            color = textCol,
-        )
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp,
+                    lineHeight = 10.sp,
+                ),
+                color = textCol,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
     }
 }
 

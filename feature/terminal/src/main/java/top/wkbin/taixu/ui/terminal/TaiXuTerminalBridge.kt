@@ -19,9 +19,8 @@ import java.nio.charset.StandardCharsets
 /**
  * Bridges Termux [TerminalView] / [TerminalSession] to TaiXu UI.
  *
- * Behaviour mirrors Android-PRoot-Engine's TerminalBridge, with one Compose-specific
- * difference: [shouldEnforceCharBasedInput] is true so soft keyboards use
- * InputConnection.commitText (TYPE_NULL KeyEvents are often swallowed by Compose).
+ * Soft IME is owned by [TaiXuTerminalHost] (TerminalView is final and cannot be subclassed);
+ * rendering / scroll stay on TerminalView.
  */
 class TaiXuTerminalBridge(
     private val context: Context,
@@ -31,13 +30,12 @@ class TaiXuTerminalBridge(
     var terminalView: TerminalView? = null
         set(value) {
             field = value
-            value?.setTerminalViewClient(this)
+            if (value != null) {
+                value.setTerminalViewClient(this)
+            }
         }
 
     var onFontScale: ((increase: Boolean) -> Unit)? = null
-
-    /** Compose host should focus its IME proxy when the user taps the terminal. */
-    var onRequestIme: (() -> Unit)? = null
 
     private var virtualControlActive = false
     private var virtualAltActive = false
@@ -59,47 +57,66 @@ class TaiXuTerminalBridge(
         virtualAltActive = !virtualAltActive
     }
 
+    fun isAltKeyActive(): Boolean = virtualAltActive
+
     fun currentSession(): TerminalSession? = terminalView?.currentSession
 
     fun sendBytes(session: TerminalSession?, bytes: ByteArray) {
-        if (session == null || bytes.isEmpty()) return
-        // write() itself no-ops until the shell pid is live; don't gate on isRunning
-        // here so the first keystrokes after attach aren't dropped on a race.
-        session.write(bytes, 0, bytes.size)
+        if (session != null && session.isRunning && bytes.isNotEmpty()) {
+            session.write(bytes, 0, bytes.size)
+        }
     }
 
-    fun sendString(session: TerminalSession?, text: String) {
-        if (text.isNotEmpty()) {
+    fun sendString(session: TerminalSession?, text: String?) {
+        if (text != null) {
             sendBytes(session, text.toByteArray(StandardCharsets.UTF_8))
         }
     }
 
     fun sendString(text: String) = sendString(currentSession(), text)
 
-    /** Request focus and show IME. Call only from explicit user gestures. */
-    fun showSoftKeyboard() {
-        val view = terminalView ?: return
-        view.isFocusable = true
-        view.isFocusableInTouchMode = true
-        if (!view.hasFocus()) {
-            view.requestFocus()
-        }
-        // Prefer the view's context (Activity); application context often fails silently.
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            ?: context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            ?: return
-        view.post {
-            // Rebind InputConnection after focus so char-based inputType takes effect under Compose.
-            imm.restartInput(view)
-            imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
-        }
-    }
+    fun sendEscape(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(27))
 
-    // region TerminalSessionClient
+    fun sendTab(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(9))
+
+    fun sendSigInt(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(3))
+
+    fun sendEof(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(4))
+
+    fun sendArrowUp(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(27, '['.code.toByte(), 'A'.code.toByte()))
+
+    fun sendArrowDown(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(27, '['.code.toByte(), 'B'.code.toByte()))
+
+    fun sendArrowRight(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(27, '['.code.toByte(), 'C'.code.toByte()))
+
+    fun sendArrowLeft(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(27, '['.code.toByte(), 'D'.code.toByte()))
+
+    fun sendHome(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(27, '['.code.toByte(), 'H'.code.toByte()))
+
+    fun sendEnd(session: TerminalSession? = currentSession()) =
+        sendBytes(session, byteArrayOf(27, '['.code.toByte(), 'F'.code.toByte()))
+
+    // region TerminalSessionClient — mirror TerminalBridge.java
     override fun onTextChanged(changedSession: TerminalSession) {
         val view = terminalView ?: return
-        if (view.currentSession === changedSession || view.currentSession == null) {
-            view.onScreenUpdated()
+        // Our terminal-view AAR exposes only onScreenUpdated() (no skipScrolling overload).
+        // Termux still jumps to bottom (mTopRow=0) on every update; restore the user's
+        // scrollback offset so live output does not yank the viewport while reading history.
+        val savedTop = view.topRow
+        val readingHistory = savedTop < -1
+        view.onScreenUpdated()
+        if (readingHistory && view.topRow != savedTop) {
+            view.topRow = savedTop
+            view.invalidate()
         }
     }
 
@@ -117,9 +134,12 @@ class TaiXuTerminalBridge(
     }
 
     override fun onPasteTextFromClipboard(session: TerminalSession) {
+        if (!session.isRunning) return
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         val text = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-        sendString(session, text)
+        if (text.isNotEmpty()) {
+            sendString(session, text)
+        }
     }
 
     override fun onBell(session: TerminalSession) = Unit
@@ -161,7 +181,7 @@ class TaiXuTerminalBridge(
     }
     // endregion
 
-    // region TerminalViewClient
+    // region TerminalViewClient — mirror TerminalBridge.java
     override fun onScale(scale: Float): Float {
         if (scale < 0.92f || scale > 1.08f) {
             onFontScale?.invoke(scale > 1.0f)
@@ -171,22 +191,18 @@ class TaiXuTerminalBridge(
     }
 
     override fun onSingleTapUp(e: MotionEvent) {
-        // Prefer Compose IME proxy when available (Compose swallows TYPE_NULL KeyEvents).
-        // Fall back to Termux TerminalView InputConnection for View-hosted layouts.
-        val proxy = onRequestIme
-        if (proxy != null) {
-            proxy.invoke()
-        } else {
-            showSoftKeyboard()
-        }
+        val view = terminalView ?: return
+        // IME is owned by TaiXuTerminalHost (parent); TerminalView itself is not focusable.
+        val imeTarget = (view.parent as? android.view.View) ?: view
+        imeTarget.requestFocus()
+        val imm = imeTarget.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            ?: context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(imeTarget, InputMethodManager.SHOW_IMPLICIT)
     }
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
 
-    /**
-     * Compose often drops TYPE_NULL KeyEvents before they reach [TerminalView].
-     * Char-based inputType forces IME → commitText (see termux#686 / Compose hosts).
-     */
+    /** Soft keyboards under Compose need char-based inputType for reliable key-repeat DEL. */
     override fun shouldEnforceCharBasedInput(): Boolean = true
 
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
@@ -212,14 +228,6 @@ class TaiXuTerminalBridge(
     override fun readFnKey(): Boolean = false
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean = false
 
-    override fun onEmulatorSet() {
-        val view = terminalView
-        val session = view?.currentSession
-        Log.i(
-            "TaiXuTerminal",
-            "onEmulatorSet pid=${session?.pid} cols=${session?.emulator?.mColumns} rows=${session?.emulator?.mRows}",
-        )
-        view?.onScreenUpdated()
-    }
+    override fun onEmulatorSet() = Unit
     // endregion
 }

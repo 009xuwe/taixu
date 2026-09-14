@@ -264,30 +264,28 @@ fun ChatScreen(
     LaunchedEffect(messages.size, lastMessageSignature) {
         if (messages.isNotEmpty()) {
             delay(30)
-            val totalCount = listState.layoutInfo.totalItemsCount
-            if (totalCount > 0) {
-                if (initialPositionedSessionKey != currentSessionKey) {
-                    initialPositionedSessionKey = currentSessionKey
-                    listState.scrollToItem(totalCount - 1)
-                } else {
-                    val layoutInfo = listState.layoutInfo
-                    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
-                    val isNearBottom = lastVisible == null || lastVisible.index >= totalCount - 3
-                    if (isNearBottom) {
-                        listState.scrollToItem(totalCount - 1)
-                    }
+            if (initialPositionedSessionKey != currentSessionKey) {
+                initialPositionedSessionKey = currentSessionKey
+                listState.safeScrollToLastItem()
+            } else {
+                val layoutInfo = listState.layoutInfo
+                val totalCount = layoutInfo.totalItemsCount
+                val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+                val isNearBottom = lastVisible == null || lastVisible.index >= totalCount - 3
+                if (isNearBottom) {
+                    listState.safeScrollToLastItem()
                 }
             }
         }
     }
 
-    // 🌟 2. 软键盘弹起时自动平滑滚动定位到最后一条消息
+    // 🌟 2. 软键盘弹起时自动平滑滚动定位到最后一条消息。
+    // delay 之后必须重新读 totalItemsCount：IME insets 会触发 relayout，
+    // 未测量完成时 count 为 0，animateScrollToItem(-1) 会直接崩。
     LaunchedEffect(isImeVisible) {
-        if (isImeVisible && listState.layoutInfo.totalItemsCount > 0) {
-            delay(80)
-            val totalCount = listState.layoutInfo.totalItemsCount
-            listState.animateScrollToItem(totalCount - 1)
-        }
+        if (!isImeVisible) return@LaunchedEffect
+        delay(80)
+        listState.safeScrollToLastItem(animated = true)
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -763,22 +761,17 @@ fun ChatScreen(
                     // 可能传入越界索引，触发 LazyListState 的 IllegalArgumentException。
                     // 这里改用与 ChatMessageList 完全一致的 projectChatMessages 投影，
                     // 并 clamp 到合法区间。
-                    runCatching {
-                        val renderItems = projectChatMessages(messages, toolResults)
-                        val targetIndex = renderItems.indexOfFirst { item ->
-                            item is ChatRenderItem.MessageItem && item.message.id == messageId
-                        }
-                        if (targetIndex < 0) return@launch
-                        // LazyColumn 头部偏移：(init ? 1 : empty ? 1 : 0) + (compaction ? 1 : 0)。
-                        // activePlan 不是独立头部 —— 不要再加 1。
-                        val headerOffset = (if (initializing) 1 else 0) +
-                            (if (!initializing && messages.isEmpty()) 1 else 0) +
-                            (if (activeCompaction != null) 1 else 0)
-                        val totalCount = listState.layoutInfo.totalItemsCount
-                        if (totalCount <= 0) return@launch
-                        val safeIndex = (targetIndex + headerOffset).coerceIn(0, totalCount - 1)
-                        listState.animateScrollToItem(safeIndex)
+                    val renderItems = projectChatMessages(messages, toolResults)
+                    val targetIndex = renderItems.indexOfFirst { item ->
+                        item is ChatRenderItem.MessageItem && item.message.id == messageId
                     }
+                    if (targetIndex < 0) return@launch
+                    // LazyColumn 头部偏移：(init ? 1 : empty ? 1 : 0) + (compaction ? 1 : 0)。
+                    // activePlan 不是独立头部 —— 不要再加 1。
+                    val headerOffset = (if (initializing) 1 else 0) +
+                        (if (!initializing && messages.isEmpty()) 1 else 0) +
+                        (if (activeCompaction != null) 1 else 0)
+                    listState.safeScrollToItem(targetIndex + headerOffset, animated = true)
                 }
             },
             onDismiss = { showRuntimeTimeline = false },
