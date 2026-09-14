@@ -18,7 +18,6 @@ object ContextWindowPolicy {
      * 压缩触发线都不超过此值，避免 flash 级模型在超高 token 下参数生成崩塌。
      */
     const val SAFE_GENERATION_CAP = 96_000
-    private const val MIN_HISTORY_TOKENS = 8_000
     /** 预算上限：防止标称窗口过大导致系统提示词完全不截断。 */
     const val MAX_CONTEXT_BUDGET = 200_000
     private const val APPROX_CHARS_PER_TOKEN = 4
@@ -126,6 +125,14 @@ object ContextWindowPolicy {
     fun resolveBudget(profileContextTokens: Int?, defaultBudget: Int): Int =
         (profileContextTokens ?: defaultBudget).coerceAtLeast(1)
 
+    /**
+     * 会话占用判定（SessionModelSwitcher）与实际请求组装（ApiContextAssembler）共用的
+     * 预算钳制：先按当前模型/全局回退取值，再统一钳制到 [1, MAX_CONTEXT_BUDGET]。
+     * 两处必须走同一口径，否则会出现"切换模型判定无需压缩、实际请求又压缩"。
+     */
+    fun clampedBudget(profileContextTokens: Int?, defaultBudget: Int): Int =
+        resolveBudget(profileContextTokens, defaultBudget).coerceIn(1, MAX_CONTEXT_BUDGET)
+
     fun estimateReservedPromptTokens(
         pureChat: Boolean,
         toolDisabled: Boolean,
@@ -221,7 +228,10 @@ object ContextWindowPolicy {
             systemTokens - RESERVED_OUTPUT_TOKENS - TOOL_SCHEMA_RESERVE_TOKENS
         // 安全上限：标称窗口再大，历史也最多占 SAFE_GENERATION_CAP，
         // 防止超大 contextTokens 把折叠触发线撑到永不生效。
-        val limit = minOf(rawLimit, SAFE_GENERATION_CAP).coerceAtLeast(MIN_HISTORY_TOKENS)
+        // 注意：不再对 limit 做下限抬升——小预算模型（16k/32k）的 rawLimit 必须能落到
+        // <= 0，才能触发上面的最小保留兜底（折叠到最近一个用户轮次），
+        // 否则历史折叠永不触发，小窗口模型必然 context overflow。
+        val limit = minOf(rawLimit, SAFE_GENERATION_CAP)
         if (limit <= 0) {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }

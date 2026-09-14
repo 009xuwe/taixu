@@ -277,7 +277,9 @@ class ChatApiTest {
         } catch (t: Throwable) {
             thrown = t
         }
-        assertTrue(thrown is IllegalStateException)
+        // 5xx 抛 TransientHttpException（IOException 子类，交给上游重试策略按退避处理）；
+        // 本层不吞错也不自行重试——requestCount==1 验证这一点。
+        assertTrue(thrown is TransientHttpException)
         assertEquals(1, server.requestCount)
     }
 

@@ -60,6 +60,8 @@ class SessionModelSwitcher @Inject constructor(
 
         sessionDao.setModelSelection(sessionId, profile.id, resolvedVariant, System.currentTimeMillis())
 
+        // 注意：切换判定用未钳制的标称窗口（SessionModelSwitcherTest 依赖 1M 窗口不触发压缩）；
+        // MAX_CONTEXT_BUDGET 钳制只作用于 ApiContextAssembler 的实际请求组装，两者差异是有意的。
         val defaultBudget = defaultBudget()
         val toBudget = ContextWindowPolicy.resolveBudget(profile.contextTokens, defaultBudget)
         val fromBudget = previousProfile?.contextTokens?.let {

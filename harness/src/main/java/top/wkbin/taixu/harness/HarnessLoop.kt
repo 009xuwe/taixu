@@ -394,6 +394,10 @@ class HarnessLoop @Inject constructor(
     }
 
     suspend fun deleteSession(id: String) {
+        // 注意：这里不能全程持有会话互斥锁——cancelAndJoin 会等待 runLoop 的 finally
+        // 段，而 finally 段需要抢同一把锁，全程持锁必然死锁。因此采用 tombstone +
+        // 结束时移除 tombstone 的方案；对"协程在删除完成后才拿到锁"的窗口，
+        // 由 startSessionRun 锁内的 DB 存在性检查兜底（见该函数注释）。
         // Mark tombstoned first so finishRun on the dying job cannot drain pending
         // messages and start a fresh run after we have already begun cleanup.
         tombstonedSessions.add(id)
@@ -763,6 +767,11 @@ class HarnessLoop @Inject constructor(
             var refreshQueue = false
             mutex.withLock {
                 if (tombstonedSessions.contains(sessId)) return@withLock
+                // 幽灵复活防线：send() 的协程可能在 deleteSession 全部完成后才拿到锁，
+                // 此时 tombstone 已被移除、且并发方可能各自 getOrPut 出不同的 Mutex，
+                // tombstone 检查形同虚设。再查一次 DB：会话已删除则拒绝启动 runLoop，
+                // 否则会重建数据并发起真实的 LLM 调用。
+                if (sessionDao.findById(sessId) == null) return@withLock
                 if (isSessionBusy(sessId)) {
                     enqueueOnBusy?.let {
                         promptQueueManager.enqueue(sessId, PromptQueue.NEXT_RUN, it)

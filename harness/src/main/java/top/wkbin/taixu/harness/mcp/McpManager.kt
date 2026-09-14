@@ -48,6 +48,8 @@ class McpManager @Inject constructor(
     private val cache = ConcurrentHashMap<String, CachedTools>()
     private val discoveryMutexes = ConcurrentHashMap<String, Mutex>()
     private val lastErrors = ConcurrentHashMap<String, String>()
+    /** B1: server id → 最近一次 executeTool 绑定使用的 workspace，供 discover/check 路径复用 */
+    private val lastBoundWorkspaces = ConcurrentHashMap<String, String>()
     private val _connectionStates = MutableStateFlow<Map<String, McpConnectionState>>(emptyMap())
     val connectionStates: StateFlow<Map<String, McpConnectionState>> = _connectionStates.asStateFlow()
 
@@ -61,7 +63,10 @@ class McpManager @Inject constructor(
     fun getLastError(serverId: String): String? = lastErrors[serverId]
 
     suspend fun checkConnection(server: McpServerConfig): Boolean = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(DISCOVERY_TIMEOUT_MS.milliseconds) { transport(server).check(server) } ?: false
+        // B1: 与 executeTool 一致先做 workspace 绑定再建 transport，
+        // 保证 check 与执行路径看到相同 fingerprint，避免误判连接失效而重启进程
+        val bound = boundConfig(server)
+        withTimeoutOrNull(DISCOVERY_TIMEOUT_MS.milliseconds) { transport(bound).check(bound) } ?: false
     }
 
     suspend fun refreshConnections() = withContext(Dispatchers.IO) {
@@ -69,7 +74,7 @@ class McpManager @Inject constructor(
         servers.filterNot { it.isEnabled }.forEach { server ->
             cache.remove(server.id)
             lastErrors.remove(server.id)
-            if (server.transportType == McpTransportType.STDIO) stdio.closeConnection(server.id)
+            closeTransportConnection(server)
         }
         _connectionStates.value = servers.associate { it.id to if (it.isEnabled) McpConnectionState.CHECKING else McpConnectionState.UNKNOWN }
         coroutineScope {
@@ -86,7 +91,8 @@ class McpManager @Inject constructor(
         val servers = repository.servers.first()
         servers.filterNot { it.isEnabled }.forEach { server ->
             cache.remove(server.id)
-            if (server.transportType == McpTransportType.STDIO) stdio.closeConnection(server.id)
+            lastBoundWorkspaces.remove(server.id)
+            closeTransportConnection(server)
         }
         val enabledServers = servers.filter { it.isEnabled }
         if (enabledServers.isEmpty()) return@withContext emptyList()
@@ -103,7 +109,9 @@ class McpManager @Inject constructor(
                         logger.w("MCP[${server.name}] 工具发现推迟：Linux runtime 尚未就绪，下一轮对话将重试")
                         return@async emptyList()
                     }
-                    val fingerprint = fingerprint(server)
+                    // B1: 用绑定后的配置计算 fingerprint 并发现，与 executeTool 路径一致，避免指纹乒乓
+                    val bound = boundConfig(server)
+                    val fingerprint = fingerprint(bound)
                     cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools
                         ?: discoveryMutexes.getOrPut(server.id) { Mutex() }.withLock {
                             cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools ?: run {
@@ -111,7 +119,7 @@ class McpManager @Inject constructor(
                                 // 超时按失败处理，本轮不注入该服务工具，下一轮重试。
                                 agentEventLogger.log(DISCOVERY_LOG_SESSION, "McpDiscovery", "MCP[${server.name}] 工具发现开始（transport=${server.transportType}）")
                                 val startedAt = System.currentTimeMillis()
-                                cancellableResult { discoverWithTimeout(server) }.onSuccess {
+                                cancellableResult { discoverWithTimeout(bound) }.onSuccess {
                                     agentEventLogger.log(
                                         DISCOVERY_LOG_SESSION,
                                         "McpDiscovery",
@@ -149,12 +157,15 @@ class McpManager @Inject constructor(
     }
 
     suspend fun discoverTools(server: McpServerConfig): List<McpToolInfo> = withContext(Dispatchers.IO) {
-        transport(server).discover(server)
+        val bound = boundConfig(server)
+        transport(bound).discover(bound)
     }
 
     suspend fun testServer(server: McpServerConfig): Result<List<McpToolInfo>> = withContext(Dispatchers.IO) {
-        cancellableResult { discoverWithTimeout(server) }
-        .onSuccess { cache[server.id] = CachedTools(fingerprint(server), it); state(server.id, McpConnectionState.ONLINE) }
+        // B1: 测试路径同样按绑定后配置发现并写缓存，保证缓存 fingerprint 与其他路径一致
+        val bound = boundConfig(server)
+        cancellableResult { discoverWithTimeout(bound) }
+        .onSuccess { cache[server.id] = CachedTools(fingerprint(bound), it); state(server.id, McpConnectionState.ONLINE) }
         .onFailure { cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE) }
     }
 
@@ -169,6 +180,9 @@ class McpManager @Inject constructor(
         val server = repository.servers.first().firstOrNull { it.id == tool.serverId && it.isEnabled }
             ?: return@withContext false to "未找到 MCP 服务：${tool.serverId}"
         val bound = commandBuilder.bindWorkspaceRepository(server, workspace)
+        // B1: 记录本次 workspace，使后续 discover/check 路径使用同一绑定配置，
+        // 各路径 fingerprint 一致，避免 STDIO 进程被指纹乒乓反复重启
+        lastBoundWorkspaces[server.id] = workspace
         return@withContext cancellableResult { transport(bound).execute(bound, tool.name, arguments) }
             .onFailure { logger.e("MCP[${server.name}] 工具 ${tool.name} 执行异常: ${it.message}", it) }
             .onSuccess { (ok, output) ->
@@ -190,6 +204,22 @@ class McpManager @Inject constructor(
     }
 
     private fun state(id: String, state: McpConnectionState) { _connectionStates.update { it + (id to state) } }
+
+    /**
+     * B1: 按 executeTool 最近一次使用的 workspace 绑定配置，使 discover/check/test
+     * 与执行路径计算 fingerprint 时看到同一份配置（否则 STDIO 指纹乒乓导致进程反复重启）。
+     */
+    private fun boundConfig(server: McpServerConfig): McpServerConfig =
+        commandBuilder.bindWorkspaceRepository(server, lastBoundWorkspaces[server.id] ?: "")
+
+    /** B10: 禁用/删除的 server 关闭其常驻传输资源（STDIO 进程 / HTTP legacy SSE 会话） */
+    private suspend fun closeTransportConnection(server: McpServerConfig) {
+        when (server.transportType) {
+            McpTransportType.STDIO -> stdio.closeConnection(server.id)
+            McpTransportType.SSE -> http.closeSession(server.id)
+        }
+    }
+
     private fun fingerprint(server: McpServerConfig): String =
         "${server.transportType}|${server.serverUrl.trim()}|${server.command}|${server.args}|${server.env.toSortedMap()}"
     private fun transport(server: McpServerConfig): McpTransport = when (server.transportType) {

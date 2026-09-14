@@ -179,8 +179,10 @@ class ToolExecutor @Inject constructor(
         progressReporter: (suspend (String) -> Unit)?,
         operationId: String?,
     ): Pair<Boolean, String> {
+        // MCP 工具的参数名由远端 schema 定义，跳过单键解包/扁平键还原与内置别名，
+        // 否则名为 input 的单参数或含 __ / . 的合法参数名会被错误改写。
         val args = top.wkbin.taixu.harness.validation.ToolSchemaValidator.normalizeArgs(
-            rawArgs, applyAliases = tool != HarnessTool.MCP,
+            rawArgs, applyAliases = tool != HarnessTool.MCP, isMcpTool = tool == HarnessTool.MCP,
         )
         val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
         return when (tool) {

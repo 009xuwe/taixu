@@ -43,12 +43,11 @@ class ApiContextAssembler @Inject constructor(
         thinkingMode: Boolean = false,
     ): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
-        // resolveBudget keeps the real model/fallback window for UI + switcher;
-        // MAX_CONTEXT_BUDGET only clamps the assembly path (same as upstream PR).
-        val budgetTokens = ContextWindowPolicy.resolveBudget(
+        // 与 SessionModelSwitcher 共用 clampedBudget：占用判定与实际请求必须是同一预算口径
+        val budgetTokens = ContextWindowPolicy.clampedBudget(
             model.contextTokens,
             runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000),
-        ).coerceIn(1, ContextWindowPolicy.MAX_CONTEXT_BUDGET)
+        )
         val toolCallMode = if (model.pureChatMode) ToolCallMode.DISABLED else model.toolCallMode
 
         var compactedContext = compactionManager.project(sessId)

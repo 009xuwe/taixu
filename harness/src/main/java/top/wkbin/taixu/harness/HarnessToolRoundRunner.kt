@@ -340,10 +340,12 @@ class HarnessToolRoundRunner @Inject constructor(
     companion object {
         // MCP 的 apiName "mcp" 只是历史回放别名，不是模型可直接调用的工具；
         // 剔除后模型误调 "mcp" 会落入 unknownToolGuidance，拿到真实 mcp__ 工具清单自我纠正。
+        // "subagent"/"invoke_dual_agent" 是 invoke_subagent 的历史别名与双智能体变体
+        // （ProviderClient 会向模型声明 invoke_dual_agent），必须一并放行，否则被自家拦截。
         val KNOWN_TOOL_NAMES: Set<String> = HarnessTool.entries
             .filter { it != HarnessTool.MCP }
             .map { HarnessApiMapper.apiName(it) }
-            .toSet() + "subagent"
+            .toSet() + "subagent" + "invoke_dual_agent"
 
         internal fun parseArguments(json: Json, raw: String): JsonObject =
             if (raw.isBlank()) buildJsonObject {} else {

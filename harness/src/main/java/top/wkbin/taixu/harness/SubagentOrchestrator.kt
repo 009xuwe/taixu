@@ -310,6 +310,9 @@ internal fun buildWriteCleanWaves(specs: List<SubagentTaskSpec>): List<List<Suba
             paths.any(::isWholeWorkspacePath) -> SubagentWaveKind.WHOLE_WORKSPACE
             else -> SubagentWaveKind.SCOPED_WRITE
         }
+        // 只读任务统一并入首个只读波（SubagentWritePathTest 编码了该语义：只读先行并行、
+        // 与写入波隔离避免读到中间态）；声明在写任务之后的只读任务也会前置，
+        // 需要校验写入结果的场景应由上层任务拆分时显式声明写路径。
         val joinIndex = waves.indices.firstOrNull { i ->
             when (kind) {
                 SubagentWaveKind.READ_ONLY -> waveKinds[i] == SubagentWaveKind.READ_ONLY

@@ -51,42 +51,51 @@ internal class ChatApi(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
 ) {
+    @OptIn(InternalCoroutinesApi::class)
     suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult =
         withContext(Dispatchers.IO) {
-            okHttpClient.newCall(buildRequest(model, messages, stream = false)).execute().use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) {
-                    if (response.code == 429) {
-                        throw ProviderClient.rateLimitException(response.code, body, response.header("Retry-After"))
+            val call = okHttpClient.newCall(buildRequest(model, messages, stream = false))
+            // 与流式路径一致：取消时立即关闭 socket，否则阻塞的 execute()/body.string()
+            // 不感知协程取消，用户点"停止"后最长要等满 callTimeout。
+            val cancelHandle = coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { call.cancel() }
+            try {
+                call.execute().use { response ->
+                    val body = response.body.string()
+                    if (!response.isSuccessful) {
+                        if (response.code == 429) {
+                            throw ProviderClient.rateLimitException(response.code, body, response.header("Retry-After"))
+                        }
+                        if (response.code in 500..599) {
+                            throw ProviderClient.transientHttpException(response.code, body, response.header("Retry-After"))
+                        }
+                        throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
                     }
-                    if (response.code in 500..599) {
-                        throw ProviderClient.transientHttpException(response.code, body, response.header("Retry-After"))
-                    }
-                    throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
-                }
-                if (!ProviderClient.looksLikeJsonResponse(body)) {
-                    throw IllegalStateException(
-                        ProviderClient.formatHttpErrorMessage(response.code, body),
-                    )
-                }
-                val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), body)
-                val message = parsed.choices.firstOrNull()?.message ?: ChatResponseMessage()
-                val calls = message.tool_calls.orEmpty().mapNotNull { call ->
-                    call.function.let { fn ->
-                        if (fn.name.isBlank()) null else ApiToolCallSpec(
-                            call.id.ifBlank { ToolCallIdNormalizer.normalize(null) },
-                            fn.name,
-                            fn.arguments.ifBlank { "{}" },
+                    if (!ProviderClient.looksLikeJsonResponse(body)) {
+                        throw IllegalStateException(
+                            ProviderClient.formatHttpErrorMessage(response.code, body),
                         )
                     }
+                    val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), body)
+                    val message = parsed.choices.firstOrNull()?.message ?: ChatResponseMessage()
+                    val calls = message.tool_calls.orEmpty().mapNotNull { call ->
+                        call.function.let { fn ->
+                            if (fn.name.isBlank()) null else ApiToolCallSpec(
+                                call.id.ifBlank { ToolCallIdNormalizer.normalize(null) },
+                                fn.name,
+                                fn.arguments.ifBlank { "{}" },
+                            )
+                        }
+                    }
+                    val (extractedContent, extractedReasoning) = ProviderClient.extractThinkTags(message.content, message.reasoning_content)
+                    ChatResult(
+                        content = extractedContent,
+                        toolCalls = calls,
+                        reasoningContent = extractedReasoning,
+                        usage = parsed.usage?.toChatUsage() ?: ChatUsage(),
+                    )
                 }
-                val (extractedContent, extractedReasoning) = ProviderClient.extractThinkTags(message.content, message.reasoning_content)
-                ChatResult(
-                    content = extractedContent,
-                    toolCalls = calls,
-                    reasoningContent = extractedReasoning,
-                    usage = parsed.usage?.toChatUsage() ?: ChatUsage(),
-                )
+            } finally {
+                cancelHandle?.dispose()
             }
         }
 
@@ -192,9 +201,13 @@ internal class ChatApi(
                             demuxer.onExplicitReasoningChunk(chunk)
                         }
                     }
-                    delta?.get("tool_calls")?.let { it as? JsonArray }?.forEach { call2 ->
-                        val callObj = call2 as? JsonObject ?: return@forEach
-                        val index = callObj["index"]?.let { it as? JsonPrimitive }?.contentOrNull?.toIntOrNull() ?: 0
+                    // index 缺失时的 fallback 用元素在 tool_calls 数组中的迭代序号，
+                    // 而不是固定 0——部分 OpenAI 兼容网关不分发 index，固定 0 会让
+                    // 同一 chunk 内的多个并行工具调用相互覆盖、arguments 拼成非法 JSON。
+                    delta?.get("tool_calls")?.let { it as? JsonArray }?.forEachIndexed { position, call2 ->
+                        val callObj = call2 as? JsonObject ?: return@forEachIndexed
+                        val index = callObj["index"]?.let { it as? JsonPrimitive }?.contentOrNull?.toIntOrNull()
+                            ?: position
                         val accum = toolCalls.getOrPut(index) { ToolCallAccumulator() }
                         callObj["id"]?.let { it as? JsonPrimitive }?.contentOrNull
                             ?.takeIf { it.isNotEmpty() }?.let { accum.id = it }
@@ -696,8 +709,18 @@ class ProviderClient @Inject constructor(
     private val json: Json,
 ) {
     private val apiKeyScheduler = ApiKeyScheduler()
+    // 非流式专用：保留 callTimeout 总超时（含响应体读取），防止慢端点永久挂起。
     private val httpClient: OkHttpClient = okHttpClient.newBuilder()
         .callTimeout(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .build()
+
+    // 流式专用：callTimeout 计时覆盖整个 SSE 响应体读取，长生成（>5min）会被硬掐断、
+    // 已流式内容全部丢弃。这里取消 callTimeout（0 = 不限制），长连接依靠
+    // readTimeout（逐次 read 间隔超时，每个 SSE 事件都会重置）+ 首字看门狗兜底。
+    // 连接池与拦截器通过 newBuilder() 与非流式 client 共享，无额外开销。
+    private val streamHttpClient: OkHttpClient = okHttpClient.newBuilder()
+        .callTimeout(0, TimeUnit.MILLISECONDS)
         .readTimeout(READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
 
@@ -845,21 +868,21 @@ class ProviderClient @Inject constructor(
     ): ChatResult = executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
         val sanitized = sanitizeApiTranscript(messages)
         when {
-            selected.responseApiEnabled -> ResponsesApi(httpClient, json).chatStream(
+            selected.responseApiEnabled -> ResponsesApi(streamHttpClient, json).chatStream(
                 selected,
                 sanitized,
                 onReasoning,
                 onToolProgress,
                 onDelta,
             )
-            selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(
+            selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(streamHttpClient, json).chatStream(
                 selected,
                 sanitized,
                 onReasoning,
                 onToolProgress,
                 onDelta,
             )
-            else -> ChatApi(httpClient, json).chatStream(
+            else -> ChatApi(streamHttpClient, json).chatStream(
                 selected,
                 sanitized,
                 onReasoning,
@@ -872,7 +895,9 @@ class ProviderClient @Inject constructor(
     companion object {
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         const val DEFAULT_MODEL = "gpt-4o-mini"
-        // 须覆盖最大首字看门狗（240s），否则超大上下文 Prefill 会先被 callTimeout 掐断。
+        // 非流式 chat() 的总超时（含响应体读取）；须覆盖最大首字看门狗（240s），
+        // 否则超大上下文 Prefill 会先被 callTimeout 掐断。
+        // 流式路径已改用无 callTimeout 的 streamHttpClient（见类成员注释）。
         private const val CALL_TIMEOUT_MS = 5 * 60 * 1000L
 
         /** 大请求若迟迟没有任何合法 SSE 事件，应尽早失败并向 UI 暴露重试，而不是静默等满 callTimeout。 */
