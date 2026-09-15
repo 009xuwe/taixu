@@ -2,6 +2,8 @@ package top.wkbin.taixu.harness.session
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessEntryEntity
@@ -13,6 +15,7 @@ import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
+import java.util.concurrent.ConcurrentHashMap
 
 /** Serialization and active-branch projection for the immutable session tree. */
 @Singleton
@@ -21,6 +24,11 @@ class SessionTreeStore @Inject constructor(
     private val json: Json,
     private val logger: AppLogger,
 ) {
+    private val laneLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun laneLock(sessionId: String, laneName: String): Mutex =
+        laneLocks.getOrPut("$sessionId/$laneName") { Mutex() }
+
     suspend fun ensureMainLane(sessionId: String) {
         repository.ensureLane(sessionId, MAIN_LANE)
     }
@@ -43,27 +51,33 @@ class SessionTreeStore @Inject constructor(
     }.getOrDefault(emptyList())
 
     suspend fun append(sessionId: String, message: HarnessMessage, laneName: String = MAIN_LANE) {
-        val lane = repository.ensureLane(sessionId, laneName)
-        val entry = HarnessEntryEntity(
-            id = message.id,
-            sessionId = sessionId,
-            parentId = lane.leafId,
-            createdAt = message.createdAt,
-            entryType = "message",
-            customType = messageType(message),
-            payloadJson = json.encodeToString(HarnessMessage.serializer(), message),
-        )
-        repository.appendToLane(sessionId, laneName, entry)
+        laneLock(sessionId, laneName).withLock {
+            val lane = repository.ensureLane(sessionId, laneName)
+            val entry = HarnessEntryEntity(
+                id = message.id,
+                sessionId = sessionId,
+                parentId = lane.leafId,
+                createdAt = message.createdAt,
+                entryType = "message",
+                customType = messageType(message),
+                payloadJson = json.encodeToString(HarnessMessage.serializer(), message),
+            )
+            repository.appendToLane(sessionId, laneName, entry)
+        }
     }
 
     /** Navigate to the parent of [entryId], preserving the abandoned branch. */
     suspend fun rewindBefore(sessionId: String, entryId: String, laneName: String = MAIN_LANE) {
-        val target = repository.findEntry(sessionId, entryId) ?: return
-        repository.moveLane(sessionId, laneName, target.parentId)
+        laneLock(sessionId, laneName).withLock {
+            val target = repository.findEntry(sessionId, entryId) ?: return
+            repository.moveLane(sessionId, laneName, target.parentId)
+        }
     }
 
     suspend fun moveTo(sessionId: String, entryId: String?, laneName: String = MAIN_LANE) {
-        repository.moveLane(sessionId, laneName, entryId)
+        laneLock(sessionId, laneName).withLock {
+            repository.moveLane(sessionId, laneName, entryId)
+        }
     }
 
     suspend fun deleteSession(sessionId: String) {
