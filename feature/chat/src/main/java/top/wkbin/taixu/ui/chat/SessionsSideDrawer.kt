@@ -16,6 +16,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -240,27 +241,27 @@ internal fun SessionsSideDrawer(
                 )
             }
 
-            // 2. 左侧侧边抽屉面板
+            // 2. 右侧侧边抽屉面板（从右往左弹出，靠近屏幕右侧）
             AnimatedVisibility(
                 visible = isVisible,
                 enter = slideInHorizontally(
-                    initialOffsetX = { -it },
+                    initialOffsetX = { it },
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                 ),
                 exit = slideOutHorizontally(
-                    targetOffsetX = { -it },
+                    targetOffsetX = { it },
                     animationSpec = tween(180),
                 ),
                 modifier = Modifier
                     .fillMaxHeight()
-                    .align(Alignment.CenterStart),
+                    .align(Alignment.CenterEnd),
             ) {
                 Surface(
                     modifier = Modifier
                         .fillMaxHeight()
                         .widthIn(min = 280.dp, max = 340.dp)
                         .fillMaxWidth(0.85f),
-                    shape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp),
+                    shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 6.dp,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
@@ -292,6 +293,7 @@ internal fun SessionsSideDrawer(
                                     .fillMaxWidth()
                                     .height(44.dp),
                                 shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -311,7 +313,7 @@ internal fun SessionsSideDrawer(
                             }
                         }
 
-                        // 快捷扩展与监控入口（复刻千问侧栏辅助导航）
+                        // 快捷扩展与监控入口（复刻千问侧栏辅助导航，带防截断内边距）
                         if (onOpenSkills != null || onOpenRuntime != null) {
                             Row(
                                 modifier = Modifier
@@ -325,8 +327,9 @@ internal fun SessionsSideDrawer(
                                             handleDismiss()
                                             onOpenSkills()
                                         },
-                                        modifier = Modifier.weight(1f).height(34.dp),
-                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f).height(36.dp),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
@@ -339,7 +342,7 @@ internal fun SessionsSideDrawer(
                                             )
                                             Text(
                                                 text = stringResource(R.string.chat_drawer_quick_skills),
-                                                style = MaterialTheme.typography.labelSmall,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )
@@ -352,8 +355,9 @@ internal fun SessionsSideDrawer(
                                             handleDismiss()
                                             onOpenRuntime()
                                         },
-                                        modifier = Modifier.weight(1f).height(34.dp),
-                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f).height(36.dp),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
@@ -366,7 +370,7 @@ internal fun SessionsSideDrawer(
                                             )
                                             Text(
                                                 text = stringResource(R.string.chat_drawer_quick_runtime),
-                                                style = MaterialTheme.typography.labelSmall,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )
