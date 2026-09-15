@@ -681,18 +681,40 @@ fun ChatScreen(
         )
     }
 
-    if (showSessions) {
-        SessionsDialog(
-            sessions = sessions,
-            currentSessionId = currentSessionId,
-            sessionRunStates = sessionRunStates,
-            onDismiss = { showSessions = false },
-            onSwitch = { id -> viewModel.switchSession(id); showSessions = false },
-            onNew = { showSessions = false; showNewSession = true },
-            onDelete = viewModel::deleteSession,
-            onRename = viewModel::renameSession,
-        )
-    }
+    SessionsSideDrawer(
+        visible = showSessions,
+        sessions = sessions,
+        currentSessionId = currentSessionId,
+        workspaces = workspaces,
+        sessionRunStates = sessionRunStates,
+        onDismiss = { showSessions = false },
+        onSwitch = { id ->
+            viewModel.switchSession(id)
+            showSessions = false
+        },
+        onNew = {
+            showSessions = false
+            showNewSession = true
+        },
+        onCreateInWorkspace = { ws ->
+            showSessions = false
+            viewModel.createSession(
+                title = "",
+                workspace = ws.linuxPath,
+                projectType = ws.projectType.name,
+            )
+        },
+        onDelete = viewModel::deleteSession,
+        onRename = viewModel::renameSession,
+        onOpenSkills = {
+            showSessions = false
+            showSkillsMcpSheet = true
+        },
+        onOpenRuntime = {
+            showSessions = false
+            showRuntimeTimeline = true
+        },
+    )
 
     if (showNewSession) {
         NewSessionDialog(
