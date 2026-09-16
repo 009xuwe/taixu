@@ -303,7 +303,7 @@ private fun LiquidGlassRoot(content: @Composable () -> Unit, darkTheme: Boolean,
 @Composable
 private fun ChengmingBackdrop(modifier: Modifier, darkTheme: Boolean, backgroundUri: String?) {
     val context = LocalContext.current
-    val painter by produceState<BitmapPainter?>(
+    val customPainter by produceState<BitmapPainter?>(
         initialValue = null,
         key1 = context,
         key2 = backgroundUri,
@@ -318,35 +318,25 @@ private fun ChengmingBackdrop(modifier: Modifier, darkTheme: Boolean, background
             }
         }
     }
+    val defaultPainter = androidx.compose.ui.res.painterResource(R.drawable.chengming_wallpaper_default)
+    val activePainter = customPainter ?: defaultPainter
+
     Box(modifier) {
-        if (painter != null) {
-            Image(
-                painter = painter!!,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-            )
-        } else {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(if (darkTheme) Color(0xFF111318) else Color(0xFFF4F5F7)),
-            )
-        }
+        Image(
+            painter = activePainter,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+        )
+        // 深浅色自适应蒙版：浅色保持纯净晶莹，深色微暗化营造静谧夜色玻璃感并强化文字对比度
         Box(
             Modifier
                 .fillMaxSize()
                 .background(
-                    if (painter == null) {
-                        Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-                    } else if (darkTheme) {
-                        Brush.verticalGradient(
-                            listOf(Color(0xB80A1020), Color(0x8F07142A), Color(0xC9040914)),
-                        )
+                    if (darkTheme) {
+                        Color(0x99060B14)
                     } else {
-                        Brush.verticalGradient(
-                            listOf(Color.White.copy(alpha = 0.12f), Color.Transparent, Color(0xFFECF6FF).copy(alpha = 0.18f)),
-                        )
+                        Color.White.copy(alpha = 0.05f)
                     },
                 ),
         )
