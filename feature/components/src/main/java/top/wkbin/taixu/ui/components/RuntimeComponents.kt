@@ -301,9 +301,15 @@ private fun LiquidGlassBottomBar(
 
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
-        var currentIndex by remember(selected) {
-            mutableIntStateOf(selected.ordinal)
+
+        fun selectDestination(index: Int) {
+            val destination = destinations.getOrNull(index) ?: return
+            if (destination != selected) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onNavigate(destination)
+            }
         }
+
         val dampedDragAnimation = remember(animationScope) {
             DampedDragAnimation(
                 animationScope = animationScope,
@@ -315,7 +321,6 @@ private fun LiquidGlassBottomBar(
                 onDragStarted = {},
                 onDragStopped = {
                     val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
-                    currentIndex = targetIndex
                     animateToValue(targetIndex.toFloat())
                     animationScope.launch {
                         offsetAnimation.animateTo(
@@ -323,6 +328,7 @@ private fun LiquidGlassBottomBar(
                             spring(1f, 300f, 0.5f)
                         )
                     }
+                    selectDestination(targetIndex)
                 },
                 onDrag = { _, dragAmount ->
                     updateValue(
@@ -337,19 +343,7 @@ private fun LiquidGlassBottomBar(
         }
 
         LaunchedEffect(selected) {
-            snapshotFlow { selected.ordinal }
-                .collectLatest { index ->
-                    currentIndex = index
-                }
-        }
-        LaunchedEffect(dampedDragAnimation) {
-            snapshotFlow { currentIndex }
-                .drop(1)
-                .collectLatest { index ->
-                    dampedDragAnimation.animateToValue(index.toFloat())
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onNavigate(destinations[index])
-                }
+            dampedDragAnimation.animateToValue(selected.ordinal.toFloat())
         }
 
         val interactiveHighlight = remember(animationScope) {
@@ -402,7 +396,7 @@ private fun LiquidGlassBottomBar(
                             indication = null,
                             role = Role.Tab,
                         ) {
-                            currentIndex = index
+                            selectDestination(index)
                         }
                         .fillMaxHeight()
                         .weight(1f)
