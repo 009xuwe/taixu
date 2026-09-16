@@ -404,6 +404,12 @@ private fun LiquidGlassBottomBar(
                             val scale = lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
                             scaleX = scale
                             scaleY = scale
+                            // 当指示器覆盖此 Tab 时淡出 Layer 1 图标，防止与 tabsBackdrop
+                            // 染色图标在玻璃内双层叠加。
+                            // 几何：指示器宽 = 1 个 tabWidth，覆盖 Tab N 的条件是 |value - N| < 0.5。
+                            // 加 ±0.1 的淡出过渡带：distance ∈ [0.4, 0.6) 时平滑淡入/淡出。
+                            val distance = abs(dampedDragAnimation.value - index)
+                            alpha = ((distance - 0.40f) / 0.20f).fastCoerceIn(0f, 1f)
                         },
                     verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.CenterHorizontally,
