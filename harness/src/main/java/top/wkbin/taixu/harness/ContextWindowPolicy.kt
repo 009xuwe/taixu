@@ -99,6 +99,61 @@ object ContextWindowPolicy {
         }
     }
 
+    /**
+     * 老轮次工具结果截断时原样保留的最近结果条数（下限兜底）。
+     *
+     * 主保护是轮次语义：最后一条用户消息之后的所有结果（活跃任务的全部工作轮，
+     * 可达 maxToolsPerRound 条并行调用）一律原样。此下限只服务新用户消息到达后的
+     * 「继续」式续跑——保留最近几条让模型知道当前状态；更早的结果压缩后头部仍
+     * 保留关键状态（如浏览器快照 JSON 开头的 tab/url），全文可 history_read 回读。
+     */
+    const val KEEP_RECENT_TOOL_RESULTS = 4
+
+    /**
+     * 组装请求前的老轮次工具结果截断。
+     *
+     * 预算驱动的压缩（computeKeepFromIndex）只有越过 token 预算线才触发，
+     * 在此之前每个历史轮的大输出（如浏览器快照、长 read）都会原样重复发送：
+     * 一轮 2.7KB 的快照随对话增长累积，既烧 token 又稀释注意力。
+     *
+     * 策略：受保护 = 最后一条用户消息之后的全部结果（当前轮）∪ 最近
+     * [keepRecentResults] 条结果（steering 兜底）；其余结果超过
+     * [compactThresholdFor] 阈值时按 [compactToolOutput] 语义压缩，并附
+     * history_read 指针。不改变消息条数与顺序（NATIVE 协议下丢消息会产生
+     * 非法 transcript），只替换输出正文。
+     *
+     * @param toolCallDetails toolCallId → (工具名, 参数)，用于按工具类型选阈值与压缩形态
+     * @return 变换后的消息列表；无命中时原样返回同一实例（避免无谓复制）
+     */
+    fun truncateStaleToolResults(
+        messages: List<HarnessMessage>,
+        toolCallDetails: Map<String, Pair<String, JsonObject>>,
+        keepRecentResults: Int = KEEP_RECENT_TOOL_RESULTS,
+    ): List<HarnessMessage> {
+        if (messages.isEmpty()) return messages
+        val lastUserIndex = messages.indexOfLast { it is UserMessage }
+        val protectedIds = messages.filterIsInstance<ToolResult>()
+            .takeLast(keepRecentResults.coerceAtLeast(0))
+            .mapTo(mutableSetOf()) { it.id }
+        // 当前工作轮的结果（最后一条用户消息之后）全部保护：模型下一步决策就靠它们，
+        // 一轮并行调用可达 maxToolsPerRound 条，固定条数覆盖不了。
+        messages.forEachIndexed { index, message ->
+            if (index > lastUserIndex && message is ToolResult) protectedIds.add(message.id)
+        }
+        var changed = false
+        val transformed = messages.map { message ->
+            if (message !is ToolResult || message.id in protectedIds) return@map message
+            val (name, args) = toolCallDetails[message.toolCallId] ?: (null to null)
+            if (message.output.length <= compactThresholdFor(name)) return@map message
+            changed = true
+            message.copy(
+                output = compactToolOutput(name, args, message.output, message.success) +
+                    "\n[老轮次工具输出已压缩；全文在会话记录中，需要细节时调用 history_read(message_id=\"${message.id}\") 回读]",
+            )
+        }
+        return if (changed) transformed else messages
+    }
+
     /** Conservative multilingual estimate used when a provider tokenizer is unavailable. */
     fun estimateTokens(text: String): Int {
         if (text.isBlank()) return 0

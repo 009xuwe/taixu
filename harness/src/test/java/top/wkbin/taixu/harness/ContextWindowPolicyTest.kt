@@ -391,4 +391,69 @@ class ContextWindowPolicyTest {
         )
         assertTrue(withHugeReserve > 0)
     }
+
+    @Test
+    fun `stale oversized tool results are compacted with a history read pointer`() {
+        // 8 条属于上一轮的结果 + 3 条当前轮（"latest" 之后）的结果。
+        // keepRecentResults=2：当前轮 3 条靠轮次语义保护（不是靠下限兜底）。
+        val messages = buildList<HarnessMessage> {
+            add(UserMessage("u0", 1, "start"))
+            repeat(8) { index ->
+                val callId = "call-$index"
+                add(ToolCall(callId, 2L + index, HarnessTool.MCP, kotlinx.serialization.json.buildJsonObject {}))
+                add(ToolResult("result-$index", 3L + index, callId, true, "{\"refs\":[${"e$index,".repeat(100)}]}"))
+            }
+            add(UserMessage("latest", 20, "now"))
+            repeat(3) { index ->
+                val callId = "current-call-$index"
+                add(ToolCall(callId, 21L + index, HarnessTool.MCP, kotlinx.serialization.json.buildJsonObject {}))
+                add(ToolResult("current-result-$index", 22L + index, callId, true, "{\"refs\":[${"c$index,".repeat(100)}]}"))
+            }
+        }
+        val details = messages.filterIsInstance<ToolCall>().associate {
+            it.id to ("mcp__browser__snapshot" to it.args)
+        }
+        fun resultIndexOf(id: String) = messages.indexOfFirst { it.id == id }
+
+        val truncated = ContextWindowPolicy.truncateStaleToolResults(messages, details, keepRecentResults = 2)
+
+        // 条数与顺序不变：NATIVE 协议下丢消息会产生非法 transcript
+        assertEquals(messages.size, truncated.size)
+        assertEquals(messages.map { it.id }, truncated.map { it.id })
+        // 当前轮的 3 条结果原样保留（轮次保护，超出 floor=2 的部分也保留）
+        (0..2).forEach { index ->
+            val id = "current-result-$index"
+            assertEquals(
+                (messages[resultIndexOf(id)] as ToolResult).output,
+                (truncated[resultIndexOf(id)] as ToolResult).output,
+            )
+        }
+        // 上一轮 8 条全部超过阈值且不受保护，压缩并带 history_read 指针
+        (0..7).forEach { index ->
+            val id = "result-$index"
+            val at = resultIndexOf(id)
+            val original = (messages[at] as ToolResult).output
+            val output = (truncated[at] as ToolResult).output
+            assertTrue("$id should be compacted", output.length < original.length)
+            assertTrue(output.contains("history_read(message_id=\"$id"))
+        }
+    }
+
+    @Test
+    fun `stale results below the tool threshold stay verbatim`() {
+        val messages = listOf(
+            ToolCall("call-read", 1, HarnessTool.READ, kotlinx.serialization.json.buildJsonObject {}),
+            ToolResult("short", 2, "call-read", true, "line\n".repeat(5)),
+            ToolResult("also-short", 3, "call-read", true, "y".repeat(200)),
+        )
+        val details = mapOf(
+            "call-read" to ("read" to (messages[0] as ToolCall).args),
+        )
+
+        val truncated = ContextWindowPolicy.truncateStaleToolResults(messages, details, keepRecentResults = 0)
+
+        // 均低于 read 阈值（800），原样保留且返回同一实例（避免无谓复制）
+        assertEquals(messages, truncated)
+        assertTrue(truncated === messages)
+    }
 }

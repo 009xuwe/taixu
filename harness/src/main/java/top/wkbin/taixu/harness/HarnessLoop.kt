@@ -33,6 +33,7 @@ import top.wkbin.taixu.harness.metrics.RunMetrics
 import top.wkbin.taixu.harness.task.AgentStateMachine
 
 import top.wkbin.taixu.core.datastore.AgentPreferences
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.harness.effects.RetryPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
@@ -1008,6 +1009,9 @@ class HarnessLoop @Inject constructor(
     ): RunResult {
         val activeOperationId = operationId ?: operationCoordinator.beginRun(sessId)
         val maxRounds = runCatching { settingsDataStore.maxToolRounds.first() }.getOrDefault(MAX_ROUNDS)
+        val autoContinuations = runCatching { settingsDataStore.roundLimitAutoContinuations.first() }
+            .getOrDefault(SettingsDataStore.DEFAULT_ROUND_LIMIT_AUTO_CONTINUATIONS)
+        val budget = RoundBudget(maxRounds, autoContinuations)
         val autoCwd = runCatching { settingsDataStore.autoWorkspaceCwd.first() }.getOrDefault(true)
         val sessionEntity = sessionDao.findById(sessId)
         val sessionWorkspace = sessionEntity?.workspace.orEmpty()
@@ -1019,14 +1023,14 @@ class HarnessLoop @Inject constructor(
         val retryPolicy = RetryPolicy.NETWORK_DEFAULT
         var consecutiveFailures = 0
 
-        var round = 0
-        while (round < maxRounds) {
+        while (true) {
+            val round = budget.totalRounds
             taskId?.let {
                 agentTaskStateMachine.checkpoint(
                     id = it,
                     operationId = activeOperationId,
                     round = round,
-                    maxRounds = maxRounds,
+                    maxRounds = budget.totalBudget,
                     detail = "第 ${round + 1} 轮 · 思考中",
                 )
             }
@@ -1048,7 +1052,7 @@ class HarnessLoop @Inject constructor(
             val assistantAt = now()
 
             val turn = turnRunner.run(
-                remainingRounds = maxRounds - round,
+                remainingRounds = budget.remainingInSegment,
                 toolsEnabled = !effectiveModel.pureChatMode &&
                     effectiveModel.toolCallMode != ToolCallMode.DISABLED,
                 callProvider = {
@@ -1125,45 +1129,98 @@ class HarnessLoop @Inject constructor(
                     )
                 },
             )
+            // 连续失败熔断：当一轮内所有工具调用均失败时计数。
+            suspend fun tripCircuitBreaker(toolCallCount: Int, toolsHadSuccess: Boolean): RunResult? {
+                if (toolCallCount <= 0 || toolsHadSuccess) {
+                    consecutiveFailures = 0
+                    return null
+                }
+                consecutiveFailures++
+                metrics.consecutiveFailuresObserved(consecutiveFailures)
+                if (consecutiveFailures < maxConsecutiveFailures) return null
+                metrics.circuitBreaker()
+                messageProjector.append(
+                    sessId,
+                    AssistantText(
+                        id = newId(),
+                        createdAt = now(),
+                        text = "连续 $consecutiveFailures 轮工具调用均失败，已主动停止以避免陷入死循环。" +
+                            "请检查：命令是否正确、工作区路径是否存在、依赖是否已安装，或简化任务后重试。",
+                        totalMs = now() - startedAt,
+                    ),
+                )
+                return RunResult.Failed("连续 $consecutiveFailures 轮工具调用均失败，已主动停止")
+            }
+
             when (turn) {
                 is TurnOutcome.Failed -> return RunResult.Failed(turn.message)
                 TurnOutcome.Complete -> return RunResult.Completed
                 is TurnOutcome.Continue -> {
-                    // 连续失败熔断：当一轮内所有工具调用均失败时计数。
-                    if (turn.effectiveToolCallCount > 0 && !turn.toolsHadSuccess) {
-                        consecutiveFailures++
-                        metrics.consecutiveFailuresObserved(consecutiveFailures)
-                        if (consecutiveFailures >= maxConsecutiveFailures) {
-                            metrics.circuitBreaker()
-                            messageProjector.append(
-                                sessId,
-                                AssistantText(
-                                    id = newId(),
-                                    createdAt = now(),
-                                    text = "连续 $consecutiveFailures 轮工具调用均失败，已主动停止以避免陷入死循环。" +
-                                        "请检查：命令是否正确、工作区路径是否存在、依赖是否已安装，或简化任务后重试。",
-                                    totalMs = now() - startedAt,
-                                ),
-                            )
-                            return RunResult.Failed("连续 $consecutiveFailures 轮工具调用均失败，已主动停止")
-                        }
-                    } else {
-                        consecutiveFailures = 0
-                    }
+                    tripCircuitBreaker(turn.effectiveToolCallCount, turn.toolsHadSuccess)?.let { return it }
+                    budget.advance()
+                }
+                is TurnOutcome.RoundLimit -> {
+                    tripCircuitBreaker(turn.effectiveToolCallCount, turn.toolsHadSuccess)?.let { return it }
+                    budget.advance()
+                    if (!budget.canContinue()) return roundBudgetExhausted(sessId, startedAt, budget)
+                    val attempt = budget.beginNextSegment()
+                    metrics.budgetContinued()
+                    injectBudgetCheckpoint(sessId, budget, attempt)
                 }
             }
-            round++
         }
+    }
+
+    /**
+     * 轮次预算用尽且不再续跑：这是本次运行的终点，给出带具体数字的说明，便于用户判断
+     * 到底是预算设小了还是模型跑偏了。
+     */
+    private suspend fun roundBudgetExhausted(
+        sessId: String,
+        startedAt: Long,
+        budget: RoundBudget,
+    ): RunResult {
+        val detail = if (budget.maxContinuations > 0) {
+            "已用尽全部工具轮次预算（每段 ${budget.roundsPerSegment} 轮 × ${budget.maxContinuations + 1} 段，" +
+                "共 ${budget.totalBudget} 轮）"
+        } else {
+            "已达到最大工具轮数（${budget.roundsPerSegment}）"
+        }
+        agentEventLogger.log(sessId, "RoundBudgetExhausted", detail)
         messageProjector.append(
             sessId,
             AssistantText(
                 id = newId(),
                 createdAt = now(),
-                text = "已达到最大工具轮数（$maxRounds），请简化任务或分步进行。",
+                text = "$detail，请简化任务、调高轮次预算或分步进行。",
                 totalMs = now() - startedAt,
             ),
         )
-        return RunResult.Failed("已达到最大工具轮数（$maxRounds），任务尚未确认完成")
+        return RunResult.Failed("$detail，任务尚未确认完成")
+    }
+
+    /**
+     * 软检查点：把"预算用尽"从硬停机改成一次收束。续跑提示以 steering 消息入队，下一轮开头
+     * 被消费成持久化的用户消息——既让模型在新一段预算前先落盘进度，也让这次自动续跑在
+     * 会话记录里留痕，进程被杀后同样可恢复。
+     */
+    private suspend fun injectBudgetCheckpoint(sessId: String, budget: RoundBudget, attempt: Int) {
+        val rounds = budget.roundsPerSegment
+        val prompt = buildString {
+            append("[自动续跑 $attempt/${budget.maxContinuations}] 本段 $rounds 轮工具预算已用尽，任务尚未收尾。\n\n")
+            append("继续之前请先收束一次：\n")
+            append("1. 用几句话说明已完成什么、当前进展、还剩哪些没做；\n")
+            append("2. 若任务还要跨段执行，把上述进度写入工作区的 PROGRESS.md，确保中断后可以接着干；\n")
+            append("3. 如果任务其实已经完成，直接给出最终结论，不要再调用工具。\n\n")
+            append("收束之后你会获得新的 $rounds 轮预算，可以直接继续，无需等待用户确认。")
+        }
+        promptQueueManager.enqueue(sessId, PromptQueue.STEER, PendingMessage(text = prompt))
+        agentEventLogger.log(
+            sessId,
+            "RoundBudgetContinued",
+            "attempt=$attempt/${budget.maxContinuations}, roundsPerSegment=$rounds",
+        )
+        stateMirrors.setStatus(sessId, "轮次预算用尽，自动续跑 $attempt/${budget.maxContinuations}…")
     }
 
     private suspend fun drainSteeringMessages(sessId: String): Int {

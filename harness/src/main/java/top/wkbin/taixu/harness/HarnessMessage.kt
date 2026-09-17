@@ -120,6 +120,11 @@ data class ToolResult(
     val awaitingApproval: Boolean = false,
     val approvalRequestId: String? = null,
     /**
+     * 该调用需要审批，但执行环境无法承载审批暂停（子智能体后台 Lane），因此未执行。
+     * 与 [awaitingApproval] 的区别：这里没有待审批请求可供用户批准，必须由主智能体重新发起。
+     */
+    val approvalDeferred: Boolean = false,
+    /**
      * 工具产物中的图片附件引用列表（如 mcp__browser__screenshot 落盘的 PNG）。
      * 持久化兼容：旧数据无此字段；序列化与 Room payload 默认空数组。
      */

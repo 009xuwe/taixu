@@ -625,6 +625,9 @@ class SettingsViewModel @Inject constructor(
     val maxToolRounds: StateFlow<Int> = settingsDataStore.maxToolRounds
         .stateIn(viewModelScope, SharingStarted.Eagerly, 100)
 
+    val roundLimitAutoContinuations: StateFlow<Int> = settingsDataStore.roundLimitAutoContinuations
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsDataStore.DEFAULT_ROUND_LIMIT_AUTO_CONTINUATIONS)
+
     val autoWorkspaceCwd: StateFlow<Boolean> = settingsDataStore.autoWorkspaceCwd
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
@@ -683,6 +686,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setMaxToolRounds(value: Int) {
         viewModelScope.launch { settingsDataStore.setMaxToolRounds(value) }
+    }
+
+    fun setRoundLimitAutoContinuations(value: Int) {
+        viewModelScope.launch { settingsDataStore.setRoundLimitAutoContinuations(value) }
     }
 
     fun setAutoWorkspaceCwd(value: Boolean) {

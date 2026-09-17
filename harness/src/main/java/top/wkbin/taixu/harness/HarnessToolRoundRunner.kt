@@ -212,7 +212,7 @@ class HarnessToolRoundRunner @Inject constructor(
         val approvalPauseRequested = AtomicBoolean(false)
         toolRoundDispatcher.dispatch(
             items = executable,
-            isParallelSafe = { it.tool in PARALLEL_SAFE_TOOLS },
+            isParallelSafe = { it.tool in PARALLEL_SAFE_TOOLS || it.tool in SELF_COORDINATED_TOOLS },
         ) { item, pause ->
             if (pause.isAborted()) return@dispatch
             val toolCall = ToolCall(
@@ -355,7 +355,7 @@ class HarnessToolRoundRunner @Inject constructor(
 
         /**
          * 可并发执行的只读/低风险工具白名单：互不共享可变状态（Room 由 SQLite 串行化写入）。
-         * 其余工具（write/edit/base/process/host/download/build_script/subagent/mcp）具有
+         * 其余工具（write/edit/base/process/host/download/build_script/mcp）具有
          * 外部副作用，执行时全局互斥。
          */
         private val PARALLEL_SAFE_TOOLS: Set<HarnessTool> = setOf(
@@ -368,6 +368,15 @@ class HarnessToolRoundRunner @Inject constructor(
             HarnessTool.SCRATCHPAD,
         )
 
+        /**
+         * 自行协调写隔离、因此不参与全局变更互斥的编排型工具。
+         *
+         * invoke_subagent 是一次可达 15 分钟的整批编排：它内部按 write_paths 切波、
+         * 逐个子任务串行拿写租约，全局锁对它没有额外保护作用。而 mutationMutex 是**跨会话单例**，
+         * 让它整批持锁会把其他会话的 base/write/edit 一起挡住十几分钟
+         * （实测另一会话的 BASE 因此等了约 70 秒）。
+         */
+        private val SELF_COORDINATED_TOOLS: Set<HarnessTool> = setOf(HarnessTool.SUBAGENT)
     }
 }
 

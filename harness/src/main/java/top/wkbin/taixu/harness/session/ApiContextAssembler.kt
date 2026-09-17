@@ -103,6 +103,13 @@ class ApiContextAssembler @Inject constructor(
                 )
                 msgs = compactedContext.messages
             }
+            // 老轮次工具结果截断：预算线未越过时，历史轮的大输出（浏览器快照、长 read）
+            // 仍会原样重复发送。最近若干条原样保留，更老的超过按工具阈值即压缩并附
+            // history_read 指针——只影响发给 Provider 的正文，落库 transcript 与 UI 不变。
+            // 关闭上下文压缩 = 用户要原始历史，此时同样不截断。
+            if (compactionEnabled) {
+                msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetails)
+            }
             val summaryLayer = compactedContext.summaryLayer
             if (summaryLayer.isNotBlank()) {
                 add(
