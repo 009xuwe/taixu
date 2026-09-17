@@ -266,11 +266,15 @@ internal class ChatApi(
 
     private fun buildRequest(model: ModelConfig, messages: List<ApiMessage>, stream: Boolean, includeUsage: Boolean = true): Request {
             val tools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools(model.dynamicMcpTools)
-        // JSON_TEXT 模式：把工具 JSON 描述追加到 system 消息末尾，让模型在纯文本中输出工具调用
+        // JSON_TEXT 模式：把工具 JSON 描述追加到首条 system 消息末尾，让模型在纯文本中输出工具调用。
+        // 只注入首条：压缩摘要层也是 system 消息，全量注入会把数千 token 的工具 schema 复制多份，
+        // 还把 JSON 定义拼在「早期历史摘要」末尾污染摘要语义（Anthropic/Responses 路径本就只注入一次）。
         val effectiveMessages = if (!model.pureChatMode && model.toolCallMode == ToolCallMode.JSON_TEXT && tools.isNotEmpty()) {
             val desc = ProviderClient.buildToolsTextDescription(tools)
+            var injected = false
             messages.map { msg ->
-                if (msg.role == "system" && !msg.content.isNullOrBlank()) {
+                if (!injected && msg.role == "system" && !msg.content.isNullOrBlank()) {
+                    injected = true
                     msg.copy(content = msg.content + "\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n" + desc)
                 } else {
                     msg
@@ -924,6 +928,16 @@ class ProviderClient @Inject constructor(
             messages.sumOf { message ->
                 ContextWindowPolicy.estimateTokens(message.content.orEmpty()) +
                     ContextWindowPolicy.estimateTokens(message.reasoning_content.orEmpty()) +
+                    // 图片按 base64 体积计（与 ContextWindowPolicy.tokensOf 的 1000 token/图
+                    // 同量级）：多图请求的上传 + prefill 在慢速移动网络下可能远超 90s，
+                    // 不计入会让首字看门狗误杀超时，且大请求网络重试上限仅 1 次。
+                    message.imageUrls.sumOf { url ->
+                        if (url.startsWith("data:image/", ignoreCase = true)) {
+                            (url.length / 3).coerceAtLeast(1_000)
+                        } else {
+                            1_000
+                        }
+                    } +
                     (message.tool_calls?.sumOf { call ->
                         ContextWindowPolicy.estimateTokens(call.function.name) +
                             ContextWindowPolicy.estimateTokens(call.function.arguments)

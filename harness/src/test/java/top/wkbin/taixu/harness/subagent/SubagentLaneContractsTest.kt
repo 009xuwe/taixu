@@ -243,9 +243,38 @@ class SubagentLaneContractsTest {
             toolCallMode = ToolCallMode.JSON_TEXT,
         )
 
-        assertEquals(listOf("system", "user", "user"), out.map { it.role })
+        // 调用意图以模型自己的文本协议回放成 assistant 消息（落库 displayText 已剥离标记），
+        // 结果以 user 文本回灌——模型必须能看到自己调用了什么参数才能关联结果。
+        assertEquals(listOf("system", "user", "assistant", "user"), out.map { it.role })
         assertTrue(out.none { it.tool_calls != null })
+        val replayedCall = out[2].content.orEmpty()
+        assertTrue(replayedCall.contains("[[tool_call]]"))
+        assertTrue(replayedCall.contains("\"read\""))
+        assertTrue(replayedCall.contains("a.kt"))
+        // 回放格式必须可被 normalize 完整还原
+        val normalized = TextToolCallCodec.normalize(json, replayedCall)
+        assertEquals(1, normalized.calls.size)
+        assertEquals("read", normalized.calls.single().name)
         assertTrue(out.last().content.orEmpty().contains("【工具 read 执行结果·成功】"))
+    }
+
+    @Test
+    fun `json text mode does not replay dangling tool calls`() {
+        val dangling = ToolCall("call-1", 2L, HarnessTool.READ, buildJsonObject { put("path", "a.kt") }, rawToolName = "read")
+        val messages = listOf(
+            UserMessage("task", 1L, "子任务"),
+            dangling,
+        )
+
+        val out = isolatedProviderMessages(
+            messages = messages,
+            systemPrompt = "子智能体系统提示",
+            forceFinalAnswer = false,
+            toolCallMode = ToolCallMode.JSON_TEXT,
+        )
+
+        // 无结果的悬空调用不回放，与主会话 NATIVE 分支同口径
+        assertEquals(listOf("system", "user"), out.map { it.role })
     }
 
     @Test

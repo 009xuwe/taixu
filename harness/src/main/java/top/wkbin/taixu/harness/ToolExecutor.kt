@@ -241,7 +241,10 @@ class ToolExecutor @Inject constructor(
                 if (content != null) {
                     true to "【规则块：$rule】\n$content"
                 } else {
-                    false to "未知规则块：$rule。可用：workflow / code-navigation / security / memory / environment-proot / tools"
+                    // 名单从 PromptRouter 动态生成：硬编码清单会随规则块增删漂移（曾漏 image-delivery/browser-reverse）。
+                    val available = promptRouter?.availableRuleNames()
+                        ?: "workflow / code-navigation / security / memory / environment-proot / tools"
+                    false to "未知规则块：$rule。可用：$available"
                 }
             }
         }

@@ -270,7 +270,7 @@ class SubagentLaneRunner @Inject constructor(
                         }
                     }
                     operations.toolSettled(operationId, outcome, round, toolName = rawName)
-                    loopDetector.recordSettled(rawName, args, outcome.success)
+                    loopDetector.recordSettled(rawName, args, outcome.success, output = outcome.output)
                 }
             }
             operations.finish(sessionId, "failed", details = "max rounds", laneName = laneName)
@@ -458,11 +458,26 @@ internal fun isolatedProviderMessages(
     val task = budgetedLaneMessages(messages.drop(taskStart), historyBudgetTokens)
     val toolNames = task.filterIsInstance<ToolCall>()
         .associate { it.id to (it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) }
+    val answeredIds = task.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
     task.forEach { message ->
         when {
             message is CapabilityEvent || message is ModelSwitchEvent -> Unit
-            // 文本模式：调用意图已包含在 assistant 文本里，结果以 user 文本回灌。
-            toolCallMode == ToolCallMode.JSON_TEXT && message is ToolCall -> Unit
+            // 文本模式：落库的 assistant 文本已剥离工具标记，调用意图必须以同一协议形态
+            // 回放成 assistant 消息，否则模型看不到自己调用了什么参数，结果无法关联；
+            // 悬空调用（无结果）不回放，与主会话 NATIVE 分支同口径。结果以 user 文本回灌。
+            toolCallMode == ToolCallMode.JSON_TEXT && message is ToolCall -> {
+                if (message.id in answeredIds) {
+                    add(
+                        ApiMessage(
+                            role = "assistant",
+                            content = TextToolCallCodec.encodeCall(
+                                toolNames[message.id] ?: HarnessApiMapper.apiName(message.tool),
+                                message.args.toString(),
+                            ),
+                        ),
+                    )
+                }
+            }
             toolCallMode == ToolCallMode.JSON_TEXT && message is ToolResult -> add(
                 ApiMessage(
                     role = "user",

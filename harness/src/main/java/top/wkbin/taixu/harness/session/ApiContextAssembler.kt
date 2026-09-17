@@ -18,6 +18,7 @@ import top.wkbin.taixu.harness.ApiFunctionCall
 import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.ApiToolCall
 import top.wkbin.taixu.harness.MentionExtractor
+import top.wkbin.taixu.harness.TextToolCallCodec
 import top.wkbin.taixu.harness.compaction.CompactionManager
 import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
 
@@ -78,6 +79,16 @@ class ApiContextAssembler @Inject constructor(
                 it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
             }
 
+            // 老轮次工具结果截断（先于压缩判定）：预算线未越过时，历史轮的大输出（浏览器快照、
+            // 长 read）仍会原样重复发送。最近若干条原样保留，更老的超过按工具阈值即压缩并附
+            // history_read 指针——只影响发给 Provider 的正文，落库 transcript 与 UI 不变。
+            // 关闭上下文压缩 = 用户要原始历史，此时同样不截断。
+            // 顺序必须在压缩判定之前：只需截断即可回到预算线内的会话，不应再触发整段压缩
+            // （一次额外 LLM 调用 + 历史永久降级为摘要）。
+            if (compactionEnabled) {
+                msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetails)
+            }
+
             // 预算驱动的滑动窗口：从最近一轮往回累加 token，超出预算则更早的历史进入压缩态。
             // 是否裁剪原文只由真实 token 预算决定，不再按用户轮次阈值强制折叠。
             // 每模型压缩预算覆盖（pi 式 modelOverrides）：keepRecent 收紧 + reserve 预留。
@@ -102,13 +113,11 @@ class ApiContextAssembler @Inject constructor(
                     model = model,
                 )
                 msgs = compactedContext.messages
-            }
-            // 老轮次工具结果截断：预算线未越过时，历史轮的大输出（浏览器快照、长 read）
-            // 仍会原样重复发送。最近若干条原样保留，更老的超过按工具阈值即压缩并附
-            // history_read 指针——只影响发给 Provider 的正文，落库 transcript 与 UI 不变。
-            // 关闭上下文压缩 = 用户要原始历史，此时同样不截断。
-            if (compactionEnabled) {
-                msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetails)
+                // compact 返回的保留窗口来自原始 transcript（未截断），重放一次截断，
+                // 保证与压缩判定时同一口径。
+                if (compactionEnabled) {
+                    msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetails)
+                }
             }
             val summaryLayer = compactedContext.summaryLayer
             if (summaryLayer.isNotBlank()) {
@@ -141,6 +150,20 @@ class ApiContextAssembler @Inject constructor(
                     when (message) {
                         is ToolCall -> {
                             toolNames[message.id] = message.rawToolName ?: HarnessApiMapper.apiName(message.tool)
+                            // 回放调用意图：落库的 assistant 文本已剥离工具标记，跳过会让模型
+                            // 看不到自己上一轮调用了什么参数，结果无法与调用关联，易重复调用。
+                            // 与 NATIVE 分支同口径：无结果的悬空调用不回放。
+                            if (message.id in answeredIds) {
+                                add(
+                                    ApiMessage(
+                                        role = "assistant",
+                                        content = TextToolCallCodec.encodeCall(
+                                            message.rawToolName ?: HarnessApiMapper.apiName(message.tool),
+                                            message.args.toString(),
+                                        ),
+                                    ),
+                                )
+                            }
                             i++
                         }
                         is ToolResult -> {

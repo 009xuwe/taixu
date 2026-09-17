@@ -62,13 +62,16 @@ class SessionModelSwitcher @Inject constructor(
 
         sessionDao.setModelSelection(sessionId, profile.id, resolvedVariant, System.currentTimeMillis())
 
-        // 注意：切换判定用未钳制的标称窗口（SessionModelSwitcherTest 依赖 1M 窗口不触发压缩）；
-        // MAX_CONTEXT_BUDGET 钳制只作用于 ApiContextAssembler 的实际请求组装，两者差异是有意的。
+        // 决策口径必须与 ApiContextAssembler 一致（clampedBudget，钳到 MAX_CONTEXT_BUDGET）：
+        // 否则标称窗口 > 钳制上限的档案在切换时判定"无需压缩"，下一次请求组装又按钳制预算
+        // 触发压缩——压缩时机与所用模型都偏离预期。toContextTokens 仅作 UI 展示，
+        // 保留标称窗口值。
         val defaultBudget = defaultBudget()
-        val toBudget = ContextWindowPolicy.resolveBudget(profile.contextTokens, defaultBudget)
+        val toBudget = ContextWindowPolicy.clampedBudget(profile.contextTokens, defaultBudget)
         val fromBudget = previousProfile?.contextTokens?.let {
             ContextWindowPolicy.resolveBudget(it, defaultBudget)
         }
+        val toContextTokensDisplay = ContextWindowPolicy.resolveBudget(profile.contextTokens, defaultBudget)
 
         val compactionEnabled = runCatching {
             settingsDataStore.contextCompactionEnabled.first()
@@ -117,7 +120,7 @@ class SessionModelSwitcher @Inject constructor(
                 fromLabel = modelLabel(previousProfile, previousVariant),
                 toLabel = modelLabel(profile, resolvedVariant),
                 fromContextTokens = fromBudget,
-                toContextTokens = toBudget,
+                toContextTokens = toContextTokensDisplay,
                 compacted = compacted,
                 foldedMessageCount = folded,
                 compactionPending = pending,
@@ -128,7 +131,7 @@ class SessionModelSwitcher @Inject constructor(
             compacted = compacted,
             foldedMessageCount = folded,
             compactionPending = pending,
-            toContextTokens = toBudget,
+            toContextTokens = toContextTokensDisplay,
         )
     }
 

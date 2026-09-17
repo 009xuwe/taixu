@@ -68,6 +68,7 @@ class HarnessLoop @Inject constructor(
     private val foregroundLauncher: AgentForegroundLauncher,
     private val providerClient: ProviderClient,
     private val toolExecutor: ToolExecutor,
+    private val toolRoundDispatcher: ToolRoundDispatcher,
     private val messageStore: SessionTreeStore,
     private val sessionDao: HarnessSessionRepository,
     private val modelRepository: top.wkbin.taixu.core.database.AiModelRepository,
@@ -458,7 +459,11 @@ class HarnessLoop @Inject constructor(
         loopScope.launch {
             val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
             mutex.withLock {
+                // 与 startSessionRun 同款幽灵会话防线：deleteSession 先删 DB 行、后移除 tombstone，
+                // 等锁的 steer/followUp 协程拿到锁时 tombstone 已不在——不查库就会给已删除会话
+                // 重建 durable task 并发起真实 LLM 调用（幽灵运行）。
                 if (tombstonedSessions.contains(sessId)) return@withLock
+                if (sessionDao.findById(sessId) == null) return@withLock
                 if (isSessionBusy(sessId)) {
                     // Steering/follow-up belongs to the currently active durable task.
                     promptQueueManager.enqueue(sessId, queue, PendingMessage(trimmed, imageUrls))
@@ -743,6 +748,17 @@ class HarnessLoop @Inject constructor(
         incrementTaskAttempt: Boolean = true,
         block: suspend () -> RunResult,
     ) {
+        // 占用护栏：已有活跃 Job 时拒绝再启动。审批恢复（startClaimedSessionRun）在
+        // claimPending 与拿会话锁之间留有窗口——用户同时点「批准」与「停止」时，
+        // cancel 的 startNextQueuedLocked 先启动了新 run，这里若再无条件覆盖
+        // sessionJobs[sessId]，两个 run 会并发写同一 lane（历史交错损坏 + 双倍消耗）。
+        sessionJobs[sessId]?.takeIf { it.isActive }?.let { active ->
+            logger.w(
+                "Session $sessId already has an active run; skipping duplicate launch " +
+                    "(taskId=$taskId). This indicates an approval/cancel race — the earlier run wins.",
+            )
+            return
+        }
         if (taskId != null && !agentTaskStateMachine.markRunning(
                 id = taskId,
                 operationId = operationId,
@@ -956,7 +972,7 @@ class HarnessLoop @Inject constructor(
         imageUrls: List<String> = emptyList(),
         taskId: String? = null,
     ): RunResult {
-        sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() }.reset()
+        // 拦截器重置已移至 runLoopInternal 入口（覆盖 regenerate/retry/branch 等直达路径）。
         agentEventLogger.log(sessId, "UserPrompt", userText)
         val userMessage = UserMessage(id = newId(), createdAt = now(), text = userText, imageUrls = imageUrls)
         rewindController.beginTurn(sessId, userText, userMessage.id)
@@ -972,6 +988,10 @@ class HarnessLoop @Inject constructor(
         operationId: String? = null,
         taskId: String? = null,
     ): RunResult {
+        // 死循环拦截器在每次运行入口重置：regenerateLast / retryToolCall / activateBranch
+        // 直接进入本函数，不重置会带着上一轮的失败连击——用户点"重试工具调用"重新发起的
+        // 同一调用会立即命中 sameFailedStreak >= 2 被误杀，重试功能在最该生效时失效。
+        sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() }.reset()
         // Phase 0 基线埋点：每次运行汇总过程指标并写入 Agent 日志（不受日志开关影响），
         // 为"自主完成率 / 自恢复率 / 人工干预次数"等 2.0 目标指标提供 1.0 真实基线。
         val metrics = RunMetrics(startedAt = startedAt)
@@ -1291,13 +1311,18 @@ class HarnessLoop @Inject constructor(
                         val args = json.parseToJsonElement(request.argumentsJson) as? JsonObject
                             ?: error("审批参数不是 JSON 对象")
                         val tool = HarnessApiMapper.toolByName(request.toolName)
-                        toolExecutor.execute(
-                            ToolCall(request.toolCallId, request.createdAt, tool, args, rawToolName = request.toolName),
-                            sessId,
-                            request.workspace,
-                            bypassApproval = true,
-                            operationId = request.operationId,
-                        )
+                        // 被批准的通常是 write/base/mcp 等变更类工具：必须与 ToolRoundDispatcher
+                        // 走同一把（按工作区分片的）变更互斥锁，否则用户批准的写入会与并发
+                        // 会话的同工作区命令并发执行，正是互斥锁要防的写踩踏。
+                        toolRoundDispatcher.withMutationLock(request.workspace) {
+                            toolExecutor.execute(
+                                ToolCall(request.toolCallId, request.createdAt, tool, args, rawToolName = request.toolName),
+                                sessId,
+                                request.workspace,
+                                bypassApproval = true,
+                                operationId = request.operationId,
+                            )
+                        }
                     } else {
                         ToolResult(
                             id = newId(),

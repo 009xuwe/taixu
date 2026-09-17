@@ -101,8 +101,12 @@ class McpManager @Inject constructor(
         coroutineScope {
             servers.filter { it.isEnabled }.map { server ->
                 launch {
-                    val state = if (checkConnection(server)) McpConnectionState.ONLINE else McpConnectionState.OFFLINE
+                    val online = checkConnection(server)
+                    val state = if (online) McpConnectionState.ONLINE else McpConnectionState.OFFLINE
                     _connectionStates.update { it + (server.id to state) }
+                    // 恢复在线必须清掉旧错误：否则状态点显示在线、错误栏仍挂着故障描述，
+                    // 用户会被误导反复手动刷新。
+                    if (online) lastErrors.remove(server.id)
                 }
             }.joinAll()
         }
@@ -201,7 +205,13 @@ class McpManager @Inject constructor(
         // 设置页手动测试不受冷却限制，成功时也顺带清掉对话路径的退避。
         clearDiscoveryCooldown(server.id)
         cancellableResult { discoverWithTimeout(bound) }
-        .onSuccess { cache[server.id] = CachedTools(fingerprint(bound), it); state(server.id, McpConnectionState.ONLINE) }
+        .onSuccess {
+            cache[server.id] = CachedTools(fingerprint(bound), it)
+            state(server.id, McpConnectionState.ONLINE)
+            // 测试成功 = 服务实际可用，旧错误与退避一并清除（getLastError 会持续显示旧故障误导用户）。
+            lastErrors.remove(server.id)
+            clearDiscoveryCooldown(server.id)
+        }
         .onFailure { cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE) }
     }
 

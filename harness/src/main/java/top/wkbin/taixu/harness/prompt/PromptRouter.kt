@@ -89,6 +89,9 @@ class PromptRouter @Inject constructor(
         return runCatching { promptAssets.read(block.assetPath) }.getOrNull()
     }
 
+    /** 可用规则块名单（供错误提示动态生成，避免硬编码清单随枚举漂移）。 */
+    fun availableRuleNames(): String = RuleBlock.entries.joinToString(" / ") { it.loadName }
+
     companion object {
         private val CODE_SIGNALS = listOf(
             "重构", "调用链", "调用方", "被调用", "callee", "caller", "影响面", "符号",
