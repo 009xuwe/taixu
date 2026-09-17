@@ -121,17 +121,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
-import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.layout.layout
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
 import kotlin.math.abs
 import kotlin.math.sign
@@ -162,7 +155,6 @@ import top.wkbin.taixu.feature.components.R
 import androidx.compose.ui.res.stringResource
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassSurfaceBackdrop
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * 太墟 (TaiXu) 四大核心中枢导航定义：
@@ -401,7 +393,7 @@ private fun LiquidGlassBottomBar(
                         .fillMaxHeight()
                         .weight(1f)
                         .graphicsLayer {
-                            val scale = lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
+                            val scale = lerp(1f, 1.06f, dampedDragAnimation.pressProgress)
                             scaleX = scale
                             scaleY = scale
                             // 当指示器覆盖此 Tab 时淡出 Layer 1 图标，防止与 tabsBackdrop
@@ -464,7 +456,12 @@ private fun LiquidGlassBottomBar(
                 Column(
                     Modifier
                         .fillMaxHeight()
-                        .weight(1f),
+                        .weight(1f)
+                        .graphicsLayer {
+                            val scale = lerp(1f, 1.06f, dampedDragAnimation.pressProgress)
+                            scaleX = scale
+                            scaleY = scale
+                        },
                     verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -1589,20 +1586,23 @@ fun RuntimeSlider(
     }
 
     val isLightTheme = MaterialTheme.colorScheme.onSurface.luminance() < 0.5f
-    val accentColor = if (colors.activeTrackColor != Color.Unspecified) colors.activeTrackColor
-    else if (isLightTheme) Color(0xFF0088FF) else Color(0xFF0091FF)
-    val trackColor = if (colors.inactiveTrackColor != Color.Unspecified) colors.inactiveTrackColor
-    else if (isLightTheme) Color(0xFF787878).copy(0.2f) else Color(0xFF787880).copy(0.36f)
+    val accentColor = if (colors.activeTrackColor.isSpecified && colors.activeTrackColor != Color.Unspecified) {
+        colors.activeTrackColor
+    } else if (isLightTheme) Color(0xFF0088FF) else Color(0xFF0091FF)
+
+    val trackColor = if (colors.inactiveTrackColor.isSpecified && colors.inactiveTrackColor != Color.Unspecified) {
+        colors.inactiveTrackColor
+    } else if (isLightTheme) Color(0xFF787878).copy(0.2f) else Color(0xFF787880).copy(0.36f)
 
     val trackBackdrop = rememberLayerBackdrop()
     val capsuleShape = RoundedCornerShape(percent = 50)
 
     val rangeSize = valueRange.endInclusive - valueRange.start
-    fun quantizeValue(v: Float): Float {
-        if (steps == 0) return v.coerceIn(valueRange)
+    fun quantize(v: Float): Float {
+        if (steps <= 0) return v.coerceIn(valueRange)
         val stepSize = rangeSize / (steps + 1)
-        val quantized = (valueRange.start + ((v - valueRange.start) / stepSize).roundToInt() * stepSize)
-        return quantized.coerceIn(valueRange)
+        val stepIndex = ((v - valueRange.start) / stepSize).roundToInt()
+        return (valueRange.start + stepIndex * stepSize).coerceIn(valueRange)
     }
 
     BoxWithConstraints(
@@ -1614,7 +1614,8 @@ fun RuntimeSlider(
         val trackWidth = constraints.maxWidth.toFloat()
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
-        var didDrag by remember { mutableStateOf(false) }
+        var isDragging by remember { mutableStateOf(false) }
+        var currentDragValue by remember { mutableFloatStateOf(value) }
 
         val dampedDragAnimation = remember(animationScope) {
             DampedDragAnimation(
@@ -1623,86 +1624,111 @@ fun RuntimeSlider(
                 valueRange = valueRange,
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
-                pressedScale = 1.35f,
-                onDragStarted = {},
+                pressedScale = 1.5f,
+                onDragStarted = {
+                    if (enabled) {
+                        isDragging = true
+                        currentDragValue = value
+                    }
+                },
                 onDragStopped = {
-                    if (didDrag) {
-                        val finalValue = quantizeValue(targetValue)
-                        onValueChange(finalValue)
+                    if (isDragging) {
+                        val finalVal = quantize(currentDragValue)
+                        onValueChange(finalVal)
                         onValueChangeFinished?.invoke()
-                        didDrag = false
+                        isDragging = false
                     }
                 },
                 onDrag = { _, dragAmount ->
-                    if (!didDrag) {
-                        didDrag = dragAmount.x != 0f
+                    if (enabled && trackWidth > 0f) {
+                        isDragging = true
+                        val delta = rangeSize * (dragAmount.x / trackWidth) * if (isLtr) 1f else -1f
+                        currentDragValue = (currentDragValue + delta).coerceIn(valueRange)
+                        updateValue(currentDragValue)
+                        val nextQuantized = quantize(currentDragValue)
+                        onValueChange(nextQuantized)
                     }
-                    val delta = rangeSize * (dragAmount.x / trackWidth)
-                    val nextRaw = if (isLtr) (targetValue + delta).coerceIn(valueRange)
-                    else (targetValue - delta).coerceIn(valueRange)
-                    val next = quantizeValue(nextRaw)
-                    onValueChange(next)
                 },
             )
         }
 
-        LaunchedEffect(dampedDragAnimation) {
-            snapshotFlow { value }
-                .collectLatest { v ->
-                    if (dampedDragAnimation.targetValue != v) {
-                        dampedDragAnimation.updateValue(v)
-                    }
+        LaunchedEffect(value) {
+            if (!isDragging) {
+                currentDragValue = value
+                if (dampedDragAnimation.targetValue != value) {
+                    dampedDragAnimation.updateValue(value)
                 }
+            }
         }
 
-        val trackHeight = 6.dp
-
-        // 1. 底轨与填充条：整体捕获为 trackBackdrop
+        // 1. 底轨捕获层：支持 40dp 高度全触摸区域点击，捕获为 trackBackdrop
         Box(
             Modifier
-                .layerBackdrop(trackBackdrop)
                 .fillMaxWidth()
-                .height(trackHeight)
+                .height(40.dp)
+                .pointerInput(animationScope, enabled) {
+                    if (!enabled) return@pointerInput
+                    detectTapGestures { position ->
+                        if (trackWidth > 0f) {
+                            val fraction = (position.x / trackWidth).coerceIn(0f, 1f)
+                            val targetRaw = if (isLtr) {
+                                valueRange.start + fraction * rangeSize
+                            } else {
+                                valueRange.endInclusive - fraction * rangeSize
+                            }
+                            val finalVal = quantize(targetRaw)
+                            currentDragValue = finalVal
+                            dampedDragAnimation.animateToValue(finalVal)
+                            onValueChange(finalVal)
+                            onValueChangeFinished?.invoke()
+                        }
+                    }
+                },
+            contentAlignment = Alignment.CenterStart,
         ) {
-            // 灰底玻璃轨
             Box(
                 Modifier
-                    .fillMaxSize()
-                    .clip(capsuleShape)
-                    .drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { capsuleShape },
-                        effects = {
-                            vibrancy()
-                            blur(3.dp.toPx())
-                            lens(4.dp.toPx(), 6.dp.toPx(), depthEffect = true)
-                        },
-                        highlight = { Highlight.Default.copy(alpha = 0.18f) },
-                        onDrawSurface = { drawRoundRect(trackColor) },
-                    )
-            )
+                    .layerBackdrop(trackBackdrop)
+                    .fillMaxWidth()
+                    .height(6.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                // 未激活底轨（半透明灰）
+                Box(
+                    Modifier
+                        .clip(capsuleShape)
+                        .background(trackColor)
+                        .fillMaxSize()
+                )
 
-            // 彩色填充轨
-            Box(
-                Modifier
-                    .fillMaxWidth(dampedDragAnimation.progress.coerceIn(0f, 1f))
-                    .fillMaxHeight()
-                    .clip(capsuleShape)
-                    .background(accentColor)
-            )
+                // 激活高亮填充轨（动态裁剪宽度）
+                Box(
+                    Modifier
+                        .clip(capsuleShape)
+                        .background(accentColor)
+                        .fillMaxHeight()
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            val progress = dampedDragAnimation.progress.coerceIn(0f, 1f)
+                            val width = (constraints.maxWidth * progress).fastRoundToInt()
+                            layout(width, placeable.height) {
+                                placeable.place(0, 0)
+                            }
+                        }
+                )
+            }
         }
 
-        // 2. 滑块拇指：折射背景与滑轨，带弹性物理
-        val thumbSize = 24.dp
+        // 2. 液态玻璃拇指水滴（完全对齐示例项目：双折射 + Ambient透镜高光 + 速度形变 + 白玉融化为折射水滴）
         Box(
             Modifier
                 .graphicsLayer {
-                    val currentProgress = dampedDragAnimation.progress.coerceIn(0f, 1f)
+                    val progress = dampedDragAnimation.progress.coerceIn(0f, 1f)
                     translationX =
-                        (-size.width / 2f + trackWidth * currentProgress)
-                            .fastCoerceIn(0f, trackWidth - size.width) * if (isLtr) 1f else -1f
+                        (-size.width / 2f + trackWidth * progress)
+                            .fastCoerceIn(-size.width / 4f, trackWidth - size.width * 3f / 4f) * if (isLtr) 1f else -1f
                 }
-                .then(dampedDragAnimation.modifier)
+                .then(if (enabled) dampedDragAnimation.modifier else Modifier)
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(
                         backdrop,
@@ -1713,32 +1739,37 @@ fun RuntimeSlider(
                             scale(scaleX, scaleY) {
                                 drawBackdrop()
                             }
-                        },
+                        }
                     ),
                     shape = { capsuleShape },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
-                        vibrancy()
-                        blur(6.dp.toPx() * (1f - progress))
+                        blur(8.dp.toPx() * (1f - progress))
                         lens(
-                            8.dp.toPx() * progress,
+                            10.dp.toPx() * progress,
                             14.dp.toPx() * progress,
-                            chromaticAberration = true,
-                            depthEffect = true,
+                            chromaticAberration = true
                         )
                     },
-                    highlight = { Highlight.Default },
+                    highlight = {
+                        val progress = dampedDragAnimation.pressProgress
+                        Highlight.Ambient.copy(
+                            width = Highlight.Ambient.width / 1.5f,
+                            blurRadius = Highlight.Ambient.blurRadius / 1.5f,
+                            alpha = progress
+                        )
+                    },
                     shadow = {
                         Shadow(
                             radius = 4.dp,
-                            color = Color.Black.copy(alpha = 0.12f),
+                            color = Color.Black.copy(alpha = 0.05f)
                         )
                     },
                     innerShadow = {
                         val progress = dampedDragAnimation.pressProgress
                         InnerShadow(
                             radius = 4.dp * progress,
-                            alpha = 0.15f * progress,
+                            alpha = progress
                         )
                     },
                     layerBlock = {
@@ -1750,10 +1781,10 @@ fun RuntimeSlider(
                     },
                     onDrawSurface = {
                         val progress = dampedDragAnimation.pressProgress
-                        drawRect(Color.White.copy(alpha = 0.95f - 0.20f * progress))
-                    },
+                        drawRect(Color.White.copy(alpha = 1f - progress))
+                    }
                 )
-                .size(36.dp, 24.dp),
+                .size(40.dp, 24.dp)
         )
     }
 }
