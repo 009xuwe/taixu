@@ -297,8 +297,9 @@ private fun LiquidGlassRoot(content: @Composable () -> Unit, darkTheme: Boolean,
 }
 
 /**
- * 澄明的真实取样背景。与参考 Glass 工程一样使用高信息量壁纸作为折射源，
- * 而不是低对比度纯渐变；玻璃边缘因此能呈现清晰的位移、亮度与色彩变化。
+ * 澄明的折射背景。用户选择了自定义壁纸时以壁纸为折射源（高信息量图像让玻璃边缘
+ * 呈现清晰的位移、亮度与色彩变化）；未选择时不使用任何壁纸，仅铺主题基调纯色底，
+ * 保证半透明配色在无壁纸下依然可读。
  */
 @Composable
 private fun ChengmingBackdrop(modifier: Modifier, darkTheme: Boolean, backgroundUri: String?) {
@@ -318,27 +319,35 @@ private fun ChengmingBackdrop(modifier: Modifier, darkTheme: Boolean, background
             }
         }
     }
-    val defaultPainter = androidx.compose.ui.res.painterResource(R.drawable.chengming_wallpaper_default)
-    val activePainter = customPainter ?: defaultPainter
 
+    val wallpaper = customPainter
     Box(modifier) {
-        Image(
-            painter = activePainter,
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-        )
-        // 深浅色自适应蒙版：浅色保持纯净晶莹，深色微暗化营造静谧夜色玻璃感并强化文字对比度
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    if (darkTheme) {
-                        Color(0x99060B14)
-                    } else {
-                        Color.White.copy(alpha = 0.05f)
-                    },
-                ),
-        )
+        if (wallpaper != null) {
+            Image(
+                painter = wallpaper,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+            // 深浅色自适应蒙版：浅色保持纯净晶莹，深色微暗化营造静谧夜色玻璃感并强化文字对比度
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        if (darkTheme) {
+                            Color(0x99060B14)
+                        } else {
+                            Color.White.copy(alpha = 0.05f)
+                        },
+                    ),
+            )
+        } else {
+            // 无自定义壁纸：不使用默认壁纸，铺澄明基调纯色底
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(if (darkTheme) ChengmingNoWallpaperDarkBase else ChengmingNoWallpaperLightBase),
+            )
+        }
     }
 }

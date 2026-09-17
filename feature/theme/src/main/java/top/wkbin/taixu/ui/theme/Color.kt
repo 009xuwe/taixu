@@ -114,6 +114,9 @@ val ChengmingLightOutline = Color(0x40FFFFFF)
 val ChengmingLightOutlineVariant = Color(0x26FFFFFF)
 
 // 澄明 · 深色（对齐 AndroidLiquidGlass：深邃透光暗色玻璃）
+// 无自定义壁纸时的纯色底：与蒙版/表面色同基调，保证透明配色可读
+val ChengmingNoWallpaperLightBase = Color(0xFFF0F4F8)
+val ChengmingNoWallpaperDarkBase = Color(0xFF060B14)
 val ChengmingDarkPrimary = Color(0xFF0091FF)
 val ChengmingDarkOnPrimary = Color(0xFFFFFFFF)
 val ChengmingDarkPrimaryContainer = Color(0x400091FF)
