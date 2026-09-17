@@ -77,7 +77,7 @@ fun AppearanceSettingsScreen(
     val terminalFontSize by viewModel.terminalFontSize.collectAsStateWithLifecycle()
     val terminalColorScheme by viewModel.terminalColorScheme.collectAsStateWithLifecycle()
     val terminalHapticsEnabled by viewModel.terminalHapticsEnabled.collectAsStateWithLifecycle()
-    val navSwipeBackEnabled by viewModel.navSwipeBackEnabled.collectAsStateWithLifecycle()
+    val slidePageTransitionsEnabled by viewModel.slidePageTransitionsEnabled.collectAsStateWithLifecycle()
     val appFontScale by viewModel.appFontScale.collectAsStateWithLifecycle()
     val backgroundUri by viewModel.chengmingBackgroundUri.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -254,10 +254,10 @@ fun AppearanceSettingsScreen(
                 SettingsGroup {
                     ToggleRow(
                         icon = RuntimeIconName.Reverse,
-                        title = stringResource(R.string.settings_nav_swipe_back),
-                        subtitle = stringResource(R.string.settings_nav_swipe_back_description),
-                        checked = navSwipeBackEnabled,
-                        change = viewModel::setNavSwipeBackEnabled,
+                        title = stringResource(R.string.settings_page_transitions),
+                        subtitle = stringResource(R.string.settings_page_transitions_description),
+                        checked = slidePageTransitionsEnabled,
+                        change = viewModel::setSlidePageTransitionsEnabled,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ThemeOptionRow(

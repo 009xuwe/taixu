@@ -10,11 +10,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +25,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavBackStack
+import androidx.navigation3.runtime.NavEntry
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
+import androidx.navigation3.ui.NavDisplay
+import androidx.navigation3.ui.defaultPopTransitionSpec
+import androidx.navigation3.ui.defaultPredictivePopTransitionSpec
+import androidx.navigation3.ui.defaultTransitionSpec
 import top.wkbin.taixu.ui.chat.ChatScreen
 import top.wkbin.taixu.ui.chat.ChatViewModel
 import top.wkbin.taixu.ui.components.MainDestination
@@ -45,16 +56,6 @@ import top.wkbin.taixu.ui.browser.BrowserScreen
 import top.wkbin.taixu.ui.workspace.CodeEditorScreen
 import top.wkbin.taixu.ui.workspace.WorkspaceExplorerScreen
 import top.wkbin.taixu.ui.workspace.WorkspaceScreen
-import top.yukonga.miuix.kmp.nav.core.NavBackStack
-import top.yukonga.miuix.kmp.nav.core.NavDisplay
-import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
-import top.yukonga.miuix.kmp.nav.core.NavEntryBuilder
-import top.yukonga.miuix.kmp.nav.core.NavKey
-import top.yukonga.miuix.kmp.nav.core.rememberNavBackStack
-import top.yukonga.miuix.kmp.nav.core.rememberNavSystemCornerRadius
-import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
-import top.yukonga.miuix.kmp.nav.transition.NavTransition
-import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -110,7 +111,7 @@ sealed interface AppDestination : NavKey
 
 /**
  * 太墟核心导航分发系统
- * 采用 miuix-nav（连续栈深度驱动），为每个 Tab 独立维护持久回退栈与状态生命周期
+ * 采用 Navigation 3，为每个 Tab 独立维护持久回退栈与状态生命周期
  */
 @Composable
 fun TaiXuNavHost(
@@ -126,14 +127,12 @@ fun TaiXuNavHost(
     val browserUiState by browserViewModel.uiState.collectAsStateWithLifecycle()
     // SettingsViewModel owns dozens of eagerly shared DataStore/database streams and performs
     // repository initialization. Let the settings navigation graph share the Activity-scoped
-    // instance instead of constructing that whole graph once for every nav entry.
+    // instance instead of constructing that whole graph once for every Navigation3 entry.
     val settingsViewModel: SettingsViewModel = hiltViewModel()
-    // 显式传入路由超类型 AppDestination：rememberNavBackStack 的序列化 Saver 按 T 捕获，
-    // 若推断为具体子类型，后续 push 其它子类会在状态保存时序列化失败
-    val homeStack = rememberNavBackStack<AppDestination>(HomeDestination)
-    val agentStack = rememberNavBackStack<AppDestination>(AgentDestination)
-    val workspaceStack = rememberNavBackStack<AppDestination>(WorkspaceDestination)
-    val settingsStack = rememberNavBackStack<AppDestination>(SettingsDestination)
+    val homeStack = rememberNavBackStack(HomeDestination)
+    val agentStack = rememberNavBackStack(AgentDestination)
+    val workspaceStack = rememberNavBackStack(WorkspaceDestination)
+    val settingsStack = rememberNavBackStack(SettingsDestination)
     var pendingHealingTask by remember { mutableStateOf<HealingTask?>(null) }
     var selectedMain by rememberSaveable { mutableStateOf(MainDestination.Home) } // 默认进入太墟开辟主界
     var lastNavTime by remember { mutableLongStateOf(0L) }
@@ -144,11 +143,11 @@ fun TaiXuNavHost(
 
     fun lockNavTransition() {
         navTransitionLockedUntil =
-            System.currentTimeMillis() + NAV_TRANSITION_LOCK_MS
+            System.currentTimeMillis() + ActivityStylePageTransitions.DurationMs + 40L
     }
 
     /** Programmatic stack mutation (bus / workflow) — still transition-locks. */
-    fun NavBackStack.pushRaw(destination: NavKey, lock: Boolean = true) {
+    fun NavBackStack<NavKey>.pushRaw(destination: NavKey, lock: Boolean = true) {
         if (isNavTransitionLocked()) return
         if (lastOrNull() == destination) return
         lastNavTime = System.currentTimeMillis()
@@ -194,11 +193,11 @@ fun TaiXuNavHost(
     }
 
     fun navigateMain(destination: MainDestination) {
-        // Tab swaps are instantaneous (SaveableStateProvider swap below); do not transition-lock them.
+        // Tab swaps are instantaneous (key(selectedMain)); do not transition-lock them.
         selectedMain = destination
     }
 
-    fun NavBackStack.push(from: NavKey, destination: NavKey) {
+    fun NavBackStack<NavKey>.push(from: NavKey, destination: NavKey) {
         if (isNavTransitionLocked()) return
         val now = System.currentTimeMillis()
         if (now - lastNavTime < 120L) return
@@ -244,7 +243,7 @@ fun TaiXuNavHost(
         }
     }
 
-    val appEntryContent: NavEntryBuilder.() -> Unit = {
+    val appEntryProvider: (NavKey) -> NavEntry<NavKey> = entryProvider {
             entry<HomeDestination> {
                 GuardedEntry(HomeDestination) {
                     HomeScreen(
@@ -653,33 +652,43 @@ fun TaiXuNavHost(
     val showLiquidBottomBar = liquidGlassBackdrop != null &&
         activeStack.size == 1 &&
         WindowInsets.ime.getBottom(density) == 0
-    // Tab 切换会整体卸载 NavDisplay 的组合。用 hoisted SaveableStateHolder 按 Tab 键包裹：
-    // 卸载时 miuix-nav 内部的 ViewModel 注册表键（rememberSaveable 随机键）与全部 entry
-    // saveable 状态被 holder 保留，切回时还原 → 同一注册表键 → 从 Activity store 找回
-    // NavEntryViewModelStores，各 Tab 的 entry ViewModel / 状态不丢失。
-    val tabStateHolder = rememberSaveableStateHolder()
-    val navSystemCornerRadius = rememberNavSystemCornerRadius()
-    // 侧滑返回手势开关：关闭时回落到无 dismissDirection 的 MiuixDefault（仅按钮/系统返回）
-    val navSwipeBackEnabled by settingsViewModel.navSwipeBackEnabled.collectAsStateWithLifecycle()
+    val slidePageTransitions by settingsViewModel.slidePageTransitionsEnabled.collectAsStateWithLifecycle()
+    // Hoist decorators so tab switches (key below) do not drop entry Saveable/ViewModel state.
+    // Explicit <NavKey>: outside NavDisplay's parameter context, listOf cannot infer T.
+    val entryDecorators = listOf(
+        rememberSaveableStateHolderNavEntryDecorator<NavKey>(),
+        rememberViewModelStoreNavEntryDecorator<NavKey>(),
+    )
     Box(modifier = Modifier.fillMaxSize()) {
         // App background under NavDisplay so a rare uncovered frame never shows window black.
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            // SaveableStateProvider(selectedMain)：换 Tab 即替换 NavDisplay（不做跨栈动画），
-            // 同时把被卸载 Tab 的导航状态托管给 tabStateHolder。
-            tabStateHolder.SaveableStateProvider(selectedMain) {
+            // key(selectedMain): swapping the bottom tab replaces NavDisplay instead of animating
+            // between two unrelated back stacks (which looked like a page transition).
+            key(selectedMain) {
                 NavDisplay(
                     backStack = activeStack,
                     modifier = Modifier.fillMaxSize(),
                     onBack = ::popBack,
-                    transition = if (navSwipeBackEnabled) TaixuNavTransition else NavTransitions.MiuixDefault,
-                    effects = NavDisplayEffects(
-                        cornerClipRadius = navSystemCornerRadius,
-                        blockInputDuringTransition = true,
-                    ),
-                    content = appEntryContent,
+                    entryDecorators = entryDecorators,
+                    transitionSpec = if (slidePageTransitions) {
+                        ActivityStylePageTransitions.forward()
+                    } else {
+                        defaultTransitionSpec()
+                    },
+                    popTransitionSpec = if (slidePageTransitions) {
+                        ActivityStylePageTransitions.pop()
+                    } else {
+                        defaultPopTransitionSpec()
+                    },
+                    predictivePopTransitionSpec = if (slidePageTransitions) {
+                        ActivityStylePageTransitions.predictivePop()
+                    } else {
+                        defaultPredictivePopTransitionSpec()
+                    },
+                    entryProvider = appEntryProvider,
                 )
             }
         }
@@ -711,19 +720,3 @@ private data class HealingTask(
     val title: String,
     val prompt: String,
 )
-
-/**
- * 导航转场：复用 NavTransitions.MiuixDefault 的几何（全宽滑入 + 1/4 宽视差 + 轻微透明衰减），
- * 并声明 dismissDirection 开启应用内侧滑返回手势——手指向右滑 1:1 跟手拖出顶层页面，
- * 松手按速度优先/位置兜底判定提交或回弹。根 entry（栈深 1）由宿主自动禁用该手势。
- */
-private val TaixuNavTransition: NavTransition =
-    object : NavTransition by NavTransitions.MiuixDefault {
-        override val dismissDirection: NavSwipeDirection = NavSwipeDirection.LeftToRight
-    }
-
-/**
- * 导航转场期间锁定新导航的时长：miuix-nav 程序化 settle 为 500ms tween + 40ms 余量，
- * 防止转场中连续入栈导致的栈错乱与视觉跳变。
- */
-private const val NAV_TRANSITION_LOCK_MS = 540L

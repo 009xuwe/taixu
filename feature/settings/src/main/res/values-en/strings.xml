@@ -18,8 +18,8 @@
     <string name="settings_terminal_font_size">Terminal font size</string>
     <string name="settings_terminal_haptics">Terminal key haptics</string>
     <string name="settings_terminal_haptics_description">Provide subtle haptic feedback for extra keys and Enter</string>
-    <string name="settings_nav_swipe_back">Swipe-back gesture</string>
-    <string name="settings_nav_swipe_back_description">Swipe right anywhere on a page to drag it away and go back; release commits by velocity or springs back. When off, only the back button and system back are available</string>
+    <string name="settings_page_transitions">Slide page transitions</string>
+    <string name="settings_page_transitions_description">When on, pages slide in from the right over a dimmed underlay; on back the top page exits right while the underlay brightens. When off, use the default fade</string>
     <string name="settings_theme_style">Theme style</string>
     <string name="settings_theme_xuantong">Xuantong</string>
     <string name="settings_theme_xuantong_description">Default theme with an obsidian night and warm white palette</string>

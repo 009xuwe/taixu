@@ -11,15 +11,13 @@ android {
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }
     compileOptions {
-        // miuix-nav 以 JVM 21 字节码发布，其 entry{}/rememberNavBackStack 为 inline 函数，
-        // 无法内联进 JVM 17 目标——本模块必须对齐到 21（AGP/D8 会正常降级处理，不影响产物）
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
 kotlin {
-    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21) }
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {
@@ -47,8 +45,8 @@ dependencies {
     implementation(project(":feature:custom_iteration"))
     implementation(project(":feature:browser"))
     implementation(project(":feature:git"))
-    // miuix-nav：自研 Compose 导航运行时（零依赖 androidx.navigation3），
-    // 内建 HyperOS 转场、1:1 跟手侧滑返回手势、按 entry 的 ViewModel/Saveable 状态作用域
-    implementation(libs.miuix.nav)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
+    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

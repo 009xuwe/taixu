@@ -152,7 +152,7 @@ class SettingsDataStore @Inject constructor(
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val themeStyleKey = stringPreferencesKey("theme_style")
     private val chengmingBackgroundUriKey = stringPreferencesKey("chengming_background_uri")
-    private val navSwipeBackEnabledKey = booleanPreferencesKey("nav_swipe_back_enabled")
+    private val slidePageTransitionsEnabledKey = booleanPreferencesKey("slide_page_transitions_enabled")
     private val onboardingCompletedKey = booleanPreferencesKey("onboarding_completed")
     private val selectedDistributionKey = stringPreferencesKey("selected_distribution")
     private val mirrorPolicyKey = stringPreferencesKey("mirror_policy")
@@ -319,14 +319,17 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
-    /** 应用内侧滑返回手势（miuix-nav dismissDirection），默认开启 */
-    val navSwipeBackEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
-        preferences[navSwipeBackEnabledKey] ?: true
+    /**
+     * When false (default), Navigation3 uses Compose fade in/out.
+     * When true, pages enter from the right and exit to the left (classic Activity style).
+     */
+    val slidePageTransitionsEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[slidePageTransitionsEnabledKey] ?: false
     }
 
-    suspend fun setNavSwipeBackEnabled(enabled: Boolean) {
+    suspend fun setSlidePageTransitionsEnabled(enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
-            preferences[navSwipeBackEnabledKey] = enabled
+            preferences[slidePageTransitionsEnabledKey] = enabled
         }
     }
 
