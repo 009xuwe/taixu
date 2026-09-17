@@ -186,8 +186,9 @@ class SettingsViewModel @Inject constructor(
     val terminalHapticsEnabled: StateFlow<Boolean> = settingsDataStore.terminalHapticsEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
-    val slidePageTransitionsEnabled: StateFlow<Boolean> = settingsDataStore.slidePageTransitionsEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    /** 应用内侧滑返回手势（miuix-nav dismissDirection），默认开启 */
+    val navSwipeBackEnabled: StateFlow<Boolean> = settingsDataStore.navSwipeBackEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val appFontScale: StateFlow<Float> = settingsDataStore.appFontScale
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1.0f)
@@ -207,8 +208,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsDataStore.setTerminalHapticsEnabled(enabled) }
     }
 
-    fun setSlidePageTransitionsEnabled(enabled: Boolean) {
-        viewModelScope.launch { settingsDataStore.setSlidePageTransitionsEnabled(enabled) }
+    fun setNavSwipeBackEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setNavSwipeBackEnabled(enabled) }
     }
 
     fun setAppFontScale(scale: Float) {
