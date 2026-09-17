@@ -11,8 +11,6 @@ class AppearancePreferences @Inject constructor(private val store: SettingsDataS
     val chengmingBackgroundUri get() = store.chengmingBackgroundUri
     val appFontScale get() = store.appFontScale
     val autoCheckUpdates get() = store.autoCheckUpdates
-    val slidePageTransitionsEnabled get() = store.slidePageTransitionsEnabled
-    suspend fun setSlidePageTransitionsEnabled(enabled: Boolean) = store.setSlidePageTransitionsEnabled(enabled)
 }
 
 @Singleton

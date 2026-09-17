@@ -33,9 +33,6 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
-import androidx.navigation3.ui.defaultPopTransitionSpec
-import androidx.navigation3.ui.defaultPredictivePopTransitionSpec
-import androidx.navigation3.ui.defaultTransitionSpec
 import top.wkbin.taixu.ui.chat.ChatScreen
 import top.wkbin.taixu.ui.chat.ChatViewModel
 import top.wkbin.taixu.ui.components.MainDestination
@@ -143,7 +140,7 @@ fun TaiXuNavHost(
 
     fun lockNavTransition() {
         navTransitionLockedUntil =
-            System.currentTimeMillis() + ActivityStylePageTransitions.DurationMs + 40L
+            System.currentTimeMillis() + NAV_TRANSITION_LOCK_MS
     }
 
     /** Programmatic stack mutation (bus / workflow) — still transition-locks. */
@@ -652,7 +649,6 @@ fun TaiXuNavHost(
     val showLiquidBottomBar = liquidGlassBackdrop != null &&
         activeStack.size == 1 &&
         WindowInsets.ime.getBottom(density) == 0
-    val slidePageTransitions by settingsViewModel.slidePageTransitionsEnabled.collectAsStateWithLifecycle()
     // Hoist decorators so tab switches (key below) do not drop entry Saveable/ViewModel state.
     // Explicit <NavKey>: outside NavDisplay's parameter context, listOf cannot infer T.
     val entryDecorators = listOf(
@@ -673,21 +669,6 @@ fun TaiXuNavHost(
                     modifier = Modifier.fillMaxSize(),
                     onBack = ::popBack,
                     entryDecorators = entryDecorators,
-                    transitionSpec = if (slidePageTransitions) {
-                        ActivityStylePageTransitions.forward()
-                    } else {
-                        defaultTransitionSpec()
-                    },
-                    popTransitionSpec = if (slidePageTransitions) {
-                        ActivityStylePageTransitions.pop()
-                    } else {
-                        defaultPopTransitionSpec()
-                    },
-                    predictivePopTransitionSpec = if (slidePageTransitions) {
-                        ActivityStylePageTransitions.predictivePop()
-                    } else {
-                        defaultPredictivePopTransitionSpec()
-                    },
                     entryProvider = appEntryProvider,
                 )
             }
@@ -720,3 +701,9 @@ private data class HealingTask(
     val title: String,
     val prompt: String,
 )
+
+/**
+ * 导航转场期间锁定新导航的时长：miuix NavDisplay 默认转场 500ms + 40ms 余量，
+ * 防止转场中连续入栈导致的栈错乱与视觉跳变。
+ */
+private const val NAV_TRANSITION_LOCK_MS = 540L

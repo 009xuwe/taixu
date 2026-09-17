@@ -186,9 +186,6 @@ class SettingsViewModel @Inject constructor(
     val terminalHapticsEnabled: StateFlow<Boolean> = settingsDataStore.terminalHapticsEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
-    val slidePageTransitionsEnabled: StateFlow<Boolean> = settingsDataStore.slidePageTransitionsEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
-
     val appFontScale: StateFlow<Float> = settingsDataStore.appFontScale
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1.0f)
 
@@ -205,10 +202,6 @@ class SettingsViewModel @Inject constructor(
 
     fun setTerminalHapticsEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsDataStore.setTerminalHapticsEnabled(enabled) }
-    }
-
-    fun setSlidePageTransitionsEnabled(enabled: Boolean) {
-        viewModelScope.launch { settingsDataStore.setSlidePageTransitionsEnabled(enabled) }
     }
 
     fun setAppFontScale(scale: Float) {
