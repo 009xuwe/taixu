@@ -36,6 +36,11 @@ dependencyResolutionManagement {
         providers.gradleProperty("useOfficialRepos").orNull == "true" ||
         System.getenv("USE_OFFICIAL_REPOS") == "true"
     repositories {
+        // 本地仓库：托管第三方预编译 AAR（如 Termux terminal-emulator / terminal-view），
+        // 避免 AGP 在 library 模块直接依赖本地 files(*.aar) 触发 hasLocalAarDeps 构建异常
+        maven {
+            url = uri("${rootDir}/repo")
+        }
         if (useOfficialRepos) {
             google()
             mavenCentral()

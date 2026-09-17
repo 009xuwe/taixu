@@ -42,6 +42,7 @@ profileinstaller = "1.4.1"
 uiautomator = "2.3.0"
 # JGit（MGit 同源技术栈）：宿主侧直接管理工作区 Git 仓库，无需沙箱 git
 jgit = "6.10.1.202505221210-r"
+termux = "0.118.0"
 
 [libraries]
 ktor-server-core = { group = "io.ktor", name = "ktor-server-core", version.ref = "ktorServer" }
@@ -109,6 +110,8 @@ backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backd
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
+termux-terminal-emulator = { group = "com.termux", name = "terminal-emulator", version.ref = "termux" }
+termux-terminal-view = { group = "com.termux", name = "terminal-view", version.ref = "termux" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
