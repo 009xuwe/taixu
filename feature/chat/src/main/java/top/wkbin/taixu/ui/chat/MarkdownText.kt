@@ -134,12 +134,7 @@ fun MarkdownText(
     contentCacheKey: String? = null,
 ) {
     val blocks = remember(contentCacheKey, markdown) {
-        contentCacheKey?.let(largeMarkdownBlockCache::get)
-            ?: parseMarkdownBlocks(markdown).also { parsed ->
-                if (contentCacheKey != null && markdown.length > MARKDOWN_CACHE_MAX_CHARS) {
-                    largeMarkdownBlockCache.put(contentCacheKey, parsed)
-                }
-            }
+        resolveMarkdownBlocks(markdown, contentCacheKey)
     }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         blocks.forEachIndexed { index, block ->
@@ -201,9 +196,44 @@ private val inlineWebUrlRegex = Regex("https?://[^\\s<>\\[\\]{}\"']+", RegexOpti
 private val imageFileExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "avif", "heic", "heif")
 
 private val markdownBlockCache = LruCache<String, List<MdBlock>>(300)
-/** Generated image responses are expensive to parse, so retain a few by their short message ID. */
-private val largeMarkdownBlockCache = LruCache<String, List<MdBlock>>(4)
+/** Generated image / oversized markdown is expensive to parse; retain a few by message id + content fingerprint. */
+private val largeMarkdownBlockCache = LruCache<String, CachedMarkdownBlocks>(4)
 private val inlineSpanCache = LruCache<String, AnnotatedString>(500)
+
+private data class CachedMarkdownBlocks(
+    val fingerprint: Int,
+    val blocks: List<MdBlock>,
+)
+
+private fun markdownContentFingerprint(markdown: String): Int = 31 * markdown.length + markdown.hashCode()
+
+/**
+ * 解析 markdown。大文本 LRU 以 [contentCacheKey]（通常是 message.id）为槽位，
+ * 命中时必须核对内容指纹，避免同一 id 换了正文仍复用旧块。
+ *
+ * [largeCacheMinChars] 仅测试可覆盖；生产走 [MARKDOWN_CACHE_MAX_CHARS]。
+ * 流式短消息不会写入大文本缓存，remember(key, markdown) 仍按正文更新。
+ */
+private fun resolveMarkdownBlocks(
+    markdown: String,
+    contentCacheKey: String?,
+    largeCacheMinChars: Int = MARKDOWN_CACHE_MAX_CHARS,
+): List<MdBlock> {
+    if (contentCacheKey != null && markdown.length > largeCacheMinChars) {
+        val cached = largeMarkdownBlockCache.get(contentCacheKey)
+        if (cached != null && cached.fingerprint == markdownContentFingerprint(markdown)) {
+            return cached.blocks
+        }
+    }
+    val parsed = parseMarkdownBlocks(markdown)
+    if (contentCacheKey != null && markdown.length > largeCacheMinChars) {
+        largeMarkdownBlockCache.put(
+            contentCacheKey,
+            CachedMarkdownBlocks(markdownContentFingerprint(markdown), parsed),
+        )
+    }
+    return parsed
+}
 
 private fun parseMarkdownBlocks(md: String): List<MdBlock> {
     val cacheable = md.length <= MARKDOWN_CACHE_MAX_CHARS
@@ -1080,4 +1110,29 @@ private fun QuoteBlock(block: MdQuote) {
             InlineText(line, MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+internal fun markdownBlocksPreview(
+    markdown: String,
+    contentCacheKey: String? = null,
+    largeCacheMinChars: Int = MARKDOWN_CACHE_MAX_CHARS,
+): String {
+    return resolveMarkdownBlocks(markdown, contentCacheKey, largeCacheMinChars).joinToString("\n") { block ->
+        when (block) {
+            is MdParagraph -> "P:${block.text}"
+            is MdHeading -> "H${block.level}:${block.text}"
+            is MdCodeBlock -> "C:${block.language}:${block.code}"
+            is MdList -> "L:${block.items.joinToString("|")}"
+            is MdQuote -> "Q:${block.lines.joinToString("|")}"
+            is MdTable -> "T:${block.headers.joinToString("|")}"
+            is MdRemoteMedia -> "M:${block.url}"
+            is MdHr -> "HR"
+        }
+    }
+}
+
+internal fun clearMarkdownCachesForTest() {
+    markdownBlockCache.evictAll()
+    largeMarkdownBlockCache.evictAll()
+    inlineSpanCache.evictAll()
 }
