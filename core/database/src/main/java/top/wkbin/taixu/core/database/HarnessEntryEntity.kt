@@ -43,10 +43,21 @@ data class UsageAggregateRow(
     val reasoningChars: Long,
 )
 
-/** 按「天 + 会话 + 类型」聚合的条目数（供热力图/趋势使用，同样不携带 payloadJson）。 */
+/**
+ * 按「本地日 + 会话 + 类型」聚合的用量行（供热力图/趋势使用，同样不携带 payloadJson）。
+ *
+ * [localEpochDay] 是把 `createdAt` 加上调用方传入的时区偏移后再按 86400000ms 取整，
+ * 与 `Instant.atZone(zone).toLocalDate().toEpochDay()` 同口径（同一偏移下）。
+ * Token 列与 [UsageAggregateRow] 使用同一套 json_extract + json_valid 守卫。
+ */
 data class DailyCountRow(
-    val createdAt: Long,
+    val localEpochDay: Long,
     val sessionId: String,
     val customType: String?,
     val entryCount: Int,
+    val promptTokens: Long,
+    val completionTokens: Long,
+    val cachedTokens: Long,
+    val textChars: Long,
+    val reasoningChars: Long,
 )
