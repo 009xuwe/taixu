@@ -37,6 +37,7 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.androidx.room.testing)
+    testImplementation("org.xerial:sqlite-jdbc:3.50.3.0")
     testImplementation(libs.asm)
     testImplementation(libs.asm.commons)
     testImplementation(libs.asm.util)
