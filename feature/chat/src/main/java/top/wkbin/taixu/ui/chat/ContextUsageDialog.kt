@@ -148,6 +148,18 @@ fun ContextUsageDialog(
                         )
                     }
 
+                    if (usage.declaredTokens != usage.limitTokens) {
+                        Text(
+                            text = stringResource(
+                                R.string.chat_context_declared_limit,
+                                formatLimitTokens(usage.declaredTokens),
+                            ),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = if (isDark) Color(0xFF9CA3AF) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
+
                     // 3. Segmented multi-color progress bar
                     ContextUsageSegmentedBar(
                         usage = usage,

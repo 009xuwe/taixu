@@ -474,7 +474,9 @@ class ChatViewModel @Inject constructor(
         val subagentTokens = if (toolDisabled) 0 else ContextWindowPolicy.DEFAULT_SUBAGENT_TOKENS
 
         val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
-        val budget = ContextWindowPolicy.resolveBudget(activeModel?.contextTokens, inputs.defaultBudget)
+        val declaredTokens = activeModel?.contextTokens
+        // 与引擎 ApiContextAssembler 同源：占用判定与折叠都走 clampedBudget。
+        val budget = ContextWindowPolicy.clampedBudget(declaredTokens, inputs.defaultBudget)
 
         // 与引擎同源（ApiContextAssembler）：把全量 UI 消息投影成「实际会发送的那份」再估算。
         // 引擎在压缩判定前会截断老轮次工具结果（浏览器快照、长 read 等大输出），面板此前漏了这一步，
@@ -505,7 +507,12 @@ class ChatViewModel @Inject constructor(
 
         ContextUsage(
             usedTokens = effectiveUsage.totalTokens,
-            limitTokens = budget,
+            limitTokens = ContextWindowPolicy.foldingLimitFor(
+                budget = budget,
+                ratioPercent = foldingRatioPercent,
+                systemTokens = totalSystemTokens,
+            ).coerceAtLeast(1),
+            declaredTokens = declaredTokens ?: budget,
             systemTokens = totalSystemTokens,
             toolTokens = effectiveUsage.toolTokens,
             conversationTokens = effectiveUsage.conversationTokens,
