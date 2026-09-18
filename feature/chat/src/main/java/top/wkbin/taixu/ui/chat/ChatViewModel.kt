@@ -456,6 +456,8 @@ class ChatViewModel @Inject constructor(
             defaultBudget = defaultBudget,
         )
     }.combine(settingsDataStore.contextCompactionEnabled) { inputs, compactionEnabled ->
+        inputs to compactionEnabled
+    }.combine(settingsDataStore.contextFoldingRatioPercent) { (inputs, compactionEnabled), foldingRatioPercent ->
         val activeModel = inputs.activeModel
         val pureChat = activeModel?.pureChatMode == true
         val toolDisabled = pureChat || activeModel?.toolCallMode.equals("disabled", ignoreCase = true)
@@ -485,6 +487,7 @@ class ChatViewModel @Inject constructor(
             skillsTokens = skillTokens,
             mcpTokens = mcpTokens,
             subagentTokens = subagentTokens,
+            foldingRatioPercent = foldingRatioPercent,
         )
         val totalPromptTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.promptTokens?.toLong() }.sum()
         val totalCachedTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.cachedTokens?.toLong() }.sum()
@@ -501,6 +504,7 @@ class ChatViewModel @Inject constructor(
             compacted = effectiveUsage.keepFromIndex > 0,
             cachedTokens = totalCachedTokens,
             cacheHitRatePercent = cacheHitPct,
+            foldingRatioPercent = foldingRatioPercent,
             breakdown = effectiveUsage.breakdown,
         )
 
@@ -1278,6 +1282,8 @@ data class ContextUsage(
     val compacted: Boolean = false,
     val cachedTokens: Long = 0L,
     val cacheHitRatePercent: Int? = null,
+    /** 历史折叠线比例（%）。面板据此标注「按 X% 折叠」，使折叠决策对用户可见。 */
+    val foldingRatioPercent: Int = ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT,
     val breakdown: ContextUsageBreakdown = ContextUsageBreakdown(),
 )
 

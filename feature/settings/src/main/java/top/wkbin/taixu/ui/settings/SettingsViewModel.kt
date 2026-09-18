@@ -17,6 +17,7 @@ import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.database.StorageMountBindingRepository
 import top.wkbin.taixu.core.tools.ProviderRepository
+import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.core.tools.ToolManager
 import top.wkbin.taixu.core.tools.AiProfileWriter
 import top.wkbin.taixu.core.tools.AiProfileBackupCodec
@@ -643,6 +644,16 @@ class SettingsViewModel @Inject constructor(
 
     val contextBudgetTokens: StateFlow<Int> = agentPreferences.contextBudgetTokens
         .stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
+
+    /**
+     * 历史折叠线比例（%，默认 100）：历史在预算的百分之几处开始折叠。
+     */
+    val contextFoldingRatioPercent: StateFlow<Int> = agentPreferences.contextFoldingRatioPercent
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)
+
+    fun setContextFoldingRatioPercent(value: Int) {
+        viewModelScope.launch { agentPreferences.setContextFoldingRatioPercent(value) }
+    }
 
     val maxToolsPerRound: StateFlow<Int> = agentPreferences.maxToolsPerRound
         .stateIn(viewModelScope, SharingStarted.Eagerly, 12)
