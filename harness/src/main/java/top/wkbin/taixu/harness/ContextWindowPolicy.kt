@@ -28,18 +28,18 @@ object ContextWindowPolicy {
     const val MAX_FOLDING_RATIO_PERCENT = 100
 
     /**
-     * 历史折叠触发线（token），供 UI 预览展示；口径与 [computeKeepFromIndex] 保持一致。
+     * 历史折叠触发线（token），供 UI 预览展示；口径与 [computeKeepFromIndex] 一致。
      *
-     * 公式：`min(预算 × 比例%, 预算 × INPUT_BUDGET_FRACTION) − 预留(m) − 工具 schema 预留`，
-     * 再夹到 0 以上。`ratioPercent = 100` 时退化为原有行为。
+     * `INPUT_BUDGET_FRACTION = 0.75` 本身就是「为 system prompt / 工具 schema / 输出预留 25%」，
+     * 因此这里取 `min(预算 × 比例%, 预算 × 75%)` 即可，不再重复扣减预留。
+     * `ratioPercent = 100` 时退化为 75% 线（= 旧行为）。
      */
     fun foldingLimitFor(budget: Int, ratioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT): Int {
         if (budget <= 0) return 0
         val safeRatio = ratioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
         val fractionCap = (budget * INPUT_BUDGET_FRACTION).toInt()
         val ratioScaled = (budget.toLong() * safeRatio / 100L).toInt()
-        return (minOf(ratioScaled, fractionCap) - RESERVED_OUTPUT_TOKENS - TOOL_SCHEMA_RESERVE_TOKENS)
-            .coerceAtLeast(0)
+        return minOf(ratioScaled, fractionCap).coerceAtLeast(0)
     }
     private const val APPROX_CHARS_PER_TOKEN = 4
 
@@ -173,6 +173,27 @@ object ContextWindowPolicy {
             )
         }
         return if (changed) transformed else messages
+    }
+
+    /**
+     * 与引擎实际请求同口径的「投影」：把 UI 的全量消息投影成**真正会发送的那份**，
+     * 供用量面板估算使用。内部复用 [truncateStaleToolResults]，并把工具名映射
+     * （[HarnessApiMapper]）一并收敛，避免调用方各写一遍导致口径再次分化。
+     *
+     * 为何需要它：引擎在压缩判定前先截断老轮次工具结果（见 ApiContextAssembler），
+     * 面板若直接拿未截断的全量消息估算，会明显虚高（实测 457.8K vs 实际发送 ~141K，约 3 倍）。
+     *
+     * @param compactionEnabled 关闭压缩时不做任何截断（用户要原始历史）。
+     */
+    fun projectForUsage(
+        messages: List<HarnessMessage>,
+        compactionEnabled: Boolean,
+    ): List<HarnessMessage> {
+        if (!compactionEnabled) return messages
+        val toolCallDetails = messages.filterIsInstance<ToolCall>().associate {
+            it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
+        }
+        return truncateStaleToolResults(messages, toolCallDetails)
     }
 
     /** Conservative multilingual estimate used when a provider tokenizer is unavailable. */

@@ -476,8 +476,16 @@ class ChatViewModel @Inject constructor(
         val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
         val budget = ContextWindowPolicy.resolveBudget(activeModel?.contextTokens, inputs.defaultBudget)
 
-        val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
+        // 与引擎同源（ApiContextAssembler）：把全量 UI 消息投影成「实际会发送的那份」再估算。
+        // 引擎在压缩判定前会截断老轮次工具结果（浏览器快照、长 read 等大输出），面板此前漏了这一步，
+        // 导致已用量虚高（实测 457.8K vs 实际发送 ~141K，约 3 倍）。收敛到 ContextWindowPolicy.projectForUsage。
+        val projectedMessages = ContextWindowPolicy.projectForUsage(
             messages = inputs.currentMessages,
+            compactionEnabled = compactionEnabled,
+        )
+
+        val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
+            messages = projectedMessages,
             budget = budget,
             systemTokens = totalSystemTokens,
             compactionEnabled = compactionEnabled,
@@ -1275,15 +1283,25 @@ private data class ContextUsageInputs(
 
 data class ContextUsage(
     val usedTokens: Int = 0,
+    /**
+     * 折叠触发线（分母）：= 模型标称上限按比例折算后再减输出/工具预留。
+     * 面板的百分比与分子分母均以此为准，保证「已用 / 分母 = 显示百分比」自洽。
+     */
     val limitTokens: Int = 128_000,
+    /**
+     * 模型标称上下文上限（用户在该模型档案里填的 contextTokens）。
+     * 仅用于在面板上标注「模型上限 X」，不参与比例计算——避免「填 100 万却按 98.8 万折叠」
+     * 造成分母与百分比对不上（两张皮）。
+     */
+    val declaredTokens: Int = 128_000,
+    /** 历史折叠线比例（%）。面板据此标注「按 X% 折叠」，使折叠决策对用户可见。 */
+    val foldingRatioPercent: Int = ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT,
     val systemTokens: Int = 0,
     val toolTokens: Int = 0,
     val conversationTokens: Int = 0,
     val compacted: Boolean = false,
     val cachedTokens: Long = 0L,
     val cacheHitRatePercent: Int? = null,
-    /** 历史折叠线比例（%）。面板据此标注「按 X% 折叠」，使折叠决策对用户可见。 */
-    val foldingRatioPercent: Int = ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT,
     val breakdown: ContextUsageBreakdown = ContextUsageBreakdown(),
 )
 
