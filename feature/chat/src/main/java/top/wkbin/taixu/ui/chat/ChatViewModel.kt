@@ -59,6 +59,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
@@ -228,11 +230,20 @@ class ChatViewModel @Inject constructor(
     val runtimeEvents: StateFlow<List<HarnessEvent>> = combine(
         harnessLoop.currentSessionId,
         _eventHistory,
-        messages,
-    ) { sessionId, history, msgList ->
+        // 把「消息列表」打包成 (revision, list) 再 distinctUntilChanged by revision：
+        // revision = 数量 + 末条 id，流式 token 增量不会改变它，因此上游发射被压缩为
+        // 「真正新增/替换了一条消息」才触发，避免每帧全量重合成上千条事件（聊久了变卡的主因）。
+        // 用 Pair 一起传下去，避免在 lambda 里读 messages.value 拿到过期值的时序问题。
+        messages.map { list -> (list.size to list.lastOrNull()?.id) to list }
+            .distinctUntilChanged { a, b -> a.first == b.first },
+    ) { sessionId, history, revisionAndList ->
         val live = history[sessionId].orEmpty()
-        mergeHistoricalAndLiveEvents(sessionId, msgList, live)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        mergeHistoricalAndLiveEvents(sessionId, revisionAndList.second, live)
+    }
+        // 首屏卡顿修复（P1）：合成历史事件（synthesizeHistoricalEvents）是 O(n) 遍历，
+        // stateIn 默认在 Main 上跑，首订阅时会整段压在主线程。移到 Default 执行。
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _branchRefresh = MutableStateFlow(0)
     private val branchMessageRevision = messages.map { list -> list.size to list.lastOrNull()?.id }.distinctUntilChanged()
@@ -249,7 +260,14 @@ class ChatViewModel @Inject constructor(
         branchEventRevision,
     ) { sessionId, _, _, _ -> sessionId }.mapLatest { sessionId ->
         if (sessionId.isBlank()) emptyList() else runCatching { laneManager.branches(sessionId) }.getOrDefault(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }
+        // 首屏卡顿修复（P0）：laneManager.branches() 内部会读取该会话**全部** entry
+        // （HarnessRuntimeDao.listEntries 无 LIMIT）并逐个 leaf 做路径回溯 + payload 解码，
+        // 属 O(entries) 的重活。stateIn(viewModelScope) 默认跑在 Dispatchers.Main，
+        // 而这条链此前没有任何 flowOn —— 于是「刚进入聊天界面」首次订阅时，
+        // 全量投影直接压在主线程上，与首帧布局争抢，表现为进入即卡。
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** 当前选中的会话 ID */
     val currentSessionId: StateFlow<String> = harnessLoop.currentSessionId
@@ -288,6 +306,9 @@ class ChatViewModel @Inject constructor(
                     emit(if (sessionId.isBlank()) null else compactionManager.latestSnapshot(sessionId))
                 }
             }
+            // 首屏修复（P1）：latestSnapshot 会读 DB（lane 查询 + entry 解码），
+            // 首订阅时不应压在主线程，与 branches/runtimeEvents 一并移到 Default。
+            .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** 全量长期记忆（memory 工具写入），供记忆抽屉管理与模型上下文核对。 */
@@ -402,20 +423,41 @@ class ChatViewModel @Inject constructor(
      * 因此这里明确是预估值，而不是 provider 返回的精确 tokenizer 计数。
      */
     val contextUsage: StateFlow<ContextUsage> = combine(
-        messages,
+        // 用 revision（消息数量 + 末条 id + 末条内容长度）压缩上游：
+        // contextUsage 的计算含 estimateEffectiveUsage（遍历全部消息）与两次 filterIsInstance 求和，
+        // 都是 O(n)。流式期间 messages 每个 token 块都换新引用，若不压缩会每帧全量重算，
+        // 叠加列表渲染开销后表现为「聊久了明显变卡」。
+        // 末条内容长度必须计入：流式时末条长度持续变化，是 contextUsage 真正需要更新的信号。
+        messages.map { list ->
+            Triple(
+                list.size,
+                list.lastOrNull()?.id,
+                list.lastOrNull()?.let { m ->
+                    when (m) {
+                        is AssistantText -> m.text.length
+                        is ToolResult -> m.output.length
+                        is UserMessage -> m.text.length
+                        else -> 0
+                    }
+                },
+            ) to list
+        }.distinctUntilChanged { a, b -> a.first == b.first },
         sessionBoundModel,
         allSkills,
         mcpServers,
         settingsDataStore.contextBudgetTokens,
-    ) { currentMessages, boundModel, skills, mcps, defaultBudget ->
+    ) { revisionAndMessages, boundModel, skills, mcps, defaultBudget ->
         ContextUsageInputs(
-            currentMessages = currentMessages,
+            currentMessages = revisionAndMessages.second,
+            // 与顶栏同源：会话绑定模型优先，回退全局 isActive（详见 sessionBoundModel）。
             activeModel = boundModel,
             skills = skills,
             mcps = mcps,
             defaultBudget = defaultBudget,
         )
     }.combine(settingsDataStore.contextCompactionEnabled) { inputs, compactionEnabled ->
+        inputs to compactionEnabled
+    }.combine(settingsDataStore.contextFoldingRatioPercent) { (inputs, compactionEnabled), foldingRatioPercent ->
         val activeModel = inputs.activeModel
         val pureChat = activeModel?.pureChatMode == true
         val toolDisabled = pureChat || activeModel?.toolCallMode.equals("disabled", ignoreCase = true)
@@ -434,8 +476,16 @@ class ChatViewModel @Inject constructor(
         val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
         val budget = ContextWindowPolicy.resolveBudget(activeModel?.contextTokens, inputs.defaultBudget)
 
-        val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
+        // 与引擎同源（ApiContextAssembler）：把全量 UI 消息投影成「实际会发送的那份」再估算。
+        // 引擎在压缩判定前会截断老轮次工具结果（浏览器快照、长 read 等大输出），面板此前漏了这一步，
+        // 导致已用量虚高（实测 457.8K vs 实际发送 ~141K，约 3 倍）。收敛到 ContextWindowPolicy.projectForUsage。
+        val projectedMessages = ContextWindowPolicy.projectForUsage(
             messages = inputs.currentMessages,
+            compactionEnabled = compactionEnabled,
+        )
+
+        val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
+            messages = projectedMessages,
             budget = budget,
             systemTokens = totalSystemTokens,
             compactionEnabled = compactionEnabled,
@@ -445,6 +495,7 @@ class ChatViewModel @Inject constructor(
             skillsTokens = skillTokens,
             mcpTokens = mcpTokens,
             subagentTokens = subagentTokens,
+            foldingRatioPercent = foldingRatioPercent,
         )
         val totalPromptTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.promptTokens?.toLong() }.sum()
         val totalCachedTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.cachedTokens?.toLong() }.sum()
@@ -461,10 +512,15 @@ class ChatViewModel @Inject constructor(
             compacted = effectiveUsage.keepFromIndex > 0,
             cachedTokens = totalCachedTokens,
             cacheHitRatePercent = cacheHitPct,
+            foldingRatioPercent = foldingRatioPercent,
             breakdown = effectiveUsage.breakdown,
         )
 
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextUsage())
+    }
+        // 首屏卡顿修复（P1）：estimateEffectiveUsage 与两次 filterIsInstance 求和都是 O(消息数)，
+        // stateIn 默认在 Main 执行；首订阅（空列表 → 全量）时会整段压在主线程，与首帧布局争抢。
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextUsage())
 
     /** 各 MCP 服务的实时连通性状态（与 McpManager 共享，聊天挂载面板 / 设置页联动）。 */
     val mcpConnectionStates: StateFlow<Map<String, McpConnectionState>> = mcpManager.connectionStates
@@ -1227,7 +1283,19 @@ private data class ContextUsageInputs(
 
 data class ContextUsage(
     val usedTokens: Int = 0,
+    /**
+     * 折叠触发线（分母）：= 模型标称上限按比例折算后再减输出/工具预留。
+     * 面板的百分比与分子分母均以此为准，保证「已用 / 分母 = 显示百分比」自洽。
+     */
     val limitTokens: Int = 128_000,
+    /**
+     * 模型标称上下文上限（用户在该模型档案里填的 contextTokens）。
+     * 仅用于在面板上标注「模型上限 X」，不参与比例计算——避免「填 100 万却按 98.8 万折叠」
+     * 造成分母与百分比对不上（两张皮）。
+     */
+    val declaredTokens: Int = 128_000,
+    /** 历史折叠线比例（%）。面板据此标注「按 X% 折叠」，使折叠决策对用户可见。 */
+    val foldingRatioPercent: Int = ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT,
     val systemTokens: Int = 0,
     val toolTokens: Int = 0,
     val conversationTokens: Int = 0,

@@ -20,6 +20,27 @@ object ContextWindowPolicy {
     const val SAFE_GENERATION_CAP = 96_000
     /** 预算上限：防止标称窗口过大导致系统提示词完全不截断。 */
     const val MAX_CONTEXT_BUDGET = 200_000
+    /** 历史折叠线比例默认值（%）：100 = 只在 INPUT_BUDGET_FRACTION 预留处折叠，与旧行为一致。 */
+    const val DEFAULT_FOLDING_RATIO_PERCENT = 100
+    /** 折叠线比例下限：低于此值会频繁折叠，历史几乎留不住。 */
+    const val MIN_FOLDING_RATIO_PERCENT = 10
+    /** 折叠线比例上限。 */
+    const val MAX_FOLDING_RATIO_PERCENT = 100
+
+    /**
+     * 历史折叠触发线（token），供 UI 预览展示；口径与 [computeKeepFromIndex] 一致。
+     *
+     * `INPUT_BUDGET_FRACTION = 0.75` 本身就是「为 system prompt / 工具 schema / 输出预留 25%」，
+     * 因此这里取 `min(预算 × 比例%, 预算 × 75%)` 即可，不再重复扣减预留。
+     * `ratioPercent = 100` 时退化为 75% 线（= 旧行为）。
+     */
+    fun foldingLimitFor(budget: Int, ratioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT): Int {
+        if (budget <= 0) return 0
+        val safeRatio = ratioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
+        val fractionCap = (budget * INPUT_BUDGET_FRACTION).toInt()
+        val ratioScaled = (budget.toLong() * safeRatio / 100L).toInt()
+        return minOf(ratioScaled, fractionCap).coerceAtLeast(0)
+    }
     private const val APPROX_CHARS_PER_TOKEN = 4
 
     /**
@@ -154,6 +175,27 @@ object ContextWindowPolicy {
         return if (changed) transformed else messages
     }
 
+    /**
+     * 与引擎实际请求同口径的「投影」：把 UI 的全量消息投影成**真正会发送的那份**，
+     * 供用量面板估算使用。内部复用 [truncateStaleToolResults]，并把工具名映射
+     * （[HarnessApiMapper]）一并收敛，避免调用方各写一遍导致口径再次分化。
+     *
+     * 为何需要它：引擎在压缩判定前先截断老轮次工具结果（见 ApiContextAssembler），
+     * 面板若直接拿未截断的全量消息估算，会明显虚高（实测 457.8K vs 实际发送 ~141K，约 3 倍）。
+     *
+     * @param compactionEnabled 关闭压缩时不做任何截断（用户要原始历史）。
+     */
+    fun projectForUsage(
+        messages: List<HarnessMessage>,
+        compactionEnabled: Boolean,
+    ): List<HarnessMessage> {
+        if (!compactionEnabled) return messages
+        val toolCallDetails = messages.filterIsInstance<ToolCall>().associate {
+            it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
+        }
+        return truncateStaleToolResults(messages, toolCallDetails)
+    }
+
     /** Conservative multilingual estimate used when a provider tokenizer is unavailable. */
     fun estimateTokens(text: String): Int {
         if (text.isBlank()) return 0
@@ -212,9 +254,11 @@ object ContextWindowPolicy {
         skillsTokens: Int = 0,
         mcpTokens: Int = 0,
         subagentTokens: Int = 0,
+        /** 历史折叠线比例（%，默认 100 = 与旧行为一致）。透传给 computeKeepFromIndex。 */
+        foldingRatioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
     ): EffectiveContextUsage {
         val keepFrom = if (compactionEnabled) {
-            computeKeepFromIndex(messages, budget, systemTokens)
+            computeKeepFromIndex(messages, budget, systemTokens, foldingRatioPercent = foldingRatioPercent)
         } else {
             0
         }
@@ -288,12 +332,26 @@ object ContextWindowPolicy {
          * 每模型覆盖时替换全局保留值参与预算线计算。
          */
         reserveTokens: Int? = null,
+        /**
+         * 历史折叠线比例（%，默认 100 = 与旧行为一致）。
+         *
+         * 用户设置「折叠线比例」后，折叠触发线在原有 `INPUT_BUDGET_FRACTION` 硬上限**之下**
+         * 按此比例进一步收窄：`min(budget × 比例%, budget × INPUT_BUDGET_FRACTION)`。
+         * 之所以取 min（而非直接替换）：比例只是「提前折叠」的手段，绝不能把线抬到超过
+         * [INPUT_BUDGET_FRACTION] 的预留——那会让历史挤占 completion 与工具 schema 空间。
+         */
+        foldingRatioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
     ): Int {
         if (messages.size <= 1) return 0
         if (budget <= 0) {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
-        val rawLimit = (budget * INPUT_BUDGET_FRACTION).toInt() -
+        val safeRatio = foldingRatioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
+        // 比例线（用户设置）与硬上限线（INPUT_BUDGET_FRACTION）取小：
+        // ratio=100 时恒等于旧行为，因为 100% 的线总是 ≥ 75% 的硬上限线。
+        val fractionCap = (budget * INPUT_BUDGET_FRACTION).toInt()
+        val ratioScaled = (budget.toLong() * safeRatio / 100L).toInt()
+        val rawLimit = minOf(ratioScaled, fractionCap) -
             systemTokens - (reserveTokens ?: RESERVED_OUTPUT_TOKENS) - TOOL_SCHEMA_RESERVE_TOKENS
         // 安全上限：标称窗口再大，历史也最多占 SAFE_GENERATION_CAP，
         // 防止超大 contextTokens 把折叠触发线撑到永不生效。

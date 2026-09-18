@@ -607,6 +607,17 @@ class SettingsDataStore @Inject constructor(
     suspend fun setContextBudgetTokens(value: Int) { context.settingsDataStore.edit { it[contextBudgetTokensKey] = value.coerceIn(4_000, 2_000_000) } }
 
     /**
+     * 历史折叠线比例（百分比，默认 100）。
+     *
+     * 预算内可折叠到多少：折叠触发线按 `预算 × 比例%` 折算后再受输出/工具预留与
+     * SAFE_GENERATION_CAP 约束。100 = 只在这些预留处折叠（与旧行为一致）；
+     * 调小可让长会话更早折叠，降低单次请求的 input token 量（省费用、降首字延迟）。
+     */
+    private val contextFoldingRatioPercentKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_folding_ratio_percent")
+    val contextFoldingRatioPercent: Flow<Int> = context.settingsDataStore.data.map { it[contextFoldingRatioPercentKey] ?: 100 }
+    suspend fun setContextFoldingRatioPercent(value: Int) { context.settingsDataStore.edit { it[contextFoldingRatioPercentKey] = value.coerceIn(10, 100) } }
+
+    /**
      * 单轮最多允许执行的工具调用数量（默认 12）。超过则本轮回填占位结果并提示模型，
      * 防止一次爆发大量工具调用耗尽上下文或陷入失控循环。
      */

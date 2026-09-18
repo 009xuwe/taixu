@@ -236,6 +236,14 @@ class OperationCoordinatorTest {
             entryList.filter { (start == null || it.createdAt >= start) && (end == null || it.createdAt < end) }
 
         override suspend fun countEntriesInRange(start: Long?, end: Long?) = listEntriesInRange(start, end).size
+
+        // 用量聚合（SQL 层）：生产实现走 json_extract + GROUP BY 以避免 OOM。
+        // 本 Fake 不模拟聚合语义，返回空列表即可——本测试不涉及用量统计。
+        override suspend fun aggregateUsageInRange(start: Long?, end: Long?) =
+            emptyList<top.wkbin.taixu.core.database.UsageAggregateRow>()
+
+        override suspend fun aggregateDailyCounts(start: Long?, end: Long?) =
+            emptyList<top.wkbin.taixu.core.database.DailyCountRow>()
         override suspend fun branch(sessionId: String, leafId: String?): List<HarnessEntryEntity> {
             if (leafId == null) return emptyList()
             val byId = entryList.associateBy { it.id }

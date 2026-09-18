@@ -44,6 +44,10 @@ class ApiContextAssembler @Inject constructor(
         thinkingMode: Boolean = false,
     ): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
+        // 「历史折叠线比例」：让历史在预算的一部分处就开始折叠。
+        // 与面板同源读取同一个偏好，保证两侧折叠决策一致。
+        val foldingRatioPercent = runCatching { settingsDataStore.contextFoldingRatioPercent.first() }
+            .getOrDefault(ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)
         // 与 SessionModelSwitcher 共用 clampedBudget：占用判定与实际请求必须是同一预算口径
         val budgetTokens = ContextWindowPolicy.clampedBudget(
             model.contextTokens,
@@ -100,6 +104,7 @@ class ApiContextAssembler @Inject constructor(
                         ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer),
                     keepRecentTokens = model.compactionKeepRecentTokens ?: 0,
                     reserveTokens = model.compactionReserveTokens,
+                    foldingRatioPercent = foldingRatioPercent,
                 )
             } else {
                 0

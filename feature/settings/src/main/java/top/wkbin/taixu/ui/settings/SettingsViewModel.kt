@@ -17,6 +17,7 @@ import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.database.StorageMountBindingRepository
 import top.wkbin.taixu.core.tools.ProviderRepository
+import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.core.tools.ToolManager
 import top.wkbin.taixu.core.tools.AiProfileWriter
 import top.wkbin.taixu.core.tools.AiProfileBackupCodec
@@ -44,6 +45,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -643,6 +645,41 @@ class SettingsViewModel @Inject constructor(
 
     val contextBudgetTokens: StateFlow<Int> = agentPreferences.contextBudgetTokens
         .stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
+
+    /**
+     * 当前「全局激活模型」在档案里声明的上下文上限（`contextTokens`）；无激活模型或未配置时为 null。
+     *
+     * 为什么设置页需要它：真正决定折叠的预算以「模型档案的 contextTokens」优先，全局预算
+     * （[contextBudgetTokens]）只在模型未配置时兜底。设置页此前用全局值算预览，而引擎按模型
+     * 档案值折叠 —— 两者不同源，导致「设置页显示 100K、实际按 400K 折叠」的单一真相源缺失。
+     * 本流与 Harness 引擎同源（同样取 `isActive` 模型）。
+     */
+    val activeModelDeclaredTokens: StateFlow<Int?> = models.map { list ->
+        list.firstOrNull { it.isActive }?.contextTokens
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * 当前**实际生效**的上下文预算，与 Harness 引擎保持同一口径：
+     * `resolveBudget(activeModel.contextTokens, 全局预算)`。
+     *
+     * 设置页的「折叠线预览」必须基于本值计算，才能做到「填多少、看到多少、按多少折叠」三处一致。
+     */
+    val effectiveContextBudget: StateFlow<Int> = combine(
+        activeModelDeclaredTokens,
+        contextBudgetTokens,
+    ) { declared, fallback ->
+        ContextWindowPolicy.resolveBudget(declared, fallback)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
+
+    /**
+     * 历史折叠线比例（%，默认 100）：历史在预算的百分之几处开始折叠。
+     */
+    val contextFoldingRatioPercent: StateFlow<Int> = agentPreferences.contextFoldingRatioPercent
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)
+
+    fun setContextFoldingRatioPercent(value: Int) {
+        viewModelScope.launch { agentPreferences.setContextFoldingRatioPercent(value) }
+    }
 
     val maxToolsPerRound: StateFlow<Int> = agentPreferences.maxToolsPerRound
         .stateIn(viewModelScope, SharingStarted.Eagerly, 12)

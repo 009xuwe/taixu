@@ -156,6 +156,7 @@ class AgentPreferences @Inject constructor(private val store: SettingsDataStore)
     val commandOutputCompressionEnabled get() = store.commandOutputCompressionEnabled
     val baseCommandTimeoutSeconds get() = store.baseCommandTimeoutSeconds
     val contextBudgetTokens get() = store.contextBudgetTokens
+    val contextFoldingRatioPercent get() = store.contextFoldingRatioPercent
     val maxToolsPerRound get() = store.maxToolsPerRound
     val maxConsecutiveFailures get() = store.maxConsecutiveFailures
     val providerModel get() = store.providerModel
@@ -179,6 +180,7 @@ class AgentPreferences @Inject constructor(private val store: SettingsDataStore)
     suspend fun setAutoWorkspaceCwd(value: Boolean) = store.setAutoWorkspaceCwd(value)
     suspend fun setBaseCommandTimeoutSeconds(value: Int) = store.setBaseCommandTimeoutSeconds(value)
     suspend fun setContextBudgetTokens(value: Int) = store.setContextBudgetTokens(value)
+    suspend fun setContextFoldingRatioPercent(value: Int) = store.setContextFoldingRatioPercent(value)
     suspend fun setMaxToolsPerRound(value: Int) = store.setMaxToolsPerRound(value)
     suspend fun setMaxConsecutiveFailures(value: Int) = store.setMaxConsecutiveFailures(value)
     suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) = store.setPluginEnabled(pluginId, enabled)

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -61,7 +62,7 @@ import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
-import top.wkbin.taixu.ui.components.scrollFadingEdge
+import top.wkbin.taixu.ui.components.ScrollFadeOverlay
 import androidx.compose.foundation.lazy.LazyListState
 import top.wkbin.taixu.core.model.QuickPhrase
 import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
@@ -120,14 +121,28 @@ internal fun ChatMessageList(
     // 折叠状态用自定义 Saver：Map 不能直接存入 Bundle（会抛 IllegalArgumentException）
     var expandedOverrides by rememberSaveable(stateSaver = ExpandedOverridesSaver) { mutableStateOf(mapOf<String, Boolean>()) }
 
-    val renderItems = remember(messages, toolResults, expandedOverrides) {
+    val renderItems = remember(messages, expandedOverrides) {
+        // 注意：不把 toolResults 列为依赖——projectChatMessages 的实现并不读取它
+        // （仅保留形参以兼容既有调用），列为依赖只会在工具结果变化时白白让投影失效重建一次。
         projectChatMessages(
             messages = messages,
-            toolResults = toolResults,
             expandedOverrides = expandedOverrides,
         )
     }
-    val waitingForFirstOutput = remember(messages, running, imageGenerationModel) {
+    val waitingForFirstOutput = remember(
+        // 只依赖「末条消息的 id + 其内容签名」：流式期间末条内容变化会改变签名（真正需要重算），
+        // 而历史消息变化不影响该判定，因此无需依赖整个 messages 列表引用（避免每帧 O(n) 重算）。
+        messages.lastOrNull()?.id,
+        messages.lastOrNull()?.let { last ->
+            when (last) {
+                is AssistantText -> "${last.text.length}:${last.reasoning?.length ?: 0}"
+                is ToolCall -> "tool:${last.id}"
+                else -> "other:${last.id}"
+            }
+        },
+        running,
+        imageGenerationModel,
+    ) {
         if (!running) false else {
             val lastUserIndex = messages.indexOfLast { it is UserMessage }
             imageGenerationModel && lastUserIndex >= 0 && messages.drop(lastUserIndex + 1).none { message ->
@@ -139,9 +154,13 @@ internal fun ChatMessageList(
             }
         }
     }
+    // 性能：原实现给 LazyColumn 挂 scrollFadingEdge（内部依赖 CompositingStrategy.Offscreen），
+    // 使整个列表**滚动期间每帧都要全量离屏合成**——屏幕越大代价越高，
+    // 表现为「静止不卡、快速滑动明显掉帧」。现改为在列表之上叠加轻量渐变（零离屏合成）。
+    Box(modifier = modifier) {
     LazyColumn(
         state = listState,
-        modifier = modifier.scrollFadingEdge(top = 4.dp, bottom = 20.dp),
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 4.dp, bottom = 20.dp),
     ) {
         if (initializing) {
@@ -212,7 +231,9 @@ internal fun ChatMessageList(
                                 onCreateBranch = { onCreateBranch(message.id) },
                             )
                             is ToolCall -> {
-                                val rawIndex = messages.indexOfFirst { it.id == message.id }
+                                // 原始下标由投影阶段预计算（见 projectChatMessages），组合期 O(1)，
+                                // 不再在每个 Lazy 项里对 messages 做 indexOfFirst 的 O(n) 全表扫描。
+                                val rawIndex = item.rawIndex
                                 if (message.tool == HarnessTool.SUBAGENT) {
                                     SubagentCard(
                                         call = message,
@@ -259,6 +280,9 @@ internal fun ChatMessageList(
             }
             Spacer(Modifier.height(4.dp))
         }
+    }
+        // 轻量渐隐：叠加在列表之上，不使用离屏合成（scrollFadingEdge 的性能替代）。
+        ScrollFadeOverlay(top = 4.dp, bottom = 20.dp)
     }
 }
 

@@ -64,6 +64,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.AgentPlugin
+import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.AgentSubagent
@@ -98,6 +99,9 @@ fun AgentSettingsScreen(
     val maxToolsPerRound by viewModel.maxToolsPerRound.collectAsStateWithLifecycle()
     val maxConsecutiveFailures by viewModel.maxConsecutiveFailures.collectAsStateWithLifecycle()
     val contextBudgetTokens by viewModel.contextBudgetTokens.collectAsStateWithLifecycle()
+    val effectiveContextBudget by viewModel.effectiveContextBudget.collectAsStateWithLifecycle()
+    val activeModelDeclaredTokens by viewModel.activeModelDeclaredTokens.collectAsStateWithLifecycle()
+    val contextFoldingRatioPercent by viewModel.contextFoldingRatioPercent.collectAsStateWithLifecycle()
     val skills by viewModel.allSkills.collectAsStateWithLifecycle()
     val subagents by viewModel.allSubagents.collectAsStateWithLifecycle()
     val autoSubagentDelegation by viewModel.autoSubagentDelegationEnabled.collectAsStateWithLifecycle()
@@ -283,7 +287,15 @@ fun AgentSettingsScreen(
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         ContextBudgetSliderRow(
                             currentValue = contextBudgetTokens,
+                            declaredTokens = activeModelDeclaredTokens,
                             onValueChange = viewModel::setContextBudgetTokens,
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        ContextFoldingRatioSliderRow(
+                            currentValue = contextFoldingRatioPercent,
+                            budget = effectiveContextBudget,
+                            declaredTokens = activeModelDeclaredTokens,
+                            onValueChange = viewModel::setContextFoldingRatioPercent,
                         )
                     }
                 }
@@ -1033,6 +1045,7 @@ private fun ThresholdSliderRow(
 @Composable
 private fun ContextBudgetSliderRow(
     currentValue: Int,
+    declaredTokens: Int?,
     onValueChange: (Int) -> Unit,
 ) {
     var sliderVal by remember(currentValue) { mutableFloatStateOf(currentValue.toFloat()) }
@@ -1055,7 +1068,13 @@ private fun ContextBudgetSliderRow(
             )
         }
         Text(
-            "模型未单独配置 contextTokens 时生效；长会话历史超出预算将自动折叠早期内容",
+            if (declaredTokens != null) {
+                "当前激活模型档案已单独配置上下文上限 ${declaredTokens / 1000}K，此滑块暂不生效；" +
+                    "仅当模型未配置 contextTokens 时，本值才作为兜底预算。"
+            } else {
+                "当前无激活模型声明 contextTokens，本值即实际生效预算；" +
+                    "长会话历史超出预算将自动折叠早期内容。"
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1065,6 +1084,76 @@ private fun ContextBudgetSliderRow(
             onValueChangeFinished = { onValueChange(sliderVal.toInt()) },
             valueRange = 8000f..1000000f,
             steps = 48, // 步长约 2 万 tok
+        )
+    }
+}
+
+/**
+ * 「历史折叠线比例」滑块。
+ *
+ * 让历史在预算的一部分处就开始折叠，而不是等到预算减预留的硬线才动手——
+ * 长会话可借此显著降低单次请求的 input token 量（省费用、降首字延迟）。
+ */
+@Composable
+private fun ContextFoldingRatioSliderRow(
+    currentValue: Int,
+    budget: Int,
+    declaredTokens: Int?,
+    onValueChange: (Int) -> Unit,
+) {
+    var sliderVal by remember(currentValue) { mutableFloatStateOf(currentValue.toFloat()) }
+    // 实时预览：按当前比例算出的折叠线，让用户直观看到「拖到多少就按多少折叠」。
+    // 关键：budget 必须是**实际生效预算**（模型档案 contextTokens 优先），否则会出现
+    // 「设置页显示 100K、实际按 400K 折叠」。
+    val previewLimit = remember(sliderVal, budget) {
+        ContextWindowPolicy.foldingLimitFor(budget, sliderVal.toInt())
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("历史折叠线比例", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+            Text(
+                "${sliderVal.toInt()}%",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Text(
+            "历史在「预算 × 比例」处开始折叠；调小可显著降低单次请求 token 量（省费用、降首字延迟）。" +
+                "100% 表示只在预算减去输出/工具预留处折叠。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "按当前设置，折叠线约为 ${previewLimit / 1000}K tok",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        // 说明这个预览数按什么预算折算，避免用户误以为它基于「上下文预算上限」滑块。
+        Text(
+            if (declaredTokens != null) {
+                "以上按当前模型档案声明的上下文上限 ${declaredTokens / 1000}K 计算（模型已单独配置，优先于上方预算滑块）。"
+            } else {
+                "以上按上方「上下文预算上限」滑块的值计算（当前无激活模型声明 contextTokens）。"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = sliderVal,
+            onValueChange = { sliderVal = it },
+            onValueChangeFinished = { onValueChange(sliderVal.toInt()) },
+            // 与 SettingsDataStore.setContextFoldingRatioPercent 的 coerceIn(10, 100) 对齐
+            valueRange = 10f..100f,
+            steps = 8, // 步长 10%
         )
     }
 }
