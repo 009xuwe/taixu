@@ -14,7 +14,6 @@ import top.wkbin.taixu.core.model.StatsSnapshot
 import top.wkbin.taixu.core.model.StatsSummary
 import top.wkbin.taixu.core.model.StatsTokenBucket
 import top.wkbin.taixu.core.model.StatsTrendDay
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
@@ -32,6 +31,8 @@ class StatsRepository @Inject constructor(
         now: LocalDate = LocalDate.now(),
     ): StatsSnapshot = withContext(Dispatchers.IO) {
         val zone = ZoneId.systemDefault()
+        // 与 SQL 日切共用同一偏移，避免 CAST(createdAt/86400000) 按 UTC 日切、本地午夜错桶。
+        val tzOffsetMs = zone.rules.getOffset(now.atStartOfDay(zone).toInstant()).totalSeconds * 1000L
         val startEpochMs = range.start?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
         val endEpochMs = range.end?.plusDays(1)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
 
@@ -93,22 +94,20 @@ class StatsRepository @Inject constructor(
             assistantUsageCounts[workspaceLabel] = (assistantUsageCounts[workspaceLabel] ?: 0) + row.entryCount
             sessionEntryCounts[row.sessionId] = (sessionEntryCounts[row.sessionId] ?: 0) + row.entryCount
 
-            when (row.customType) {
-                "user" -> {
-                    // user 文本不在 SQL 侧取出，改用字符数估算（与原 estimateTokens 同口径量级）
-                    totalInputTokens += estimateTokensFromChars(row.textChars)
-                }
-                "assistant" -> {
-                    val finalPrompt = row.promptTokens
-                    val finalOutput = if (row.completionTokens > 0L) {
-                        row.completionTokens
-                    } else {
-                        estimateTokensFromChars(row.textChars + row.reasoningChars).toLong()
-                    }
-                    totalInputTokens += finalPrompt
-                    totalOutputTokens += finalOutput
-                    totalCachedTokens += row.cachedTokens
+            val tokens = tokenContributionFromAggregate(
+                customType = row.customType,
+                promptTokens = row.promptTokens,
+                completionTokens = row.completionTokens,
+                cachedTokens = row.cachedTokens,
+                textChars = row.textChars,
+                reasoningChars = row.reasoningChars,
+            )
+            totalInputTokens += tokens.input
+            totalOutputTokens += tokens.output
+            totalCachedTokens += tokens.cached
 
+            when (row.customType) {
+                "assistant" -> {
                     modelUsageCounts[modelName] = (modelUsageCounts[modelName] ?: 0) + row.entryCount
                     providerUsageCounts[providerName] = (providerUsageCounts[providerName] ?: 0) + row.entryCount
                 }
@@ -118,27 +117,38 @@ class StatsRepository @Inject constructor(
             }
         }
 
-        // 趋势桶：按天聚合（同样不取 payloadJson）
-        val dailyRows = runtimeRepository.aggregateDailyCounts(startEpochMs, endEpochMs)
+        // 趋势桶：按本地日聚合 token（与区间汇总同一套 json_extract 标量，不取 payloadJson）
+        val dailyRows = runtimeRepository.aggregateDailyCounts(startEpochMs, endEpochMs, tzOffsetMs)
         for (row in dailyRows) {
-            val msgDate = Instant.ofEpochMilli(row.createdAt).atZone(zone).toLocalDate()
+            val msgDate = LocalDate.ofEpochDay(row.localEpochDay)
             if (msgDate.isBefore(trendStart) || msgDate.isAfter(trendEnd)) continue
             val session = allSessions[row.sessionId]
             val providerName = session?.modelId?.let { allModels[it] }?.provider?.ifBlank { "默认" } ?: "内置"
             val dayMap = trendBuckets.getOrPut(msgDate) { mutableMapOf() }
             val bucket = dayMap[providerName] ?: StatsTokenBucket()
-            dayMap[providerName] = bucket.add(activity = row.entryCount)
+            val tokens = tokenContributionFromAggregate(
+                customType = row.customType,
+                promptTokens = row.promptTokens,
+                completionTokens = row.completionTokens,
+                cachedTokens = row.cachedTokens,
+                textChars = row.textChars,
+                reasoningChars = row.reasoningChars,
+            )
+            dayMap[providerName] = bucket.add(
+                input = tokens.input,
+                output = tokens.output,
+                cached = tokens.cached,
+                activity = row.entryCount,
+            )
         }
 
-        // 4. 热力图（近 180 天打卡矩阵）—— 同样用按天聚合，不加载原始条目
-        val heatmapStartEpoch = now.minusDays(180).atStartOfDay(zone).toInstant().toEpochMilli()
-        val rawHeatmapRows = runtimeRepository.aggregateDailyCounts(heatmapStartEpoch, null)
-            .filter { it.createdAt > 0L }
-            .groupingBy {
-                runCatching {
-                    Instant.ofEpochMilli(it.createdAt).atZone(zone).toLocalDate().toString()
-                }.getOrDefault("")
-            }
+        // 4. 热力图（近 180 天打卡矩阵）—— 同样用按本地日聚合，不加载原始条目
+        val heatmapStart = now.minusDays(180)
+        val heatmapStartEpoch = heatmapStart.atStartOfDay(zone).toInstant().toEpochMilli()
+        val heatmapStartEpochDay = heatmapStart.toEpochDay()
+        val rawHeatmapRows = runtimeRepository.aggregateDailyCounts(heatmapStartEpoch, null, tzOffsetMs)
+            .filter { it.localEpochDay >= heatmapStartEpochDay }
+            .groupingBy { LocalDate.ofEpochDay(it.localEpochDay).toString() }
             .fold(0) { acc, item -> acc + item.entryCount }
 
         val heatmapDays = mutableListOf<StatsHeatmapDay>()
@@ -195,15 +205,51 @@ class StatsRepository @Inject constructor(
         )
     }
 
-    /**
-     * 由「字符数」估算 token —— 供 SQL 聚合路径使用。
-     *
-     * 原实现按字符逐个数权重（CJK 记 2、ASCII 记 1）再乘 0.75；SQL 侧 LENGTH() 只能拿到字符数、
-     * 拿不到原文，故这里直接用字符数近似：按 1 字符 ≈ 1 权重保守估计，再乘同一个 0.75 系数，
-     * 保证与逐字符版本同量级、不产生数量级偏差。
-     */
-    private fun estimateTokensFromChars(chars: Long): Long {
-        if (chars <= 0L) return 0L
-        return (chars * 0.75).toLong().coerceAtLeast(1L)
-    }
+}
+
+internal data class AggregateTokenContribution(
+    val input: Long,
+    val output: Long,
+    val cached: Long,
+)
+
+/**
+ * 把 SQL 聚合行转成与区间汇总相同的 input/output/cached 口径。
+ * 趋势图按天桶必须走这条路径，否则只有 activityCount、totalTokens 恒为 0。
+ */
+internal fun tokenContributionFromAggregate(
+    customType: String?,
+    promptTokens: Long,
+    completionTokens: Long,
+    cachedTokens: Long,
+    textChars: Long,
+    reasoningChars: Long,
+): AggregateTokenContribution = when (customType) {
+    "user" -> AggregateTokenContribution(
+        input = estimateTokensFromChars(textChars),
+        output = 0L,
+        cached = 0L,
+    )
+    "assistant" -> AggregateTokenContribution(
+        input = promptTokens,
+        output = if (completionTokens > 0L) {
+            completionTokens
+        } else {
+            estimateTokensFromChars(textChars + reasoningChars)
+        },
+        cached = cachedTokens,
+    )
+    else -> AggregateTokenContribution(0L, 0L, 0L)
+}
+
+/**
+ * 由「字符数」估算 token —— 供 SQL 聚合路径使用。
+ *
+ * 原实现按字符逐个数权重（CJK 记 2、ASCII 记 1）再乘 0.75；SQL 侧 LENGTH() 只能拿到字符数、
+ * 拿不到原文，故这里直接用字符数近似：按 1 字符 ≈ 1 权重保守估计，再乘同一个 0.75 系数，
+ * 保证与逐字符版本同量级、不产生数量级偏差。
+ */
+internal fun estimateTokensFromChars(chars: Long): Long {
+    if (chars <= 0L) return 0L
+    return (chars * 0.75).toLong().coerceAtLeast(1L)
 }

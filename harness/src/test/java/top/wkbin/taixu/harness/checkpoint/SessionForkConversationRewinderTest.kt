@@ -74,7 +74,7 @@ class SessionForkConversationRewinderTest {
         override suspend fun aggregateUsageInRange(start: Long?, end: Long?) =
             emptyList<top.wkbin.taixu.core.database.UsageAggregateRow>()
 
-        override suspend fun aggregateDailyCounts(start: Long?, end: Long?) =
+        override suspend fun aggregateDailyCounts(start: Long?, end: Long?, tzOffsetMs: Long) =
             emptyList<top.wkbin.taixu.core.database.DailyCountRow>()
         override suspend fun branch(sessionId: String, leafId: String?): List<HarnessEntryEntity> {
             if (leafId == null) return emptyList()

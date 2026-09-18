@@ -468,11 +468,8 @@ internal fun AssistantBubble(
                 MarkdownText(
                     markdown = message.text,
                     modifier = Modifier.fillMaxWidth(),
-                    // 统一提供缓存键（只用 message.id，不含 text.length）：
-                    //  - 旧写法仅在有生成图时才给 key，导致普通长回复完全走不到
-                    //    largeMarkdownBlockCache（大文本 LRU）路径，滚动时反复解析；
-                    //  - 且旧键含 text.length，流式输出期间每帧都变，缓存形同失效。
-                    //    消息一旦落定其文本不再变化，id 足以标识内容。
+                    // 缓存键只用 message.id：流式期间每帧 text.length 都会变，把长度编进键会让
+                    // 缓存形同失效。大文本 LRU 在 MarkdownText 内用内容指纹校验，同一 id 换正文不会串味。
                     contentCacheKey = "assistant:${message.id}",
                 )
             }

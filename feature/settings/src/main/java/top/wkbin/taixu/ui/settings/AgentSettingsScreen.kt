@@ -1103,10 +1103,18 @@ private fun ContextFoldingRatioSliderRow(
 ) {
     var sliderVal by remember(currentValue) { mutableFloatStateOf(currentValue.toFloat()) }
     // 实时预览：按当前比例算出的折叠线，让用户直观看到「拖到多少就按多少折叠」。
-    // 关键：budget 必须是**实际生效预算**（模型档案 contextTokens 优先），否则会出现
-    // 「设置页显示 100K、实际按 400K 折叠」。
-    val previewLimit = remember(sliderVal, budget) {
-        ContextWindowPolicy.foldingLimitFor(budget, sliderVal.toInt())
+    // 关键：budget 必须是**实际生效预算**（模型档案 contextTokens 优先，再钳到 MAX_CONTEXT_BUDGET），
+    // 并且扣减引擎同款 system/输出/工具 schema 预留，否则设置页会高于真实折叠触发线。
+    val previewSystemTokens = ContextWindowPolicy.estimateReservedPromptTokens(
+        pureChat = false,
+        toolDisabled = false,
+    )
+    val previewLimit = remember(sliderVal, budget, previewSystemTokens) {
+        ContextWindowPolicy.foldingLimitFor(
+            budget = budget,
+            ratioPercent = sliderVal.toInt(),
+            systemTokens = previewSystemTokens,
+        ).coerceAtLeast(0)
     }
     Column(
         modifier = Modifier
@@ -1128,7 +1136,7 @@ private fun ContextFoldingRatioSliderRow(
         }
         Text(
             "历史在「预算 × 比例」处开始折叠；调小可显著降低单次请求 token 量（省费用、降首字延迟）。" +
-                "100% 表示只在预算减去输出/工具预留处折叠。",
+                "100% 表示只在预算的 75% 减去输出/工具/系统预留处折叠。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1140,9 +1148,19 @@ private fun ContextFoldingRatioSliderRow(
         // 说明这个预览数按什么预算折算，避免用户误以为它基于「上下文预算上限」滑块。
         Text(
             if (declaredTokens != null) {
-                "以上按当前模型档案声明的上下文上限 ${declaredTokens / 1000}K 计算（模型已单独配置，优先于上方预算滑块）。"
+                "以上按当前生效预算 ${budget / 1000}K 计算" +
+                    "（模型档案声明 ${declaredTokens / 1000}K" +
+                    (
+                        if (declaredTokens > ContextWindowPolicy.MAX_CONTEXT_BUDGET) {
+                            "，引擎钳制到 ${ContextWindowPolicy.MAX_CONTEXT_BUDGET / 1000}K"
+                        } else {
+                            "，优先于上方预算滑块"
+                        }
+                    ) +
+                    "）。预览已扣除系统提示/输出/工具 schema 预留。"
             } else {
-                "以上按上方「上下文预算上限」滑块的值计算（当前无激活模型声明 contextTokens）。"
+                "以上按上方「上下文预算上限」滑块的值计算（当前无激活模型声明 contextTokens）。" +
+                    "预览已扣除系统提示/输出/工具 schema 预留。"
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -323,4 +323,36 @@ class HarnessRuntimeRepositoryIntegrationTest {
         assertEquals(leafBefore, repository.findLane(sessionId, "main")!!.leafId)
         assertEquals("other-session", dao.findEntry("child")!!.sessionId)
     }
+
+    @Test
+    fun `local offset day buckets split a UTC day without loading payloads`() = runBlocking {
+        val sessionId = "stats-daily"
+        val shanghaiOffsetMs = 8L * 60 * 60 * 1000
+        // UTC 2026-09-17 15:00 → 上海 23:00（17 日）；UTC 16:00 → 上海次日 00:00。
+        val utcSep17Afternoon = java.time.Instant.parse("2026-09-17T15:00:00Z").toEpochMilli()
+        val utcSep17Evening = java.time.Instant.parse("2026-09-17T16:00:00Z").toEpochMilli()
+        assertEquals(utcSep17Afternoon / 86_400_000L, utcSep17Evening / 86_400_000L)
+
+        dao.insertEntry(entry("user-1", sessionId, null).copy(createdAt = utcSep17Afternoon))
+        dao.insertEntry(entry("asst-1", sessionId, "user-1").copy(createdAt = utcSep17Evening, customType = "assistant"))
+
+        // Robolectric SQLite 未编 JSON1，这里只验证与 DAO 相同的本地日切表达式。
+        val db = database.openHelper.readableDatabase
+        db.query(
+            "SELECT CAST((createdAt + ?) / 86400000 AS INTEGER) AS d, COUNT(*) FROM harness_entries GROUP BY d ORDER BY d",
+            arrayOf(shanghaiOffsetMs.toString()),
+        ).use { cursor ->
+            val days = mutableListOf<Long>()
+            while (cursor.moveToNext()) days += cursor.getLong(0)
+            assertEquals("Shanghai offset must split the UTC day", 2, days.size)
+            assertEquals((utcSep17Afternoon + shanghaiOffsetMs) / 86_400_000L, days[0])
+            assertEquals((utcSep17Evening + shanghaiOffsetMs) / 86_400_000L, days[1])
+        }
+        db.query(
+            "SELECT COUNT(DISTINCT CAST(createdAt / 86400000 AS INTEGER)) FROM harness_entries",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("UTC grouping would keep both rows on one day", 1, cursor.getInt(0))
+        }
+    }
 }
