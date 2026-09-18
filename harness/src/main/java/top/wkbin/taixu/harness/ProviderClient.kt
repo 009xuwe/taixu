@@ -1170,9 +1170,9 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "base",
-                    description = "在 Debian Linux 沙箱中执行前台 shell 命令，返回退出码/stdout/stderr。用于安装软件、运行脚本、检查状态和执行构建。默认超时由用户在 Agent 设置中配置；可用 timeout_seconds 为单次调用指定 1-3600 秒。常驻服务不要使用 nohup 或 &，应改用 process 工具。",
+                    description = "在 Debian Linux 沙箱中执行前台 shell 命令，返回退出码/stdout/stderr。用于安装软件、运行脚本、检查状态和执行构建。默认超时由用户在 Agent 设置中配置；可用 timeout_seconds 为单次调用指定 1-900 秒。常驻服务不要使用 nohup 或 &，应改用 process 工具。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"command":{"type":"string","description":"要执行的 shell 命令"},"cwd":{"type":"string","description":"工作目录；关联工作区时默认使用工作区，否则为 /root"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600,"description":"可选的单次超时秒数；省略时使用用户设置的默认值"}},"required":["command"]}""",
+                        """{"type":"object","properties":{"command":{"type":"string","description":"要执行的 shell 命令"},"cwd":{"type":"string","description":"工作目录；关联工作区时默认使用工作区，否则为 /root"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":900,"description":"可选的单次超时秒数；省略时使用用户设置的默认值"}},"required":["command"]}""",
                     ).jsonObject,
                 ),
             ),
@@ -1263,7 +1263,10 @@ class ProviderClient @Inject constructor(
         /** 组装静态基础工具 + 动态 MCP 插件工具 */
         fun buildDynamicTools(mcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList()): List<ApiToolDefinition> {
             val list = TOOLS.toMutableList()
-            mcpTools.forEach { mcp ->
+            // 工具数组序列化在 messages 之前，其顺序抖动会击穿 provider prefix cache 的整个前缀。
+            // MCP 工具来自并发发现（awaitAll），单服务内顺序取决于服务端返回，未必稳定；
+            // 这里按 (serverId, name) 显式排序，保证同一组启用服务下发的工具数组逐字节一致。
+            mcpTools.sortedWith(compareBy({ it.serverId }, { it.name })).forEach { mcp ->
                 val fullToolName = McpToolApiName.encode(mcp)
                 val params = runCatching {
                     Json.parseToJsonElement(mcp.parametersJson).jsonObject
