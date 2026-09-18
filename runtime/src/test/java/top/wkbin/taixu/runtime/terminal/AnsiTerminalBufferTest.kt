@@ -29,11 +29,13 @@ class AnsiTerminalBufferTest {
 
     @Test
     fun scrollbackIsBounded() {
-        val buffer = AnsiTerminalBuffer(columns = 20, rows = 3, maxRows = 3)
-        val screen = buffer.append("one\ntwo\nthree\nfour")
+        // rows=3 会被实现的 MIN_ROWS=5 钳制（视口护栏），取最小合法视口 5 行；
+        // maxRows=5 + 7 行输入 → 滚动两次，最早两行被滚回缓冲裁掉，总量仍有界。
+        val buffer = AnsiTerminalBuffer(columns = 20, rows = 5, maxRows = 5)
+        val screen = buffer.append("one\ntwo\nthree\nfour\nfive\nsix\nseven")
 
-        assertTrue(screen.size <= 3)
-        assertEquals("four", screen.last().cells.joinToString("") { it.character })
+        assertTrue(screen.size <= 5)
+        assertEquals("seven", screen.last().cells.joinToString("") { it.character })
     }
 
     @Test
@@ -46,7 +48,8 @@ class AnsiTerminalBufferTest {
         assertEquals("line1", screen[0].cells.joinToString("") { it.character })
         assertEquals("line2", screen[1].cells.joinToString("") { it.character })
         assertEquals("line3", screen[2].cells.joinToString("") { it.character })
-        assertEquals(3, buffer.cursor().row)
+        // line3 写在视口第 2 行（0-indexed），光标与写入行一致（同 cupCanAddress… 的语义）。
+        assertEquals(2, buffer.cursor().row)
     }
 
     @Test
