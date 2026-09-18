@@ -660,7 +660,7 @@ class SettingsViewModel @Inject constructor(
 
     /**
      * 当前**实际生效**的上下文预算，与 Harness 引擎保持同一口径：
-     * `resolveBudget(activeModel.contextTokens, 全局预算)`。
+     * `clampedBudget(activeModel.contextTokens, 全局预算)`（先 resolve 再钳到 [ContextWindowPolicy.MAX_CONTEXT_BUDGET]）。
      *
      * 设置页的「折叠线预览」必须基于本值计算，才能做到「填多少、看到多少、按多少折叠」三处一致。
      */
@@ -668,7 +668,7 @@ class SettingsViewModel @Inject constructor(
         activeModelDeclaredTokens,
         contextBudgetTokens,
     ) { declared, fallback ->
-        ContextWindowPolicy.resolveBudget(declared, fallback)
+        ContextWindowPolicy.clampedBudget(declared, fallback)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
 
     /**

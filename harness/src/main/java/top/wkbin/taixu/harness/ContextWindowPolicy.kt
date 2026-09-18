@@ -9,8 +9,8 @@ object ContextWindowPolicy {
     // Input budget reserves headroom for system prompt, tool/MCP schemas, completion
     // tokens and provider overhead instead of spending the whole model window on history.
     private const val INPUT_BUDGET_FRACTION = 0.75
-    private const val RESERVED_OUTPUT_TOKENS = 8_192
-    private const val TOOL_SCHEMA_RESERVE_TOKENS = 4_096
+    internal const val RESERVED_OUTPUT_TOKENS = 8_192
+    internal const val TOOL_SCHEMA_RESERVE_TOKENS = 4_096
     private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
     private const val MIN_SYSTEM_PROMPT_TOKENS = 512
     /**
@@ -28,18 +28,29 @@ object ContextWindowPolicy {
     const val MAX_FOLDING_RATIO_PERCENT = 100
 
     /**
-     * 历史折叠触发线（token），供 UI 预览展示；口径与 [computeKeepFromIndex] 一致。
+     * 历史折叠触发线（token），供 UI 预览与 [computeKeepFromIndex] 共用。
      *
-     * `INPUT_BUDGET_FRACTION = 0.75` 本身就是「为 system prompt / 工具 schema / 输出预留 25%」，
-     * 因此这里取 `min(预算 × 比例%, 预算 × 75%)` 即可，不再重复扣减预留。
-     * `ratioPercent = 100` 时退化为 75% 线（= 旧行为）。
+     * 口径与引擎一致：先取 `min(预算 × 比例%, 预算 × INPUT_BUDGET_FRACTION)`，
+     * 再减去 [systemTokens]、输出预留与工具 schema 预留，最后钳到 [SAFE_GENERATION_CAP]。
+     * `ratioPercent = 100` 时与旧引擎行为一致（75% 线再减预留）。
+     *
+     * 返回值可能为负（小预算被预留吃光）——引擎据此走最小保留兜底；UI 预览应 `coerceAtLeast(0)`。
      */
-    fun foldingLimitFor(budget: Int, ratioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT): Int {
+    fun foldingLimitFor(
+        budget: Int,
+        ratioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
+        systemTokens: Int = 0,
+        reserveTokens: Int? = null,
+    ): Int {
         if (budget <= 0) return 0
         val safeRatio = ratioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
         val fractionCap = (budget * INPUT_BUDGET_FRACTION).toInt()
         val ratioScaled = (budget.toLong() * safeRatio / 100L).toInt()
-        return minOf(ratioScaled, fractionCap).coerceAtLeast(0)
+        val rawLimit = minOf(ratioScaled, fractionCap) -
+            systemTokens.coerceAtLeast(0) -
+            (reserveTokens ?: RESERVED_OUTPUT_TOKENS) -
+            TOOL_SCHEMA_RESERVE_TOKENS
+        return minOf(rawLimit, SAFE_GENERATION_CAP)
     }
     private const val APPROX_CHARS_PER_TOKEN = 4
 
@@ -347,18 +358,16 @@ object ContextWindowPolicy {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
         val safeRatio = foldingRatioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
-        // 比例线（用户设置）与硬上限线（INPUT_BUDGET_FRACTION）取小：
+        // 与 [foldingLimitFor] 同一条线：比例线与 75% 硬上限取小，再减 system/输出/工具 schema，钳到安全上限。
         // ratio=100 时恒等于旧行为，因为 100% 的线总是 ≥ 75% 的硬上限线。
-        val fractionCap = (budget * INPUT_BUDGET_FRACTION).toInt()
-        val ratioScaled = (budget.toLong() * safeRatio / 100L).toInt()
-        val rawLimit = minOf(ratioScaled, fractionCap) -
-            systemTokens - (reserveTokens ?: RESERVED_OUTPUT_TOKENS) - TOOL_SCHEMA_RESERVE_TOKENS
-        // 安全上限：标称窗口再大，历史也最多占 SAFE_GENERATION_CAP，
-        // 防止超大 contextTokens 把折叠触发线撑到永不生效。
-        // 注意：不再对 limit 做下限抬升——小预算模型（16k/32k）的 rawLimit 必须能落到
-        // <= 0，才能触发上面的最小保留兜底（折叠到最近一个用户轮次），
-        // 否则历史折叠永不触发，小窗口模型必然 context overflow。
-        val limit = minOf(rawLimit, SAFE_GENERATION_CAP)
+        val limit = foldingLimitFor(
+            budget = budget,
+            ratioPercent = safeRatio,
+            systemTokens = systemTokens,
+            reserveTokens = reserveTokens,
+        )
+        // 小预算模型的 rawLimit 必须能落到 <= 0，才能触发最小保留兜底；
+        // 不再对 limit 做下限抬升，否则历史折叠永不触发。
         if (limit <= 0) {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }

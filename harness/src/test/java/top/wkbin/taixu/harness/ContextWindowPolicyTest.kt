@@ -482,25 +482,37 @@ class ContextWindowPolicyTest {
 
     @Test
     fun `settings preview folding line matches engine for declared-model scenario`() {
-        // 真实场景（一手设备取证）：模型档案 contextTokens=1,000,000、全局预算=250,938、比例=40%
-        val declared = 1_000_000
-        val globalBudget = 250_938
+        // 真实场景：模型档案 contextTokens 优先于全局预算；两侧必须走 clampedBudget + 同一套预留。
+        val declared = 150_000
+        val globalBudget = 80_000
         val ratio = 40
+        val systemTokens = ContextWindowPolicy.DEFAULT_SYSTEM_PROMPT_TOKENS
 
-        // 引擎侧与设置页侧必须走同一表达式：resolveBudget(declared, 全局预算)
-        val engineBudget = ContextWindowPolicy.resolveBudget(declared, globalBudget)
-        val previewBudget = ContextWindowPolicy.resolveBudget(declared, globalBudget)
-        val engineLine = ContextWindowPolicy.foldingLimitFor(engineBudget, ratio)
-        val previewLine = ContextWindowPolicy.foldingLimitFor(previewBudget, ratio)
+        val engineBudget = ContextWindowPolicy.clampedBudget(declared, globalBudget)
+        val previewBudget = ContextWindowPolicy.clampedBudget(declared, globalBudget)
+        val engineLine = ContextWindowPolicy.foldingLimitFor(engineBudget, ratio, systemTokens)
+        val previewLine = ContextWindowPolicy.foldingLimitFor(previewBudget, ratio, systemTokens)
 
-        // 「填多少、显示多少、按多少折叠」三处一致
-        assertEquals(400_000, engineLine)
+        assertEquals(declared, engineBudget)
         assertEquals(engineLine, previewLine)
 
-        // 反证锚点：若错误地拿被模型声明覆盖掉的全局预算当分母，会算出约 100K，
-        // 与实际 400K 相差约 4 倍 —— 这正是「设置页显示 100K、实际按 400K 折叠」的缺陷。
-        val buggyLine = ContextWindowPolicy.foldingLimitFor(globalBudget, ratio)
-        assertEquals(100_375, buggyLine)
+        val ratioOrFraction = minOf((engineBudget * 0.75).toInt(), engineBudget * ratio / 100)
+        val expected = minOf(
+            ratioOrFraction - systemTokens -
+                ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
+                ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
+            ContextWindowPolicy.SAFE_GENERATION_CAP,
+        )
+        assertEquals(expected, engineLine)
+
+        val withoutReserves = ratioOrFraction
+        assertTrue(
+            "漏扣 system/输出/工具 schema 会让预览高于真实折叠线",
+            withoutReserves > engineLine,
+        )
+
+        // 反证：若错误地拿被模型声明覆盖掉的全局预算当分母，折叠线会明显偏低。
+        val buggyLine = ContextWindowPolicy.foldingLimitFor(globalBudget, ratio, systemTokens)
         assertTrue(
             "修复前的算法必须与真实折叠线不符，否则本测试无判别力",
             buggyLine != engineLine,
@@ -509,19 +521,87 @@ class ContextWindowPolicyTest {
 
     @Test
     fun `preview and engine agree when no model declares context tokens`() {
-        val globalBudget = 250_938
+        val globalBudget = 180_000
         val noDeclared: Int? = null
-        // 引擎：activeModel?.contextTokens ?: defaultBudget
-        val engineBudget = ContextWindowPolicy.resolveBudget(noDeclared, globalBudget)
-        // 设置页：effectiveContextBudget 的 fallback 分支
-        val previewBudget = ContextWindowPolicy.resolveBudget(noDeclared, globalBudget)
+        val engineBudget = ContextWindowPolicy.clampedBudget(noDeclared, globalBudget)
+        val previewBudget = ContextWindowPolicy.clampedBudget(noDeclared, globalBudget)
 
         assertEquals(globalBudget, engineBudget)
         assertEquals(engineBudget, previewBudget)
         assertEquals(
-            ContextWindowPolicy.foldingLimitFor(engineBudget, 40),
-            ContextWindowPolicy.foldingLimitFor(previewBudget, 40),
+            ContextWindowPolicy.foldingLimitFor(engineBudget, 40, systemTokens = 500),
+            ContextWindowPolicy.foldingLimitFor(previewBudget, 40, systemTokens = 500),
         )
+    }
+
+    @Test
+    fun `oversized declared window is clamped before folding preview`() {
+        val engineBudget = ContextWindowPolicy.clampedBudget(1_000_000, 250_938)
+        val previewBudget = ContextWindowPolicy.clampedBudget(1_000_000, 250_938)
+        assertEquals(ContextWindowPolicy.MAX_CONTEXT_BUDGET, engineBudget)
+        assertEquals(engineBudget, previewBudget)
+        assertEquals(
+            ContextWindowPolicy.foldingLimitFor(engineBudget, 40, systemTokens = 0),
+            ContextWindowPolicy.foldingLimitFor(previewBudget, 40, systemTokens = 0),
+        )
+    }
+
+    @Test
+    fun `foldingLimitFor subtracts system reserve and schema like the engine`() {
+        val budget = 18_000
+        val ratio = 80
+        val systemTokens = 200
+        val limit = ContextWindowPolicy.foldingLimitFor(budget, ratio, systemTokens)
+        val ratioOrFraction = minOf((budget * 0.75).toInt(), budget * ratio / 100)
+        assertEquals(
+            ratioOrFraction - systemTokens -
+                ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
+                ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
+            limit,
+        )
+        assertTrue(limit > 0)
+
+        val messages = buildList<HarnessMessage> {
+            repeat(24) { index ->
+                add(UserMessage("u-$index", index * 2L, "request $index " + "a".repeat(400)))
+                add(AssistantText("a-$index", index * 2L + 1, "answer $index " + "b".repeat(400)))
+            }
+        }
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(
+            messages,
+            budget = budget,
+            systemTokens = systemTokens,
+            foldingRatioPercent = ratio,
+        )
+        assertTrue(keepFrom > 0)
+        val kept = messages.drop(keepFrom).sumOf(::estimateMessageTokens)
+        assertTrue("kept=$kept should stay within fold line $limit", kept <= limit)
+    }
+
+    @Test
+    fun `default ratio 100 folding line matches previous engine formula`() {
+        val budget = 128_000
+        val systemTokens = 10
+        val expected = minOf(
+            (budget * 0.75).toInt() - systemTokens -
+                ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
+                ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
+            ContextWindowPolicy.SAFE_GENERATION_CAP,
+        )
+        assertEquals(
+            expected,
+            ContextWindowPolicy.foldingLimitFor(budget, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT, systemTokens),
+        )
+    }
+
+    @Test
+    fun `panel denominator is the fold line not the declared window`() {
+        val declared = 1_000_000
+        val budget = ContextWindowPolicy.clampedBudget(declared, 128_000)
+        val limit = ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens = 1_000)
+        assertTrue(limit < declared)
+        assertTrue(limit <= ContextWindowPolicy.SAFE_GENERATION_CAP)
+        assertTrue(limit < budget)
     }
 
     // ------------------------------------------------------------------
@@ -608,5 +688,15 @@ class ContextWindowPolicyTest {
             "两者差距必须显著，否则本测试无判别力（$projected vs $unprojected）",
             unprojected - projected > unprojected / 2,
         )
+    }
+
+    private fun estimateMessageTokens(message: HarnessMessage): Int = when (message) {
+        is UserMessage -> ContextWindowPolicy.estimateTokens(message.text)
+        is AssistantText -> ContextWindowPolicy.estimateTokens(message.text) +
+            ContextWindowPolicy.estimateTokens(message.reasoning.orEmpty())
+        is ToolCall -> ContextWindowPolicy.estimateTokens(message.args.toString()) +
+            ContextWindowPolicy.estimateTokens(message.reasoning.orEmpty())
+        is ToolResult -> ContextWindowPolicy.estimateTokens(message.output)
+        else -> 0
     }
 }
