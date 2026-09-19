@@ -99,13 +99,7 @@ class BuiltinToolContractTest {
 
     @Test
     fun allProviderFunctionNamesUsePortableCharacters() {
-        val unsafeMcp = McpToolInfo(
-            serverId = "用户/server.with spaces",
-            serverName = "测试 MCP",
-            name = "files/read:all?",
-            description = "test",
-        )
-        val names = ProviderClient.buildDynamicTools(listOf(unsafeMcp)).map { it.function.name }
+        val names = ProviderClient.buildDynamicTools().map { it.function.name }
 
         names.forEach { name ->
             assertTrue("invalid provider function name: $name", name.matches(Regex("^[a-zA-Z0-9_-]+$")))
@@ -114,26 +108,18 @@ class BuiltinToolContractTest {
     }
 
     @Test
-    fun `mcp tools serialize in a discovery-order-independent array`() {
-        fun tool(server: String, name: String) = McpToolInfo(
-            serverId = server,
-            serverName = server,
-            name = name,
-            description = "test",
+    fun `provider surface exposes use_capability proxy and never leaks mcp schemas`() {
+        val tools = ProviderClient.buildDynamicTools()
+        val names = tools.map { it.function.name }
+
+        // 统一代理必须在场：MCP 能力的唯一入口
+        assertTrue("use_capability 必须在 provider 工具面中", "use_capability" in names)
+        // MCP 工具 schema 绝不进入 provider 可见面（MCP 清单变化不再击穿前缀缓存）
+        assertTrue(
+            "provider 工具面不得泄漏 mcp__ 工具：${names.filter { it.startsWith("mcp__") }}",
+            names.none { it.startsWith("mcp__") },
         )
-
-        val discovered = listOf(
-            tool("srv-b", "zeta"),
-            tool("srv-a", "beta"),
-            tool("srv-a", "alpha"),
-            tool("srv-b", "omega"),
-        )
-
-        val forward = ProviderClient.buildDynamicTools(discovered).map { it.function.name }
-        val reversed = ProviderClient.buildDynamicTools(discovered.reversed()).map { it.function.name }
-
-        // 工具数组序列化在 messages 之前，顺序抖动会击穿 provider prefix cache 的整个前缀。
-        assertEquals("工具数组必须与 MCP 发现顺序无关", forward, reversed)
-        assertEquals(ProviderClient.TOOLS.size + discovered.size, forward.size)
+        // 工具数组必须逐字节稳定（重复构建完全一致）
+        assertEquals(tools, ProviderClient.buildDynamicTools())
     }
 }

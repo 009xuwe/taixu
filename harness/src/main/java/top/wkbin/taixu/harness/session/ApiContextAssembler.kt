@@ -4,7 +4,6 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.datastore.AgentPreferences
-import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.HarnessApiMapper
@@ -16,7 +15,6 @@ import top.wkbin.taixu.harness.ToolCallMode
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.harness.compaction.CompactionManager
 import top.wkbin.taixu.harness.compaction.SummaryRequestContext
-import top.wkbin.taixu.harness.mcp.ActiveMcpToolCatalog
 import top.wkbin.taixu.harness.prompt.MemoryRecallSelector
 import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
 
@@ -40,7 +38,6 @@ class ApiContextAssembler @Inject constructor(
     private val systemPromptBuilder: SystemPromptBuilder,
     private val sessionStore: SessionTreeStore,
     private val memoryRecallSelector: MemoryRecallSelector,
-    private val mcpCatalog: ActiveMcpToolCatalog,
 ) {
     suspend fun assemble(
         sessId: String,
@@ -105,7 +102,6 @@ class ApiContextAssembler @Inject constructor(
                 sessId,
                 projectTypeOverride,
                 userMessageTexts,
-                mcpTools = promptMcpTools(model),
             )
         } else {
             ""
@@ -209,24 +205,6 @@ class ApiContextAssembler @Inject constructor(
             )
         }
     }
-
-    /**
-     * System prompt 的 MCP 能力章节使用**全量**活跃工具清单，而非 @ 裁剪后的
-     * model.dynamicMcpTools：@ 裁剪只应收窄本轮 tools 数组，不应让提示词章节随
-     * 提及漂移（那会击穿前缀缓存）。与 ProviderClient 请求路径同源（缓存命中，无额外发现成本）。
-     */
-    private suspend fun promptMcpTools(model: ModelConfig): List<McpToolInfo> =
-        if (model.pureChatMode) {
-            emptyList()
-        } else {
-            try {
-                mcpCatalog.getActiveMcpTools()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (throwable: Throwable) {
-                model.dynamicMcpTools
-            }
-        }
 
     private fun toolCallDetailsOf(msgs: List<HarnessMessage>) =
         msgs.filterIsInstance<ToolCall>().associate {

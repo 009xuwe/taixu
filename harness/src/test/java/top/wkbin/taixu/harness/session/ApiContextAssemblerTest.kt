@@ -42,13 +42,11 @@ import top.wkbin.taixu.harness.WorkspaceFileAccess
 import top.wkbin.taixu.core.tools.ToolRegistry
 import top.wkbin.taixu.core.tools.ToolRepository
 import top.wkbin.taixu.harness.compaction.CompactionManager
-import top.wkbin.taixu.harness.mcp.ActiveMcpToolCatalog
 import top.wkbin.taixu.harness.prompt.MemoryRecallSelector
 import top.wkbin.taixu.harness.prompt.PrivilegeSectionRenderer
 import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 import top.wkbin.taixu.harness.prompt.PromptRouter
 import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
-import top.wkbin.taixu.core.model.McpToolInfo
 
 /**
  * API 上下文组装器全栈集成测试：真实 Room（会话树 + 压缩树）+ 真实 DataStore 偏好 +
@@ -104,9 +102,6 @@ class ApiContextAssemblerTest {
             systemPromptBuilder = builder,
             sessionStore = store,
             memoryRecallSelector = MemoryRecallSelector(agentContextRepository),
-            mcpCatalog = object : ActiveMcpToolCatalog {
-                override suspend fun getActiveMcpTools(): List<McpToolInfo> = emptyList()
-            },
         )
     }
 

@@ -346,7 +346,7 @@ internal class ResponsesApi(
             }
         }
 
-        val dynamicTools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+        val dynamicTools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools()
         // JSON_TEXT 模式：工具定义写进 instructions，模型用文本输出工具调用
         if (!model.pureChatMode && model.toolCallMode == ToolCallMode.JSON_TEXT && dynamicTools.isNotEmpty()) {
             systemPrompt.append("\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n")

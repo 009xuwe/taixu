@@ -346,7 +346,7 @@ class HarnessToolRoundRunner @Inject constructor(
         val KNOWN_TOOL_NAMES: Set<String> = HarnessTool.entries
             .filter { it != HarnessTool.MCP }
             .map { HarnessApiMapper.apiName(it) }
-            .toSet() + "subagent" + "invoke_dual_agent"
+            .toSet() + "subagent" + "invoke_dual_agent" + "use_capability"
 
         internal fun parseArguments(json: Json, raw: String): JsonObject =
             if (raw.isBlank()) buildJsonObject {} else {

@@ -254,7 +254,12 @@ class ToolExecutor @Inject constructor(
             } else {
                 subagentOrchestrator?.executeSubagents(args, sessionId) ?: (false to "未初始化子智能体编排器")
             }
-            HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args, workspace) ?: (false to "未初始化 MCP 管理器")
+            HarnessTool.MCP -> if (rawToolName == "use_capability") {
+                executeCapability(args, workspace)
+            } else {
+                // 兼容路径：对话历史/模型习惯中仍可能出现直接 mcp__ 调用（schema 已不再宣告）
+                mcpManager?.executeTool(rawToolName ?: "mcp", args, workspace) ?: (false to "未初始化 MCP 管理器")
+            }
             HarnessTool.LOAD_RULE -> {
                 val rule = requireString(args, "rule")
                 val content = promptRouter?.loadRule(rule)
@@ -693,6 +698,77 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+
+    /**
+     * use_capability 统一代理的分发（对齐 Reasonix）：
+     * - list：列出已启用的服务与缓存工具数，**不启动任何服务器进程**；
+     * - inspect：查看某服务的工具清单与参数（只读缓存，未连接则提示直接 call）；
+     * - call：按 (server, tool) 执行——未连接的服务在此按需启动并发现；
+     * - decline：模型显式放弃某能力，确认即回。
+     */
+    private suspend fun executeCapability(args: JsonObject, workspace: String): Pair<Boolean, String> {
+        val manager = mcpManager ?: return false to "未初始化 MCP 管理器"
+        val action = args.stringArg("action").orEmpty().trim().lowercase()
+        return when (action) {
+            "list" -> {
+                val summaries = manager.enabledServerSummaries()
+                if (summaries.isEmpty()) {
+                    false to "当前没有启用任何 MCP 服务。可在「设置 → MCP 插件与协议生态」启用内置能力或添加自定义服务。"
+                } else {
+                    true to buildString {
+                        appendLine("已启用的 MCP 服务（未连接的服务在首次 call 时自动启动并发现工具）：")
+                        summaries.forEach { summary ->
+                            appendLine(
+                                "- ${summary.id} · ${summary.name} · 已缓存 ${summary.cachedToolCount} 个工具 · " +
+                                    if (summary.connected) "已连接" else "未连接",
+                            )
+                        }
+                        append("用 inspect 查看某服务的工具清单与参数，用 call 调用。")
+                    }
+                }
+            }
+            "inspect" -> {
+                val serverId = args.stringArg("server")?.trim().orEmpty()
+                if (serverId.isBlank()) return false to "inspect 需要 server 参数（先用 list 查看可用的服务 id）"
+                val tools = manager.cachedToolsOf(serverId)
+                if (tools.isEmpty()) {
+                    return false to "MCP[$serverId] 暂无缓存的工具清单（该服务尚未连接过）。" +
+                        "直接 use_capability(action=\"call\", server=\"$serverId\", tool=…) 调用其任一工具即可自动启动并发现。"
+                }
+                val rendered = tools.joinToString("\n\n") { tool ->
+                    buildString {
+                        appendLine("### ${tool.name}")
+                        if (tool.description.isNotBlank()) appendLine(tool.description.trim().take(400))
+                        if (tool.parametersJson.isNotBlank() && tool.parametersJson != "{}") {
+                            appendLine("参数：${tool.parametersJson.take(1200)}")
+                        }
+                    }
+                }
+                val body = if (rendered.length > MAX_INSPECT_CHARS) {
+                    rendered.take(MAX_INSPECT_CHARS) + "\n…[清单过长已截断，可直接按已知工具名 call]"
+                } else {
+                    rendered
+                }
+                true to "MCP[$serverId] 工具清单（${tools.size} 个）：\n$body"
+            }
+            "call" -> {
+                val serverId = args.stringArg("server")?.trim().orEmpty()
+                val tool = args.stringArg("tool")?.trim().orEmpty()
+                if (serverId.isBlank() || tool.isBlank()) {
+                    return false to "call 需要 server 与 tool 参数（先 inspect 查看可用的工具名与参数）"
+                }
+                val callArgs = args["arguments"] as? JsonObject ?: JsonObject(emptyMap())
+                manager.executeCapabilityTool(serverId, tool, callArgs, workspace)
+            }
+            "decline" -> {
+                val serverId = args.stringArg("server").orEmpty().trim()
+                val tool = args.stringArg("tool").orEmpty().trim()
+                true to "已记录：不再尝试 ${if (serverId.isNotBlank()) "$serverId." else ""}$tool。请改用其他方式完成任务或向用户说明障碍。"
+            }
+            else -> false to "action 必须是 list / inspect / call / decline 之一"
+        }
+    }
+
     private suspend fun executeHistoryRead(args: JsonObject, sessionId: String): Pair<Boolean, String> {
         val messageId = args["message_id"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotBlank() }
         val index = args["index"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
@@ -1082,6 +1158,9 @@ class ToolExecutor @Inject constructor(
         const val TRUNCATE_KEEP_LENGTH = 60 * 1024
         const val MAX_COMMAND_LENGTH = 32 * 1024
         const val MAX_ARG_LENGTH = 1024 * 1024
+
+        /** use_capability inspect 清单的输出上限：超出截断并指引直接 call。 */
+        const val MAX_INSPECT_CHARS = 16_000
         const val MAX_HISTORY_READ_OUTPUT = 48 * 1024
 
         /**

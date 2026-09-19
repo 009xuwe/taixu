@@ -81,8 +81,15 @@ class ApprovalPolicyEngine @Inject constructor(
             )
         }
         if (mode == ApprovalMode.FULL_ACCESS) return ApprovalDecision(false)
-        // 内置浏览器 MCP 工具按风险矩阵细化审批：只读（LOW）工具在任何模式下免审
-        if (tool == HarnessTool.MCP && mcpBrowserRisk(rawToolName) == "low") {
+        // use_capability 的 list/inspect/decline 是只读元操作（不启动任何服务器进程），任何模式免审
+        if (tool == HarnessTool.MCP && rawToolName == "use_capability" &&
+            args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase() != "call"
+        ) {
+            return ApprovalDecision(false)
+        }
+        // 内置浏览器 MCP 工具按风险矩阵细化审批：只读（LOW）工具在任何模式下免审。
+        // use_capability(call) 从 arguments 里取 (server, tool) 合成内部工具名，套用同一矩阵。
+        if (tool == HarnessTool.MCP && mcpBrowserRisk(effectiveMcpToolName(tool, args, rawToolName)) == "low") {
             return ApprovalDecision(false)
         }
         if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN ||
@@ -128,7 +135,7 @@ class ApprovalPolicyEngine @Inject constructor(
             HarnessTool.DOWNLOAD -> ApprovalDecision(true, "high", "下载会访问外部网络并写入工作区文件。", summary)
             HarnessTool.BUILD_SCRIPT -> ApprovalDecision(true, "normal", "操作将修改构建脚本或项目挂载关系。", summary)
             HarnessTool.HOST -> error("HOST 已在审批策略入口处理")
-            HarnessTool.MCP -> when (mcpBrowserRisk(rawToolName)) {
+            HarnessTool.MCP -> when (mcpBrowserRisk(effectiveMcpToolName(tool, args, rawToolName))) {
                 "medium" -> ApprovalDecision(true, "medium", "浏览器操作会改变页面状态或新开会话。", summary)
                 "high" -> ApprovalDecision(true, "high", "浏览器操作将修改页面内容或写入本地存储。", summary)
                 "critical" -> ApprovalDecision(true, "critical", "浏览器操作涉及代码执行或读取敏感数据（Cookie/页面源码）。", summary)
@@ -232,9 +239,16 @@ class ApprovalPolicyEngine @Inject constructor(
         HarnessTool.DOWNLOAD -> "download ${args["destination"]?.jsonPrimitive?.content.orEmpty()}"
         HarnessTool.HOST -> "host ${args["action"]?.jsonPrimitive?.content.orEmpty()} ${args["command"]?.jsonPrimitive?.content.orEmpty().lineSequence().firstOrNull().orEmpty()}".trim()
         HarnessTool.MCP -> {
-            val toolName = rawToolName?.substringAfter("__")?.substringAfter("__")?.substringBefore("__")
-                ?: args["name"]?.jsonPrimitive?.content
-            "MCP ${toolName ?: "工具调用"}"
+            if (rawToolName == "use_capability") {
+                val server = args["server"]?.jsonPrimitive?.content.orEmpty()
+                val inner = args["tool"]?.jsonPrimitive?.content.orEmpty()
+                if (inner.isNotBlank()) "MCP $server.$inner"
+                else "MCP ${args["action"]?.jsonPrimitive?.content ?: "能力查询"}"
+            } else {
+                val toolName = rawToolName?.substringAfter("__")?.substringAfter("__")?.substringBefore("__")
+                    ?: args["name"]?.jsonPrimitive?.content
+                "MCP ${toolName ?: "工具调用"}"
+            }
         }
         HarnessTool.BUILD_SCRIPT -> "build_script ${args["action"]?.jsonPrimitive?.content.orEmpty()} ${args["name"]?.jsonPrimitive?.content.orEmpty()}".trim()
         else -> tool.name.lowercase()
@@ -245,6 +259,22 @@ class ApprovalPolicyEngine @Inject constructor(
      * 仅当 server 段确认为内置 browser server（编码截断段或 legacy 完整 id）时才套用浏览器风险矩阵，
      * 防止外部 MCP server 用同名工具冒充内置白名单；非内置浏览器工具返回 null。
      */
+    /**
+     * 解析代理调用的实际目标工具名：use_capability(call) 从 arguments 合成
+     * mcp__<server>__<tool> 形式以复用浏览器风险矩阵；其余原样返回 rawToolName。
+     */
+    private fun effectiveMcpToolName(tool: HarnessTool, args: JsonObject, rawToolName: String?): String? {
+        if (tool != HarnessTool.MCP) return null
+        if (rawToolName == "use_capability") {
+            if (args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase() != "call") return null
+            val server = args["server"]?.jsonPrimitive?.content.orEmpty().trim()
+            val inner = args["tool"]?.jsonPrimitive?.content.orEmpty().trim()
+            if (server.isBlank() || inner.isBlank()) return null
+            return "mcp__${server}__${inner}"
+        }
+        return rawToolName
+    }
+
     private fun mcpBrowserRisk(rawToolName: String?): String? {
         if (rawToolName == null) return null
         val server = rawToolName.substringAfter("__").substringBefore("__")

@@ -33,7 +33,11 @@ class CapabilityEventWriter @Inject constructor(
         if (userMessageId.isBlank()) return
         val existing = port.snapshot(sessionId)
         writeSkillEvents(existing, sessionId, userMessageId, mentionedNames)
-        writeMcpEvents(existing, sessionId, userMessageId, mentionedNames, model)
+        // use_capability 代理后请求路径不再发现 MCP 工具（dynamicMcpTools 恒空），
+        // MCP 挂载事件随之停用——@ 提及对 MCP 可用性已无影响，无需事件提示
+        if (model.dynamicMcpTools.isNotEmpty()) {
+            writeMcpEvents(existing, sessionId, userMessageId, mentionedNames, model)
+        }
     }
 
     private suspend fun writeSkillEvents(

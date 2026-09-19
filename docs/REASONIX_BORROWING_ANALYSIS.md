@@ -11,12 +11,12 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 | :--- | :--- | :--- | :--- | :--- |
 | P0 | 摘要请求复用原 system + tool schemas | 小（改 CompactionSummarizer 请求形状） | 长会话压缩成本降约一个量级 | ✅ 已落地（2026-09-19） |
 | P0 | 每轮 recall / routedBlocks 移出 system prompt | 小（移注入位置） | 消除逐轮前缀缓存击穿 | ✅ 已落地（2026-09-19） |
-| P1 | MCP 稳定代理 `use_capability` | 大（动 provider 可见面） | 缓存稳定 + 延迟连接缓解启动慢 | ✅ 第一步已落地：@ 裁剪移出 tools 数组；余：延迟连接、完整代理 |
+| P1 | MCP 稳定代理 `use_capability` | 大（动 provider 可见面） | 缓存稳定 + 延迟连接缓解启动慢 | ✅ 已落地（⑫：统一代理 + 延迟连接；@ 裁剪移除见⑨） |
 | P1 | 子代理完成 claim 的 host 裁定 | 中 | 防止子代理虚报完成 | ✅ 已落地（2026-09-19） |
 | P2 | 写租约收缩/扩张语义 | 中 | 补上 shell 写边界 | 待做（移动端语义取舍待定） |
 | P2 | 审批"本会话内记住"粒度 | 中 | 减少 REQUEST 模式重复打扰 | ✅ 已落地（2026-09-19） |
 | P2 | 记忆召回 BM25 + CJK bigram + 预算 | 中 | 召回质量（表结构已就绪） | ✅ 已落地（2026-09-19） |
-| P3 | 中散小件（见第七节） | 小 | 各自独立 | 大部分 ✅：checkpoint 字节预算、storm breaker、委托经济学、批内失败隔离（已具备）、restore 冲突检测、undo rewind；余：compress 工具 |
+| P3 | 中散小件（见第七节） | 小 | 各自独立 | ✅ 全部完成（⑦⑧⑩⑪：字节预算/storm breaker/委托经济学/冲突检测/undo rewind/compress） |
 
 ## 落地记录（P0，2026-09-19）
 
@@ -97,6 +97,26 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 - UI：rewind 成功通知从 Toast 迁到 Snackbar 并附「撤销回滚」动作（Toast 无法承载动作），失败/无锚点仍走 Toast。
 
 验证（⑩）：`:harness:testDebugUnitTest` 全绿（`RewindControllerTest` +3 项：undo 还原、新写入使记录失效、外部改动跳过）；`:app:compileDebugKotlin` 通过。
+
+**⑪ compress 手动压缩工具（P3，2026-09-19）**
+
+- 对齐 Reasonix 的 `compress`：用户明确要求压缩上下文时模型可调用，`mode=before` 折叠锚点轮之前的全部历史（保留锚点轮及之后）、`mode=after` 折叠除当前进行中轮次外的全部已完成历史；`anchor` 必须原样、唯一地摘自某条用户消息（≥8 字符），零匹配/多匹配均拒绝并指引换更长摘录——绝不猜边界。
+- 锚点解析抽为 `CompactionManager.resolveCompressAnchor` 纯函数；摘要走与自动压缩相同的 cache-replay 路径；被折叠原文仍可 `history_read` 回读。
+- 审批白名单按只读放行；provider schema（`ProviderClient.TOOLS`）/ tools.md 指引 / UI 工具名与 Diff 视图同步注册。
+
+
+验证（⑪）：`:harness:testDebugUnitTest` 全绿（`CompressAnchorTest` 6 项）；`:app:compileDebugKotlin` 通过。
+
+**⑫ use_capability 统一代理 + MCP 延迟连接（P1，2026-09-19）**
+
+- **provider 可见面**：`mcp__*` 工具 schema 全部退出 tools 数组，只留一个固定 schema 的 `use_capability`（action=list/inspect/call/decline）——MCP 服务增删/启停/发现结果变化都不再改变 provider 可见字节；`BuiltinToolContractTest` 改写为代理时代断言（代理在场 + mcp__ 零泄漏 + 数组逐字节稳定）。
+- **延迟连接**：请求路径上的 MCP 发现全部移除（`resolveModel/resolveConfigured` 不再覆盖 dynamicMcpTools、McpManager 启动预热删除）——**服务器进程只在第一次真实 call 其工具时启动**。list/inspect 绝不启动进程：list 读设置库 + 缓存计数；inspect 只读缓存，未连接则提示直接 call。禁用服务的传输清理移入 list 路径的 sweep。
+- **分发**：`ToolExecutor.executeCapability` 四动作路由；直接 `mcp__*` 调用保留为兼容路径（历史消息/模型习惯仍可执行）。
+- **审批适配**：list/inspect/decline 只读免审；`use_capability(call)` 从 arguments 合成 `mcp__<server>__<tool>` 复用既有浏览器风险矩阵——内置浏览器低风险工具的免审体验不回归。
+- **会话授权**：`SessionApprovalGrants` 对 use_capability(call) 按 args.server 记 `mcp:<server>` 键，"本会话内记住"继续生效。
+- **提示词**：MCP 能力章节重写为"发现-调用"指引（数据源=设置库启用清单，零发现零进程）；`CapabilityEventWriter` 的 MCP 挂载事件随裁剪移除而停用（@ 对 MCP 可用性无影响）。
+
+验证（⑫）：`:harness:testDebugUnitTest` 全量通过（`BuiltinToolContractTest` 改写为代理断言）；`:app:compileDebugKotlin` 通过。
 
 ## 一、太墟已对齐的能力（不要重复建设）
 

@@ -72,6 +72,11 @@ class SessionApprovalGrants @Inject constructor() {
             val args = runCatching { Json.parseToJsonElement(argumentsJson) }
                 .getOrNull() as? JsonObject ?: return null
             val tool = toolName.lowercase()
+            if (tool == "use_capability") {
+                // use_capability(call) 的会话授权按目标 server 记：args.server 即服务段
+                val server = args.stringOf("server").orEmpty().trim()
+                if (server.isNotBlank()) return "mcp:$server"
+            }
             if (tool.startsWith("mcp__")) {
                 val server = tool.split("__").getOrNull(1).orEmpty()
                 if (server.isBlank()) return null

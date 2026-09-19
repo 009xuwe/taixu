@@ -341,7 +341,7 @@ internal class AnthropicApi(
                 model.topP?.let { put("top_p", it) }
             }
             put("stream", stream)
-            val dynamicTools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+            val dynamicTools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools()
             if (!model.pureChatMode && model.toolCallMode == ToolCallMode.JSON_TEXT && dynamicTools.isNotEmpty()) {
                 // JSON 文本模式：工具定义写进 system，模型用文本输出工具调用
                 systemPrompt.append("\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n")

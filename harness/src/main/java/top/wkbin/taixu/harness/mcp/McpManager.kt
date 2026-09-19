@@ -42,7 +42,7 @@ class McpManager @Inject constructor(
     private val linuxRuntime: LinuxRuntime,
     private val logger: AppLogger,
     private val agentEventLogger: AgentEventLogger,
-) : ActiveMcpToolCatalog {
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private data class CachedTools(val fingerprint: String, val tools: List<McpToolInfo>)
     private val cache = ConcurrentHashMap<String, CachedTools>()
@@ -62,13 +62,6 @@ class McpManager @Inject constructor(
     private val lastBoundWorkspaces = ConcurrentHashMap<String, String>()
     private val _connectionStates = MutableStateFlow<Map<String, McpConnectionState>>(emptyMap())
     val connectionStates: StateFlow<Map<String, McpConnectionState>> = _connectionStates.asStateFlow()
-
-    init {
-        // 启动时后台异步预热已启用的 MCP 服务，提前填充缓存，用户首次发消息直接 0ms 命中
-        scope.launch {
-            runCatching { getActiveMcpTools() }
-        }
-    }
 
     /**
      * 最近错误。冷却期内额外带上剩余时间：状态只显示 OFFLINE 时，用户无法区分
@@ -112,86 +105,148 @@ class McpManager @Inject constructor(
         }
     }
 
-    override suspend fun getActiveMcpTools(): List<McpToolInfo> = withContext(Dispatchers.IO) {
-        val servers = repository.servers.first()
-        servers.filterNot { it.isEnabled }.forEach { server ->
+    suspend fun getActiveMcpTools(): List<McpToolInfo> = withContext(Dispatchers.IO) {
+        sweepDisabledServers()
+        val enabledServers = repository.servers.first().filter { it.isEnabled }
+        if (enabledServers.isEmpty()) return@withContext emptyList()
+
+        coroutineScope {
+            enabledServers.map { server -> async { discoverServerIfNeeded(server) } }
+        }.awaitAll().flatten()
+    }
+
+    /** 禁用服务的清理：清缓存/冷却并关闭传输连接（不产生任何新进程）。 */
+    private suspend fun sweepDisabledServers() {
+        repository.servers.first().filterNot { it.isEnabled }.forEach { server ->
             cache.remove(server.id)
             lastBoundWorkspaces.remove(server.id)
             clearDiscoveryCooldown(server.id)
             closeTransportConnection(server)
         }
-        val enabledServers = servers.filter { it.isEnabled }
-        if (enabledServers.isEmpty()) return@withContext emptyList()
+    }
 
-        val needsLinux = enabledServers.any { it.transportType == McpTransportType.STDIO }
-        val linuxReady = !needsLinux || awaitLinuxRuntimeReady(linuxRuntime.state)
-
-        coroutineScope {
-            enabledServers.map { server ->
-                async {
-                    if (server.transportType == McpTransportType.STDIO && !linuxReady) {
-                        lastErrors[server.id] = RUNTIME_NOT_READY_MSG
-                        state(server.id, McpConnectionState.OFFLINE)
-                        logger.w("MCP[${server.name}] 工具发现推迟：Linux runtime 尚未就绪，下一轮对话将重试")
-                        return@async emptyList()
-                    }
-                    // B1: 用绑定后的配置计算 fingerprint 并发现，与 executeTool 路径一致，避免指纹乒乓
-                    val bound = boundConfig(server)
-                    val fingerprint = fingerprint(bound)
-                    cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools
-                        ?: discoveryMutexes.getOrPut(server.id) { Mutex() }.withLock {
-                            cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools
-                                ?.let { return@withLock it }
-                            // 退避窗口内直接跳过：持续故障的服务不该在每轮对话和每次
-                            // 子智能体初始化时都重新空耗一遍发现超时。
-                            remainingDiscoveryCooldownMs(server.id)?.let { remaining ->
-                                state(server.id, McpConnectionState.OFFLINE)
-                                logger.w(
-                                    "MCP[${server.name}] 工具发现冷却中（剩余 ${remaining / 1000}s，" +
-                                        "连续失败 ${discoveryFailureStreak[server.id] ?: 0} 次），本轮跳过；" +
-                                        "最近错误：${lastErrors[server.id] ?: "未知"}",
-                                )
-                                return@withLock emptyList<McpToolInfo>()
-                            }
-                            // 总超时兜底：沙箱会话拉起或 MCP 进程挂起时不能阻塞每轮对话（挂起是无日志的），
-                            // 超时按失败处理，本轮不注入该服务工具，退避到期后重试。
-                            agentEventLogger.log(DISCOVERY_LOG_SESSION, "McpDiscovery", "MCP[${server.name}] 工具发现开始（transport=${server.transportType}）")
-                            val startedAt = System.currentTimeMillis()
-                            cancellableResult { discoverWithTimeout(bound) }.onSuccess {
-                                agentEventLogger.log(
-                                    DISCOVERY_LOG_SESSION,
-                                    "McpDiscovery",
-                                    "MCP[${server.name}] 发现 ${it.size} 个工具，耗时 ${System.currentTimeMillis() - startedAt}ms",
-                                )
-                                cache[server.id] = CachedTools(fingerprint, it)
-                                lastErrors.remove(server.id)
-                                clearDiscoveryCooldown(server.id)
-                                state(server.id, McpConnectionState.ONLINE)
-                            }.onFailure {
-                                agentEventLogger.log(
-                                    DISCOVERY_LOG_SESSION,
-                                    "McpDiscovery",
-                                    "MCP[${server.name}] 工具发现失败，耗时 ${System.currentTimeMillis() - startedAt}ms：${it.message ?: it::class.simpleName}",
-                                    it,
-                                )
-                                val msg = it.message ?: "工具发现异常"
-                                lastErrors[server.id] = msg
-                                val cooldownMs = recordDiscoveryFailure(server.id)
-                                // 静默失败会让"模型不调用 MCP 工具"无从排查，这里必须留下线索；
-                                // 冷却期内的重复失败只记一行，不再打整段堆栈刷屏。
-                                val inCooldown = msg.contains("冷却中")
-                                logger.w(
-                                    "MCP[${server.name}] 工具发现失败，本轮对话不注入该服务的工具" +
-                                        "（后续 ${cooldownMs / 1000}s 内不再重试）: $msg",
-                                    if (inCooldown) null else it,
-                                )
-                                cache.remove(server.id)
-                                state(server.id, McpConnectionState.OFFLINE)
-                            }.getOrDefault(emptyList())
-                        }
-                }
-            }.awaitAll().flatten()
+    /**
+     * 单服务的按需发现（use_capability 延迟连接的核心）：缓存命中直接返回；
+     * 未缓存才真正连接并发现。list/inspect 永远不调用本方法——服务器进程
+     * 只在第一次真实调用其工具（executeCapabilityTool）时启动。
+     */
+    private suspend fun discoverServerIfNeeded(server: McpServerConfig): List<McpToolInfo> = withContext(Dispatchers.IO) {
+        if (server.transportType == McpTransportType.STDIO) {
+            val linuxReady = awaitLinuxRuntimeReady(linuxRuntime.state)
+            if (!linuxReady) {
+                lastErrors[server.id] = RUNTIME_NOT_READY_MSG
+                state(server.id, McpConnectionState.OFFLINE)
+                logger.w("MCP[${server.name}] 工具发现推迟：Linux runtime 尚未就绪，下一轮对话将重试")
+                return@withContext emptyList()
+            }
         }
+        // B1: 用绑定后的配置计算 fingerprint 并发现，与 executeTool 路径一致，避免指纹乒乓
+        val bound = boundConfig(server)
+        val fingerprint = fingerprint(bound)
+        cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools
+            ?: discoveryMutexes.getOrPut(server.id) { Mutex() }.withLock {
+                cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools
+                    ?.let { return@withLock it }
+                // 退避窗口内直接跳过：持续故障的服务不该在每轮对话和每次
+                // 子智能体初始化时都重新空耗一遍发现超时。
+                remainingDiscoveryCooldownMs(server.id)?.let { remaining ->
+                    state(server.id, McpConnectionState.OFFLINE)
+                    logger.w(
+                        "MCP[${server.name}] 工具发现冷却中（剩余 ${remaining / 1000}s，" +
+                            "连续失败 ${discoveryFailureStreak[server.id] ?: 0} 次），本轮跳过；" +
+                            "最近错误：${lastErrors[server.id] ?: "未知"}",
+                    )
+                    return@withLock emptyList<McpToolInfo>()
+                }
+                // 总超时兜底：沙箱会话拉起或 MCP 进程挂起时不能阻塞每轮对话（挂起是无日志的），
+                // 超时按失败处理，本轮不注入该服务工具，退避到期后重试。
+                agentEventLogger.log(DISCOVERY_LOG_SESSION, "McpDiscovery", "MCP[${server.name}] 工具发现开始（transport=${server.transportType}）")
+                val startedAt = System.currentTimeMillis()
+                cancellableResult { discoverWithTimeout(bound) }.onSuccess {
+                    agentEventLogger.log(
+                        DISCOVERY_LOG_SESSION,
+                        "McpDiscovery",
+                        "MCP[${server.name}] 发现 ${it.size} 个工具，耗时 ${System.currentTimeMillis() - startedAt}ms",
+                    )
+                    cache[server.id] = CachedTools(fingerprint, it)
+                    lastErrors.remove(server.id)
+                    clearDiscoveryCooldown(server.id)
+                    state(server.id, McpConnectionState.ONLINE)
+                }.onFailure {
+                    agentEventLogger.log(
+                        DISCOVERY_LOG_SESSION,
+                        "McpDiscovery",
+                        "MCP[${server.name}] 工具发现失败，耗时 ${System.currentTimeMillis() - startedAt}ms：${it.message ?: it::class.simpleName}",
+                        it,
+                    )
+                    val msg = it.message ?: "工具发现异常"
+                    lastErrors[server.id] = msg
+                    val cooldownMs = recordDiscoveryFailure(server.id)
+                    // 静默失败会让"模型不调用 MCP 工具"无从排查，这里必须留下线索；
+                    // 冷却期内的重复失败只记一行，不再打整段堆栈刷屏。
+                    val inCooldown = msg.contains("冷却中")
+                    logger.w(
+                        "MCP[${server.name}] 工具发现失败，本轮对话不注入该服务的工具" +
+                            "（后续 ${cooldownMs / 1000}s 内不再重试）: $msg",
+                        if (inCooldown) null else it,
+                    )
+                    cache.remove(server.id)
+                    state(server.id, McpConnectionState.OFFLINE)
+                }.getOrDefault(emptyList())
+            }
+    }
+
+    /**
+     * use_capability 的 list/inspect 数据源：**绝不启动服务器进程**。
+     * 返回启用服务摘要（缓存命中数可能小于实际工具数——未连接的服务为 0）。
+     */
+    suspend fun enabledServerSummaries(): List<EnabledServerSummary> = withContext(Dispatchers.IO) {
+        sweepDisabledServers()
+        repository.servers.first().filter { it.isEnabled }.map { server ->
+            EnabledServerSummary(
+                id = server.id,
+                name = server.name,
+                cachedToolCount = cache[server.id]?.tools?.size ?: 0,
+                connected = connectionStates.value[server.id] == McpConnectionState.ONLINE,
+            )
+        }
+    }
+
+    /** use_capability 的 inspect 数据源：只读缓存，绝不触发发现/连接。 */
+    fun cachedToolsOf(serverId: String): List<McpToolInfo> = cache[serverId]?.tools.orEmpty()
+
+    /**
+     * use_capability 的 call 执行路径：按 (serverId, 工具名) 解析并执行。
+     * 未连接的服务在此处按需启动并发现（这是唯一会拉起进程的能力入口）。
+     */
+    suspend fun executeCapabilityTool(
+        serverId: String,
+        toolName: String,
+        arguments: JsonObject,
+        workspace: String = "",
+    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val server = repository.servers.first().firstOrNull { it.id == serverId && it.isEnabled }
+            ?: return@withContext false to "未找到或未启用的 MCP 服务：$serverId"
+        val bound = commandBuilder.bindWorkspaceRepository(server, workspace)
+        lastBoundWorkspaces[server.id] = workspace
+        val tools = discoverServerIfNeeded(server)
+        val tool = tools.firstOrNull { it.name == toolName }
+            ?: return@withContext false to buildString {
+                append("MCP[${server.name}] 没有名为 `$toolName` 的工具。")
+                val available = tools.take(12).joinToString("、") { it.name }
+                if (available.isNotBlank()) {
+                    append("可用：$available")
+                    if (tools.size > 12) append(" 等 ${tools.size} 个")
+                    append("。")
+                }
+                append("可用 use_capability(action=\"inspect\", server=\"$serverId\") 查看工具清单与参数。")
+            }
+        cancellableResult { transport(bound).execute(bound, tool.name, arguments) }
+            .onFailure { logger.e("MCP[${server.name}] 工具 ${tool.name} 执行异常: ${it.message}", it) }
+            .onSuccess { (ok, output) ->
+                if (!ok) logger.w("MCP[${server.name}] 工具 ${tool.name} 返回错误: $output".take(500))
+            }
+            .getOrElse { false to "MCP 工具执行异常：${it.message ?: it::class.simpleName}" }
     }
 
     suspend fun discoverTools(server: McpServerConfig): List<McpToolInfo> = withContext(Dispatchers.IO) {
@@ -250,6 +305,14 @@ class McpManager @Inject constructor(
     }
 
     private fun state(id: String, state: McpConnectionState) { _connectionStates.update { it + (id to state) } }
+
+    /** use_capability list 的单服务摘要：不启动进程，工具数为缓存命中数。 */
+    data class EnabledServerSummary(
+        val id: String,
+        val name: String,
+        val cachedToolCount: Int,
+        val connected: Boolean,
+    )
 
     /**
      * 仍在冷却期时返回剩余毫秒；否则返回 null 表示可以尝试发现。

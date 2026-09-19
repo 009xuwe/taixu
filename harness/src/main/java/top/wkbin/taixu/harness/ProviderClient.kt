@@ -266,7 +266,7 @@ internal class ChatApi(
     }
 
     private fun buildRequest(model: ModelConfig, messages: List<ApiMessage>, stream: Boolean, includeUsage: Boolean = true): Request {
-            val tools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+            val tools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools()
         // JSON_TEXT 模式：把工具 JSON 描述追加到首条 system 消息末尾，让模型在纯文本中输出工具调用。
         // 只注入首条：压缩摘要层也是 system 消息，全量注入会把数千 token 的工具 schema 复制多份，
         // 还把 JSON 定义拼在「早期历史摘要」末尾污染摘要语义（Anthropic/Responses 路径本就只注入一次）。
@@ -749,8 +749,9 @@ class ProviderClient @Inject constructor(
                 apiKey = providerRepository.readApiKey(),
             )
         }
-        val dynamicMcp = activeMcpToolsOrEmpty()
-        baseConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
+        // use_capability 代理（延迟连接）：请求路径不再做 MCP 发现——服务器进程只在
+        // 真正调用其工具时按需启动；provider 可见的 tools 数组也因此与 MCP 清单解耦。
+        baseConfig.applyGlobalReasoningDepth()
     }
 
     /**
@@ -784,20 +785,8 @@ class ProviderClient @Inject constructor(
         } else {
             baseConfig
         }
-        val dynamicMcp = activeMcpToolsOrEmpty()
-        sessionConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
-    }
-
-    /**
-     * MCP 工具清单的取消安全兜底。这里不能用 runCatching：它会吞掉 CancellationException，
-     * 击穿外层的超时与取消语义（"卡思考中"一族 bug 的标准成因）；取消必须原样重抛。
-     */
-    private suspend fun activeMcpToolsOrEmpty(): List<top.wkbin.taixu.core.model.McpToolInfo> = try {
-        mcpManager.getActiveMcpTools()
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (throwable: Throwable) {
-        emptyList()
+        // 同 resolveModel：请求路径零 MCP 发现（延迟连接）
+        sessionConfig.applyGlobalReasoningDepth()
     }
 
     /**
@@ -1280,31 +1269,23 @@ class ProviderClient @Inject constructor(
                     ).jsonObject,
                 ),
             ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "use_capability",
+                    description = "MCP 能力的统一代理入口：发现并调用已启用的 MCP 服务工具（内置浏览器/搜索等 + 用户添加的服务）。action=list 列出服务（不启动任何进程）；action=inspect + server 查看工具清单与参数；action=call + server + tool + arguments 执行（未连接的服务自动启动）；action=decline + server + tool 表示放弃该能力。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["list","inspect","call","decline"],"description":"list=列出服务；inspect=查看某服务的工具清单；call=调用工具；decline=放弃某能力"},"server":{"type":"string","description":"MCP 服务 id（list 时省略；inspect/call/decline 必填）"},"tool":{"type":"string","description":"目标工具名（call/decline 必填；inspect 省略则列出该服务全部工具）"},"arguments":{"type":"object","description":"call 时传给目标工具的参数对象，结构与 inspect 输出的参数 schema 一致"}},"required":["action"]}""",
+                    ).jsonObject,
+                ),
+            ),
         )
 
-        /** 组装静态基础工具 + 动态 MCP 插件工具 */
-        fun buildDynamicTools(mcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList()): List<ApiToolDefinition> {
-            val list = TOOLS.toMutableList()
-            // 工具数组序列化在 messages 之前，其顺序抖动会击穿 provider prefix cache 的整个前缀。
-            // MCP 工具来自并发发现（awaitAll），单服务内顺序取决于服务端返回，未必稳定；
-            // 这里按 (serverId, name) 显式排序，保证同一组启用服务下发的工具数组逐字节一致。
-            mcpTools.sortedWith(compareBy({ it.serverId }, { it.name })).forEach { mcp ->
-                val fullToolName = McpToolApiName.encode(mcp)
-                val params = runCatching {
-                    Json.parseToJsonElement(mcp.parametersJson).jsonObject
-                }.getOrDefault(JsonObject(emptyMap()))
-                list.add(
-                    ApiToolDefinition(
-                        function = ApiFunctionDefinition(
-                            name = fullToolName,
-                            description = "【MCP 插件: ${mcp.serverName}】${mcp.description}",
-                            parameters = params,
-                        ),
-                    ),
-                )
-            }
-            return list
-        }
+        /**
+         * 组装静态基础工具（含 use_capability 统一代理）。
+         * MCP 工具 schema 不再进入 provider 可见面：模型经 use_capability 的
+         * list/inspect 发现能力、call 调用；服务器清单变化不再击穿前缀缓存。
+         */
+        fun buildDynamicTools(): List<ApiToolDefinition> = TOOLS
 
         /**
          * 把工具定义转成给模型看的 JSON 文本描述（JSON_TEXT 工具调用模式使用）。

@@ -13,13 +13,11 @@ import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.BuiltinMcpPresets
-import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.tools.ToolRepository
 import top.wkbin.taixu.harness.R
 import top.wkbin.taixu.harness.SubagentDepartmentIndexRenderer
 import top.wkbin.taixu.harness.ToolCallMode
 import top.wkbin.taixu.harness.WorkspaceFileAccess
-import top.wkbin.taixu.harness.mcp.McpToolApiName
 
 /**
  * Agent 系统提示词的统一构建器。
@@ -65,7 +63,6 @@ class SystemPromptBuilder @Inject constructor(
         sessionId: String = "",
         projectTypeOverride: String = "",
         userMessageTexts: List<String> = emptyList(),
-        mcpTools: List<McpToolInfo> = emptyList(),
     ): String {
         val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
         val distroName = DistroCatalog.displayName(distroId)
@@ -97,7 +94,7 @@ class SystemPromptBuilder @Inject constructor(
 
         // 系统核心 MCP 能力引导：内置 MCP 默认关闭，但 harness 必须知道其存在；
         // 未授权时引导 LLM 提示用户开启，授权开启后常驻本会话随时可调用。
-        val mcpCapabilitySection = buildMcpCapabilitySection(mcpTools, toolCallMode)
+        val mcpCapabilitySection = buildMcpCapabilitySection(toolCallMode)
 
         // pinned 与 relevant 正交分层：
         // - pinned 常驻稳定前缀（最高权威，注入格式与官方长期指令记忆一致）
@@ -240,59 +237,52 @@ class SystemPromptBuilder @Inject constructor(
     }
 
     /**
-     * MCP 能力引导章节：
-     * - 已启用的服务（内置 + 自定义）逐个列出**实际可调用的 mcp__ 工具名**，模型无需猜测；
-     * - 明确说明无需 @ 提及即可直接调用（@ 提及只产生能力挂载记录，不影响工具可用性）；
+     * MCP 能力引导章节（use_capability 代理形态）：
+     * - MCP 工具 schema 不在本轮 tools 列表里，模型经 use_capability 的
+     *   list/inspect 发现能力、call 调用（未连接的服务在调用时自动启动）；
+     * - 内置能力保留「使用时机」引导（何时该想到用某个能力）；
      * - 未启用的内置能力按「使用时机」引导请求授权，未授权前不得绕过或模拟。
-     *
-     * NATIVE 模式下工具全名与参数 schema 本来就在本轮 tools 列表里，逐个枚举纯属重复
-     * （浏览器一个服务 30+ 个工具名就是 2KB+）；超过 [MCP_NAME_ENUM_THRESHOLD] 的服务只报
-     * 数量并指向工具列表。JSON_TEXT 模式是拿不到原生 tools 数组的兜底通道，仍枚举全名。
+     * 数据源是设置库的启用服务清单（零发现、零进程启动）——服务增删只在
+     * 用户显式操作时变化，属于既定的缓存重置事件。
      */
-    private suspend fun buildMcpCapabilitySection(
-        mcpTools: List<McpToolInfo>,
-        toolCallMode: ToolCallMode,
-    ): String {
-        val enabledIds = runCatching {
-            mcpServerRepository.servers.first().filter { it.isEnabled }.map { it.id }.toSet()
-        }.getOrDefault(emptySet())
-        val toolsByServer = mcpTools.groupBy { it.serverId }
-        fun apiNamesOf(serverId: String): String =
-            toolsByServer[serverId].orEmpty().joinToString("、") { "`${McpToolApiName.encode(it)}`" }
-
-        /** 已启用服务的"可直接调用"说明：小服务枚举全名，大服务只报数量。 */
-        fun usageOf(serverId: String): String {
-            val names = apiNamesOf(serverId)
-            if (names.isBlank()) return "已授权常驻，工具名见本轮工具列表。"
-            val count = toolsByServer[serverId].orEmpty().size
-            if (toolCallMode != ToolCallMode.JSON_TEXT && count > MCP_NAME_ENUM_THRESHOLD) {
-                return "已授权常驻，共 $count 个工具，名称与参数见本轮工具列表。"
-            }
-            return "已授权常驻，可直接调用：$names。"
-        }
-
+    private suspend fun buildMcpCapabilitySection(toolCallMode: ToolCallMode): String {
+        val enabledServers = runCatching {
+            mcpServerRepository.servers.first().filter { it.isEnabled }
+        }.getOrDefault(emptyList())
+        val enabledById = enabledServers.associateBy { it.id }
         val builtinIds = BuiltinMcpPresets.presets.map { it.id }.toSet()
+
         val builtinLines = BuiltinMcpPresets.presets.map { preset ->
-            val enabled = preset.id in enabledIds
-            val status = if (enabled) "已启用·常驻" else "未启用（默认关闭）"
+            val enabled = preset.id in enabledById
+            val status = if (enabled) "已启用" else "未启用（默认关闭）"
             val trigger = mcpUsageGuidance[preset.id]
             val triggerLine = if (!trigger.isNullOrBlank()) "使用时机：$trigger。" else ""
-            val usage = if (enabled) usageOf(preset.id) else "未授权：一旦任务命中上述使用时机，请先向用户说明该能力并请求其到「设置 → MCP 插件与协议生态」开启，授权常驻后再调用；未授权前不得绕过或模拟。"
+            val usage = if (enabled) {
+                "已授权常驻，用 use_capability(action=\"call\", server=\"${preset.id}\", tool=…) 调用。"
+            } else {
+                "未授权：一旦任务命中上述使用时机，请先向用户说明该能力并请求其到「设置 → MCP 插件与协议生态」开启，授权常驻后再调用；未授权前不得绕过或模拟。"
+            }
             val desc = preset.description.replace(Regex("\\s+"), " ").trim()
             val brief = if (desc.length > 120) desc.take(117) + "…" else desc
-            "- [${status}] ${preset.name}：${brief}。${triggerLine}${usage}"
+            "- [${status}] ${preset.name}（server=\"${preset.id}\"）：${brief}。${triggerLine}${usage}"
         }
-        // 自定义（非内置）已启用服务：内置章节不覆盖，这里按真实发现的工具列出
-        val customLines = toolsByServer.keys.filter { it !in builtinIds }.map { serverId ->
-            val serverName = toolsByServer[serverId]!!.firstOrNull()?.serverName ?: serverId
-            "- [已启用·常驻] $serverName：${usageOf(serverId)}"
+        // 自定义（非内置）已启用服务
+        val customLines = enabledServers.filter { it.id !in builtinIds }.map { server ->
+            "- [已启用] ${server.name}（server=\"${server.id}\"）：用 use_capability(action=\"inspect\", server=\"${server.id}\") 查看其工具清单后调用。"
         }
         if (builtinLines.isEmpty() && customLines.isEmpty()) return ""
-        return "\n\n## 系统核心 MCP 能力（内置，授权后常驻生效）\n" +
-            "太墟内置以下系统级 MCP 能力，默认关闭。任务命中其「使用时机」时应优先考虑该能力：" +
-            "若已启用则直接调用对应 mcp__ 工具（常驻本会话，随时可用）；若未启用则先向用户说明并请求授权开启，未授权前不得绕过。\n" +
-            "重要：已启用的 MCP 工具无需 @ 提及即可直接调用（@ 提及只产生能力挂载记录，不影响工具可用性）；工具名必须原样使用，不可编造。\n" +
-            (builtinLines + customLines).joinToString("\n")
+        val protocol = buildString {
+            append("\n\n## 系统核心 MCP 能力（经 use_capability 统一代理发现与调用）\n")
+            append("MCP 工具的名称与参数不在本轮工具列表里，发现与调用全部通过 use_capability：\n")
+            append("1. action=\"list\"：列出已启用的服务（不启动任何进程）；\n")
+            append("2. action=\"inspect\" + server=\"<id>\"：查看该服务的工具清单与参数说明；\n")
+            append("3. action=\"call\" + server=\"<id>\" + tool=\"<工具名>\" + arguments={...}：调用工具（未连接的服务会自动启动，首次启动可能需要数秒）。\n")
+            if (toolCallMode == ToolCallMode.JSON_TEXT) {
+                append("（当前为文本工具协议：use_capability 的调用标记同样按工具调用协议输出。）\n")
+            }
+            append("重要：工具名必须原样使用，不可编造；审批按工具风险执行；@ 提及只产生能力挂载记录，不影响工具可用性。\n")
+        }
+        return protocol + (builtinLines + customLines).joinToString("\n")
     }
 
     /**
@@ -427,8 +417,6 @@ class SystemPromptBuilder @Inject constructor(
         private const val MAX_WORKSPACE_CACHE_ENTRIES = 16
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
 
-        /** MCP 能力清单里逐个枚举工具全名的数量上限，超过则只报数量（NATIVE 模式下工具列表已含全名与 schema）。 */
-        internal const val MCP_NAME_ENUM_THRESHOLD = 8
 
         /**
          * 内置 MCP 的「使用时机」引导：让 harness 在任务发生前就知道该优先调用哪个系统核心能力，
