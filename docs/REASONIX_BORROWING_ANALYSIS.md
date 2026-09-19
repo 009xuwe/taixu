@@ -16,7 +16,7 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 | P2 | 写租约收缩/扩张语义 | 中 | 补上 shell 写边界 | 待做（移动端语义取舍待定） |
 | P2 | 审批"本会话内记住"粒度 | 中 | 减少 REQUEST 模式重复打扰 | ✅ 已落地（2026-09-19） |
 | P2 | 记忆召回 BM25 + CJK bigram + 预算 | 中 | 召回质量（表结构已就绪） | ✅ 已落地（2026-09-19） |
-| P3 | 中散小件（见第七节） | 小 | 各自独立 | 部分：checkpoint 字节预算 ✅ |
+| P3 | 中散小件（见第七节） | 小 | 各自独立 | 大部分 ✅：checkpoint 字节预算、storm breaker、委托经济学、批内失败隔离（已具备）、restore 冲突检测；余：undo rewind、compress 工具 |
 
 ## 落地记录（P0，2026-09-19）
 
@@ -64,6 +64,22 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 - 超预算按轮号从最旧开始整轮淘汰（索引 + 内容目录），永不触碰当前轮；内存态本轮内 rewind 仍可用，重启后按磁盘实况恢复。
 
 验证（⑤⑥）：`:harness:testDebugUnitTest` 全绿（新增 `SessionApprovalGrantsTest` 8 项 + `CheckpointByteBudgetTest` 3 项）；`:app:compileDebugKotlin` 通过。
+
+**⑦ storm breaker + 委托经济学 + 批内失败隔离核查（P3，2026-09-19）**
+
+- **批内失败隔离**：核查确认太墟已具备——Phase A 校验失败逐条回写继续、Phase B 每项独立捕获异常，一个工具失败不跳过同批后续调用；审批暂停中止未开始调用是刻意语义，无需改。
+- **storm breaker（软收敛提示）**：太墟已有硬熔断（默认连续 8 轮全失败即停）。补上 Reasonix 的软提示层：连续 3 轮工具全失败时，通过既有 steering 队列一次性注入收敛提示（早于硬熔断给模型一次换方法自纠的机会；成功清零、每次运行只提示一次；硬阈值被调低到 3 以下时自然不触发）。
+- **委托经济学**：子代理 lane transcript 的 AssistantText 用量聚合为 `SubagentTokenUsage`（输入/缓存命中/输出 + 命中率），渲染进父汇总状态头——委派是否划算有数据可看。未引入价格表，只报事实用量。
+
+验证（⑦）：`:harness:testDebugUnitTest` 全绿（新增 `SubagentTokenUsageTest` 2 项 + `HarnessLoopStormHintTest` 2 项）；`:app:compileDebugKotlin` 通过。
+
+**⑧ checkpoint restore 冲突检测（P3，2026-09-19）**
+
+- `FileSnap` 增加 `afterContent`（改动后凭据）：write 成功后采用入参内容、edit 成功后从盘上重读最终状态，与 pre-image 同受 1MiB 上限约束（常量上移为 `CheckpointStore.SNAPSHOT_MAX_BYTES`）；持久化索引新增 `afterFiles` 段，旧索引按无凭据处理。
+- `RewindController.commit` 恢复前逐路径比对当前文件与 `latestAfterImage`：内容不一致 / 文件被外部删除 / 文件膨胀超限 → 记为冲突**跳过恢复**并写进 `RewindResult.conflicts` + note（partial=true），避免 rewind 静默覆盖用户或外部工具的会话外修改。无凭据的路径不检测，维持原行为。
+- agent 自己的写入与凭据天然一致，正常 rewind 不受影响；冲突只在真正的会话外改动时出现。
+
+验证（⑧）：`:harness:testDebugUnitTest` 全绿（`RewindControllerTest` +3 项、`CheckpointPersistenceTest` +1 项）；`:app:compileDebugKotlin` 通过。
 
 ## 一、太墟已对齐的能力（不要重复建设）
 

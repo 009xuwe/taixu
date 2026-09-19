@@ -1047,6 +1047,7 @@ class HarnessLoop @Inject constructor(
         val maxConsecutiveFailures = runCatching { settingsDataStore.maxConsecutiveFailures.first() }.getOrDefault(8)
         val retryPolicy = RetryPolicy.NETWORK_DEFAULT
         var consecutiveFailures = 0
+        var stormHintInjected = false
 
         while (true) {
             val round = budget.totalRounds
@@ -1162,6 +1163,19 @@ class HarnessLoop @Inject constructor(
                 }
                 consecutiveFailures++
                 metrics.consecutiveFailuresObserved(consecutiveFailures)
+                // 软收敛提示（storm breaker，对齐 Reasonix）：早于硬熔断的一次性 steering 注入，
+                // 让模型在"连续失败"与"被硬停"之间有一次换方法自纠的机会。成功即清零、
+                // 每次运行只提示一次；硬阈值被用户调低到软阈值之下时自然不触发。
+                if (!stormHintInjected &&
+                    consecutiveFailures >= STORM_HINT_THRESHOLD &&
+                    consecutiveFailures < maxConsecutiveFailures
+                ) {
+                    stormHintInjected = true
+                    stormHintFor(consecutiveFailures)?.let { hint ->
+                        promptQueueManager.enqueue(sessId, PromptQueue.STEER, PendingMessage(text = hint))
+                        agentEventLogger.log(sessId, "StormAdvisory", "consecutiveFailures=$consecutiveFailures")
+                    }
+                }
                 if (consecutiveFailures < maxConsecutiveFailures) return null
                 metrics.circuitBreaker()
                 messageProjector.append(
@@ -1401,6 +1415,22 @@ class HarnessLoop @Inject constructor(
         const val RETRY_BACKOFF_SEC = 2L
 
         const val MAX_ROUNDS = 200
+
+        /** 软收敛提示阈值：连续 N 轮工具全失败即注入一次 steering 提示（须低于硬熔断默认值）。 */
+        internal const val STORM_HINT_THRESHOLD = 3
+
+        /** storm breaker 提示文案（纯函数便于测试）；未达阈值返回 null。 */
+        internal fun stormHintFor(consecutiveFailures: Int): String? {
+            if (consecutiveFailures < STORM_HINT_THRESHOLD) return null
+            return buildString {
+                append("[自动提示] 已连续 $consecutiveFailures 轮所有工具调用都失败，当前方法大概率走不通。\n")
+                append("请停下来先反思再动手：\n")
+                append("1. 对比这几次失败的错误输出，找出共同原因（路径不存在？权限不足？环境/依赖未就绪？参数格式？）；\n")
+                append("2. 换一种更稳妥的方法，或先用 read/base 把前置条件查清楚再重试；\n")
+                append("3. 如果确属环境限制无法自行解决，直接向用户说明障碍与已尝试的步骤，不要硬耗。\n")
+                append("不要再以同类方式消耗剩余轮次。")
+            }
+        }
         val KNOWN_TOOL_NAMES: Set<String> = HarnessToolRoundRunner.KNOWN_TOOL_NAMES
 
         /** 工作流节点专属 Harness 会话的 id 前缀（workflow:<executionId>:<nodeId>）。 */

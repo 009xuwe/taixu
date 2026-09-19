@@ -12,6 +12,7 @@ import top.wkbin.taixu.core.network.FileDownloader
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
+import top.wkbin.taixu.harness.checkpoint.CheckpointStore
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.privilege.BinderOutcome
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
@@ -216,8 +217,10 @@ class ToolExecutor @Inject constructor(
                 val content = requireString(args, "content")
                 captureBeforeWrite(sessionId, activeFileAccess, path)
                 val linesAdded = content.lines().size
-                activeFileAccess.write(path, content)
+                val output = activeFileAccess.write(path, content)
                     .toToolOutput("已写入 $path\nDIFF_STAT: +$linesAdded -0", actionName = "write")
+                if (output.first) captureAfterWrite(sessionId, activeFileAccess, path, knownContent = content)
+                output
             }
             HarnessTool.EDIT -> {
                 val path = requireString(args, "path")
@@ -226,8 +229,11 @@ class ToolExecutor @Inject constructor(
                 captureBeforeWrite(sessionId, activeFileAccess, path)
                 val linesAdded = newText.lines().size
                 val linesDeleted = oldText.lines().size
-                activeFileAccess.edit(path, oldText, newText)
+                val output = activeFileAccess.edit(path, oldText, newText)
                     .toToolOutput("已修改 $path\nDIFF_STAT: +$linesAdded -$linesDeleted", actionName = "edit")
+                // edit 的结果内容不等于 newText：从盘上重读最终状态作改动后凭据
+                if (output.first) captureAfterWrite(sessionId, activeFileAccess, path, knownContent = null)
+                output
             }
             HarnessTool.BASE -> executeBase(args, workspace)
             HarnessTool.PROCESS -> executeProcess(args, workspace)
@@ -947,8 +953,28 @@ class ToolExecutor @Inject constructor(
         // 且 commit 恢复走 write（同样受 1MiB 上限约束），快照了也恢复不回去。
         // 注意不能返回 null 充当"文件不存在"快照——那会让 rewind 误删该文件。
         val size = activeFileAccess.fileSizeOrNull(normalized)
-        if (size != null && size > CHECKPOINT_SNAPSHOT_MAX_BYTES) return
+        if (size != null && size > CheckpointStore.SNAPSHOT_MAX_BYTES) return
         checkpointStore?.capture(sessionId, normalized, activeFileAccess.previewOrNull(normalized))
+    }
+
+    /**
+     * 写工具成功后，把该路径的最终状态记录为改动后凭据（restore 冲突检测的比对基准）。
+     * [knownContent] 非空时直接采用（write 的入参即最终内容）；edit 从盘上重读。
+     * 超大文件跳过（与 pre-image 同一上限）；checkpointStore 未配置时静默跳过。
+     */
+    private suspend fun captureAfterWrite(
+        sessionId: String,
+        activeFileAccess: WorkspaceFileAccess,
+        path: String,
+        knownContent: String?,
+    ) {
+        if (sessionId.isBlank()) return
+        val store = checkpointStore ?: return
+        val normalized = path.trim().trimStart('/')
+        val size = activeFileAccess.fileSizeOrNull(normalized)
+        if (size == null || size > CheckpointStore.SNAPSHOT_MAX_BYTES) return
+        val content = knownContent ?: activeFileAccess.previewOrNull(normalized) ?: return
+        store.captureAfterImage(sessionId, normalized, content)
     }
 
     private fun AppResult<Any>.toToolOutput(successMessage: String = "", actionName: String = ""): Pair<Boolean, String> = when (this) {
@@ -1014,8 +1040,6 @@ class ToolExecutor @Inject constructor(
         const val DEFAULT_DOWNLOAD_MAX_BYTES = 1024L * 1024L * 1024L
         const val MAX_DOWNLOAD_MAX_BYTES = 4L * 1024L * 1024L * 1024L
 
-        /** checkpoint 单文件快照上限：与 WorkspaceFileAccess.MAX_WRITE_BYTES 对齐（超限跳过快照，恢复本也走 write）。 */
-        const val CHECKPOINT_SNAPSHOT_MAX_BYTES = 1L * 1024L * 1024L
         private val IMAGE_DOWNLOAD_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
         const val PROGRESS_REPORT_INTERVAL_MS = 250L
         const val DEFAULT_PROCESS_LOG_LINES = 120L

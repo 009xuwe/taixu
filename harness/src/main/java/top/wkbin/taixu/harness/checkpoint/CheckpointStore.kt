@@ -91,6 +91,34 @@ class CheckpointStore @Inject constructor() {
         return true
     }
 
+    /**
+     * 记录某路径**成功写入后**的内容（改动后凭据）。同轮同路径多次写入时后者覆盖前者，
+     * 关轮时落盘的是最后一次写入后的状态。无活动轮或该路径无 pre-image（超大文件跳过）
+     * 时忽略——改动后凭据永远与轮初快照成对。
+     */
+    @Synchronized
+    fun captureAfterImage(sessionId: String, path: String, content: String): Boolean {
+        val state = sessions[sessionId] ?: return false
+        val active = state.active ?: return false
+        val snap = active[path] ?: return false
+        active[path] = snap.copy(afterContent = content)
+        return true
+    }
+
+    /**
+     * 某路径在本 store 记录中的**最后改动后凭据**：活动轮优先，其余按关闭轮新→旧取第一个。
+     * restore 的冲突检测用它判断"当前文件是否被外部改动过"；null = 无凭据（不检测）。
+     */
+    @Synchronized
+    fun latestAfterImage(sessionId: String, path: String): String? {
+        val state = stateOf(sessionId)
+        state.active?.get(path)?.afterContent?.let { return it }
+        for (checkpoint in state.checkpoints.asReversed()) {
+            checkpoint.files.firstOrNull { it.path == path }?.afterContent?.let { return it }
+        }
+        return null
+    }
+
     /** 强制关闭当前活动轮（无触碰则丢弃空轮）。 */
     @Synchronized
     fun endTurn(sessionId: String) {
@@ -195,6 +223,9 @@ class CheckpointStore @Inject constructor() {
 
     companion object {
         const val MAX_KEPT = 100
+
+        /** 单文件快照上限：超过即整体跳过捕获（pre-image 与改动后凭据同规则）。 */
+        const val SNAPSHOT_MAX_BYTES = 1L * 1024L * 1024L
     }
 }
 
@@ -220,6 +251,8 @@ class FileCheckpointPersistence(
         val paths: Map<Int, String> = emptyMap(),
         /** 记录 content==null 的 seq（恢复时区分"不存在"与"空内容文件"）。 */
         val absent: List<Int> = emptyList(),
+        /** seq -> 改动后凭据文件名（旧索引无此字段，恢复时按无凭据处理）。 */
+        val afterFiles: Map<Int, String> = emptyMap(),
     )
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -230,6 +263,7 @@ class FileCheckpointPersistence(
         turnDir.mkdirs()
         val entries = mutableMapOf<Int, String>()
         val paths = mutableMapOf<Int, String>()
+        val afterEntries = mutableMapOf<Int, String>()
         val absent = mutableListOf<Int>()
         checkpoint.files.forEachIndexed { seq, snap ->
             paths[seq] = snap.path
@@ -237,6 +271,11 @@ class FileCheckpointPersistence(
             val file = File(turnDir, "$seq.snap")
             file.writeText(content, Charsets.UTF_8)
             entries[seq] = file.name
+            // 改动后凭据与 pre-image 同规则落盘（null = 无凭据，restore 时不做冲突检测）
+            val afterContent = snap.afterContent ?: return@forEachIndexed
+            val afterFile = File(turnDir, "$seq.after")
+            afterFile.writeText(afterContent, Charsets.UTF_8)
+            afterEntries[seq] = afterFile.name
         }
         File(sessionDir, "${checkpoint.turn}.index.json").writeText(
             json.encodeToString(
@@ -248,6 +287,7 @@ class FileCheckpointPersistence(
                     files = entries,
                     paths = paths,
                     absent = absent,
+                    afterFiles = afterEntries,
                 ),
             ),
         )
@@ -311,7 +351,11 @@ class FileCheckpointPersistence(
                     if (!snapFile.isFile) return@mapNotNull null
                     val content = runCatching { snapFile.readText(Charsets.UTF_8) }.getOrNull()
                         ?: return@mapNotNull null
-                    FileSnap(path, content)
+                    // 改动后凭据缺失不视为损坏（旧索引没有该文件；凭据只影响冲突检测的覆盖面）
+                    val afterContent = entry.afterFiles[seq]?.let { afterName ->
+                        runCatching { File(sessionDir, "${entry.turn}/$afterName").readText(Charsets.UTF_8) }.getOrNull()
+                    }
+                    FileSnap(path, content, afterContent)
                 }
                 Checkpoint(
                     turn = entry.turn,

@@ -212,6 +212,7 @@ class SubagentOrchestrator @Inject constructor(
             pendingApprovals = laneResult?.pendingApprovals.orEmpty(),
             blockedWrites = laneResult?.blockedWrites.orEmpty(),
             readOnlyWriteIntent = readOnlyWriteIntent,
+            tokenUsage = SubagentTokenUsage.extractFrom(transcript),
         )
         // 完成 claim 的 host 裁定：只对 host 已判 CONCLUDED 的结论生效，且只降级不升格。
         // claim 缺失/解析失败 = 旧行为原样保留（fail-open）。
@@ -364,7 +365,39 @@ class SubagentOrchestrator @Inject constructor(
          * 非 null 时 [SubagentClaimAdjudication.adjudicatedStatus] 是交给父智能体的唯一可信状态。
          */
         val claimAdjudication: SubagentClaimAdjudication? = null,
+        /** 委托经济学：本 lane 的 token 用量（含缓存命中），从 transcript 的 AssistantText 聚合。 */
+        val tokenUsage: SubagentTokenUsage? = null,
     )
+}
+
+/**
+ * 单个子代理 lane 的 token 用量（对齐 Reasonix 的委托经济学口径）：
+ * 缓存命中单列，让"委派是否划算"有数据可看，而不是只看轮数。
+ */
+internal data class SubagentTokenUsage(
+    val promptTokens: Long,
+    val cachedTokens: Long,
+    val completionTokens: Long,
+) {
+    /** 缓存命中率（0–100）；无输入时为 0。 */
+    val cacheHitPercent: Int
+        get() = if (promptTokens > 0) (cachedTokens * 100 / promptTokens).toInt() else 0
+
+    companion object {
+        /** 从 lane transcript 聚合；整条 lane 无用量记录（旧数据/失败早终止）返回 null。 */
+        internal fun extractFrom(transcript: List<HarnessMessage>): SubagentTokenUsage? {
+            var prompt = 0L
+            var cached = 0L
+            var completion = 0L
+            transcript.filterIsInstance<AssistantText>().forEach { text ->
+                prompt += text.promptTokens ?: 0
+                cached += text.cachedTokens ?: 0
+                completion += text.completionTokens ?: 0
+            }
+            if (prompt <= 0L && completion <= 0L) return null
+            return SubagentTokenUsage(prompt, cached, completion)
+        }
+    }
 }
 
 internal sealed interface SubagentModelRoute {
@@ -535,6 +568,13 @@ private fun subagentOutcomeHeader(
     val modelBadge = if (includeModelBadge) outcome.resolvedModel?.let { " · 专用模型: $it" } ?: "" else ""
     append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole$modelBadge)\n")
     append("- **工具调用次数**：${outcome.toolCallCount} 次\n")
+    // 委托经济学：把成本摊开给父智能体与用户看——缓存命中率低的大输入是委派不划算的主要信号。
+    outcome.tokenUsage?.let { usage ->
+        append(
+            "- **Token 用量**：输入 ${usage.promptTokens}（缓存命中 ${usage.cachedTokens}，" +
+                "${usage.cacheHitPercent}%）· 输出 ${usage.completionTokens}\n",
+        )
+    }
     if (!outcome.isSuccess) {
         append("- **终止原因**：${subagentTerminationLabel(outcome.termination)}\n")
     }

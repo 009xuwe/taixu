@@ -99,4 +99,67 @@ class RewindControllerTest {
         assertTrue(result.filesDeleted == 0)
         assertEquals(0, result.filesRestored)
     }
+
+    @Test
+    fun `externally modified file is skipped and reported as conflict`() = runBlocking {
+        val root = temporaryFolder.newFolder("workspace")
+        val store = CheckpointStore()
+        val rc = RewindController(store, WorkspaceFileAccess(root))
+
+        // turn0：agent 把 a.txt 从 "v1" 写到 "v2"（带改动后凭据）
+        rc.beginTurn("s", "p0")
+        store.capture("s", "a.txt", "v1")
+        write(root, "a.txt", "v1")
+        store.captureAfterImage("s", "a.txt", "v2")
+        write(root, "a.txt", "v2")
+
+        // 用户在会话外把 a.txt 改成 "external"
+        write(root, "a.txt", "external")
+
+        val result = rc.commit(rc.prepare("s", 0, RewindScope.CODE))
+        assertTrue(result.partial)
+        assertEquals(listOf("a.txt"), result.conflicts)
+        // 外部改动未被覆盖
+        assertEquals("external", textOf(root, "a.txt"))
+        assertTrue(result.note.orEmpty().contains("a.txt"))
+    }
+
+    @Test
+    fun `file matching its after-image restores without conflict`() = runBlocking {
+        val root = temporaryFolder.newFolder("workspace")
+        val store = CheckpointStore()
+        val rc = RewindController(store, WorkspaceFileAccess(root))
+
+        rc.beginTurn("s", "p0")
+        store.capture("s", "a.txt", "v1")
+        write(root, "a.txt", "v1")
+        store.captureAfterImage("s", "a.txt", "v2")
+        write(root, "a.txt", "v2")
+
+        // 无外部改动：当前内容与最后凭据一致 → 正常恢复
+        val result = rc.commit(rc.prepare("s", 0, RewindScope.CODE))
+        assertFalse(result.partial)
+        assertTrue(result.conflicts.isEmpty())
+        assertEquals("v1", textOf(root, "a.txt"))
+    }
+
+    @Test
+    fun `externally deleted file with after-image is a conflict`() = runBlocking {
+        val root = temporaryFolder.newFolder("workspace")
+        val store = CheckpointStore()
+        val rc = RewindController(store, WorkspaceFileAccess(root))
+
+        rc.beginTurn("s", "p0")
+        store.capture("s", "b.txt", null)
+        write(root, "b.txt", "b")
+        store.captureAfterImage("s", "b.txt", "b")
+
+        // 用户在会话外删除了该文件
+        root.resolve("b.txt").delete()
+
+        val result = rc.commit(rc.prepare("s", 0, RewindScope.CODE))
+        // 计划是"恢复为不存在"（删除），但文件已被外部删除 → 记为冲突跳过
+        assertTrue(result.conflicts.contains("b.txt"))
+        assertFalse(root.resolve("b.txt").exists())
+    }
 }

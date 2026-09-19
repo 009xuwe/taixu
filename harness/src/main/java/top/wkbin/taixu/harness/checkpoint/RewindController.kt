@@ -41,7 +41,15 @@ class RewindController @Inject constructor(
         var restored = 0
         var deleted = 0
         val problems = mutableListOf<String>()
+        val conflicts = mutableListOf<String>()
         for (snap in plan.fileSnaps) {
+            // 外部改动冲突检测：当前文件内容与本 store 记录的最后改动后凭据不一致，
+            // 说明会话之外有人改过该文件——恢复会静默覆盖外部修改，保守跳过并报告。
+            // 无凭据（写入失败/超大文件跳过捕获/旧数据）的路径不检测，维持原行为。
+            if (isExternallyModified(plan.sessionId, snap, activeFileAccess)) {
+                conflicts += snap.path
+                continue
+            }
             val ok = if (snap.content == null) {
                 activeFileAccess.delete(snap.path)
             } else {
@@ -54,7 +62,7 @@ class RewindController @Inject constructor(
             }
         }
 
-        var partial = problems.isNotEmpty()
+        var partial = problems.isNotEmpty() || conflicts.isNotEmpty()
         var note: String? = null
         var forkedSessionId: String? = null
         if (plan.scope != RewindScope.CODE) {
@@ -63,6 +71,10 @@ class RewindController @Inject constructor(
                 partial = true
                 note = "对话尚未在目标轮派生新会话（未配置对话 fork 处理器或该轮无锚点）；代码恢复已完成。"
             }
+        }
+        if (conflicts.isNotEmpty()) {
+            note = (note?.let { "$it\n" } ?: "") +
+                "以下文件在会话外被修改过，已跳过恢复以免覆盖外部改动（如需回滚请先自行备份）：${conflicts.joinToString("；")}"
         }
         if (problems.isNotEmpty()) {
             note = (note?.let { "$it\n" } ?: "") + "以下文件恢复失败：${problems.joinToString("；")}"
@@ -73,7 +85,28 @@ class RewindController @Inject constructor(
             partial = partial,
             note = note,
             forkedSessionId = forkedSessionId,
+            conflicts = conflicts,
         )
+    }
+
+    /**
+     * 当前文件是否在 store 的最后凭据之后又被改动过：
+     * - 凭据缺失（null）→ 无法判断，视为未改动（不检测）；
+     * - 当前文件超过快照上限 → 写入凭据时必在限内，如今超限必是外部替换；
+     * - 当前文件缺失但凭据存在 → 被外部删除；
+     * - 其余逐字节比较内容。
+     */
+    private suspend fun isExternallyModified(
+        sessionId: String,
+        snap: FileSnap,
+        activeFileAccess: WorkspaceFileAccess,
+    ): Boolean {
+        val expected = store.latestAfterImage(sessionId, snap.path) ?: return false
+        val size = activeFileAccess.fileSizeOrNull(snap.path)
+            ?: return true // 当前文件不存在：凭据存在说明曾由本 store 写入，被外部删除
+        if (size > CheckpointStore.SNAPSHOT_MAX_BYTES) return true
+        val current = activeFileAccess.previewOrNull(snap.path) ?: return true
+        return current != expected
     }
 }
 

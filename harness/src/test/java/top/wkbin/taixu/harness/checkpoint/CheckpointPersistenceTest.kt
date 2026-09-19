@@ -144,4 +144,20 @@ class CheckpointPersistenceTest {
         assertEquals(metas.sortedBy { it.turn }, metas)
         assertNotNull(metas.firstOrNull { it.prompt == "第一轮" }?.anchorMessageId)
     }
+
+    @Test
+    fun `after-image persists and survives restart`() {
+        val (store, root) = storeWithDisk()
+        store.beginTurn("s", "第一轮")
+        store.capture("s", "a.txt", "old")
+        store.captureAfterImage("s", "a.txt", "new")
+        store.capture("s", "b.txt", null)
+        store.beginTurn("s", "第二轮") // 关闭 turn0 落盘
+
+        val revived = CheckpointStore()
+        revived.persistence = FileCheckpointPersistence(root)
+        assertEquals("new", revived.latestAfterImage("s", "a.txt"))
+        // 无凭据的路径返回 null（b.txt 只有 pre-image）
+        assertNull(revived.latestAfterImage("s", "b.txt"))
+    }
 }
