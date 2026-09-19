@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import top.wkbin.taixu.ui.components.RuntimeCheckbox as Checkbox
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,6 +30,7 @@ import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -50,8 +53,11 @@ import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
+import top.wkbin.taixu.harness.AskUserQuestions
 
 /** 工具调用卡与审批请求卡。 */
 private val DotRunning = Color(0xFFB25E00)
@@ -337,6 +343,175 @@ internal fun ApprovalRequestCard(
     }
 }
 
+/**
+ * ask_user 问题卡：渲染智能体的结构化提问（候选项 chips + 可选自定义输入），
+ * 与 ApprovalRequestCard 同级复用 pending 请求流。提交答案走 resolveQuestion
+ * （答案即工具结果）；「忽略」走既有拒绝路径（模型收到未回答结果）。
+ * 自定义输入与选项互斥：某题输入非空时优先采用输入。
+ */
+@Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+internal fun AskUserCard(
+    request: AgentApprovalRequestEntity,
+    onAnswer: (requestId: String, answersJson: String) -> Unit,
+    onSkip: () -> Unit,
+) {
+    val questions = remember(request.id) {
+        runCatching {
+            AskUserQuestions.parse(
+                kotlinx.serialization.json.Json.parseToJsonElement(request.argumentsJson).jsonObject,
+            )
+        }.getOrNull().orEmpty()
+    }
+    val selected = remember(request.id) { mutableStateMapOf<Int, String?>() }
+    val custom = remember(request.id) { mutableStateMapOf<Int, String?>() }
+    val allAnswered = questions.indices.all { index ->
+        !selected[index].isNullOrBlank() || !custom[index].isNullOrBlank()
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Chat, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
+                Text(
+                    stringResource(R.string.chat_ask_user_title),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                )
+            }
+            if (questions.isEmpty()) {
+                Text(
+                    stringResource(R.string.chat_ask_user_parse_failed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            questions.forEachIndexed { index, question ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        buildString {
+                            question.header?.let { append("[$it] ") }
+                            append(question.question)
+                        },
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    )
+                    if (question.options.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            question.options.forEach { option ->
+                                AskUserOptionChip(
+                                    label = option.label,
+                                    description = option.description,
+                                    isSelected = selected[index] == option.label &&
+                                        custom[index].isNullOrBlank(),
+                                    onClick = {
+                                        if (selected[index] == option.label && custom[index].isNullOrBlank()) {
+                                            selected[index] = null
+                                        } else {
+                                            selected[index] = option.label
+                                            custom.remove(index)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (question.allowCustom) {
+                        OutlinedTextField(
+                            value = custom[index].orEmpty(),
+                            onValueChange = { value ->
+                                custom[index] = value
+                                if (value.isNotBlank()) selected.remove(index)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text(stringResource(R.string.chat_ask_user_custom_hint), style = MaterialTheme.typography.bodySmall) },
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            singleLine = true,
+                        )
+                    }
+                }
+            }
+            var resolving by remember { mutableStateOf(false) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = {
+                        resolving = true
+                        onSkip()
+                    },
+                    enabled = !resolving,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.chat_ask_user_skip)) }
+                Button(
+                    onClick = {
+                        resolving = true
+                        val answers = kotlinx.serialization.json.buildJsonArray {
+                            questions.indices.forEach { index ->
+                                val answer = custom[index]?.trim()?.ifBlank { null }
+                                    ?: selected[index]?.trim()?.ifBlank { null }
+                                    ?: return@forEach
+                                add(
+                                    kotlinx.serialization.json.buildJsonObject {
+                                        put("index", index)
+                                        put("answer", answer)
+                                    },
+                                )
+                            }
+                        }
+                        onAnswer(request.id, answers.toString())
+                    },
+                    enabled = !resolving && allAnswered,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.chat_ask_user_submit)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AskUserOptionChip(
+    label: String,
+    description: String?,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (isSelected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        border = BorderStroke(
+            1.dp,
+            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
+        onClick = onClick,
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+            if (!description.isNullOrBlank()) {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
 internal fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
     if (!rawToolName.isNullOrBlank()) return rawToolName
     return when (tool) {
@@ -357,6 +532,7 @@ internal fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.MCP -> "mcp"
         HarnessTool.LOAD_RULE -> "load_rule"
         HarnessTool.COMPRESS -> "compress"
+        HarnessTool.ASK_USER -> "ask_user"
     }
 }
 

@@ -360,6 +360,11 @@ class ChatViewModel @Inject constructor(
         harnessLoop.resolveApproval(requestId, approved, rememberForSession)
     }
 
+    /** 提交 ask_user 问题卡的回答；答案作为该工具调用的结果落库并续跑会话。 */
+    fun resolveQuestion(requestId: String, answersJson: String) {
+        harnessLoop.resolveQuestion(requestId, answersJson)
+    }
+
     val sessions: StateFlow<List<HarnessSessionEntity>> = sessionDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

@@ -70,4 +70,8 @@ _*.py
 build-output.txt
 scripts_patch/
 
+# Harness transient tool/subagent artifacts (may contain project output or logs)
+.taixu-outputs/
+.taixu-subagent/
+
 

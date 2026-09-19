@@ -34,6 +34,7 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.model.BuiltinMcpPresets
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
+import top.wkbin.taixu.harness.mcp.oauth.McpOAuthTokenProvider
 import top.wkbin.taixu.harness.mcp.server.BuiltinBrowserMcpAccess
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.coroutines.resume
@@ -53,6 +54,7 @@ class McpHttpTransport @Inject constructor(
     client: OkHttpClient,
     private val json: Json,
     private val logger: AppLogger,
+    private val oauthTokens: McpOAuthTokenProvider? = null,
 ) : McpTransport {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -145,9 +147,16 @@ class McpHttpTransport @Inject constructor(
             if (!isTransportFailure(t)) throw t
             logger.w("MCP[${server.name}] 会话失效（${t.message}），重建后重试一次")
             dropSession(server.id, session)
+            if (t is McpHttpStatusException && t.statusCode in setOf(401, 403) &&
+                server.authMode == top.wkbin.taixu.core.model.McpAuthMode.OAUTH
+            ) {
+                oauthTokens?.forceRefresh(server.id)
+            }
             block(ensureSession(server))
         }
     }
+
+    private class McpHttpStatusException(val statusCode: Int) : IOException("MCP HTTP $statusCode")
 
     private fun isTransportFailure(t: Throwable): Boolean =
         t is IOException || (t is IllegalStateException && t.message?.startsWith("MCP HTTP ") == true)
@@ -159,8 +168,10 @@ class McpHttpTransport @Inject constructor(
 
     private suspend fun ensureSessionLocked(server: McpServerConfig, bypassCooldown: Boolean): HttpSession {
         val url = effectiveUrlOf(server)
+        val currentBearer = bearerOf(server)
         sessions[server.id]?.let { existing ->
-            if (existing.serverUrl == url && existing.isOpen) return existing
+            // Token rotation/logout must never reuse a session initialized with an old Bearer.
+            if (existing.serverUrl == url && existing.bearer == currentBearer && existing.isOpen) return existing
             dropSession(server.id, existing)
         }
         // 冷却期内直接快速失败：上一轮刚整体握手失败，短时间内大概率仍是同一个故障
@@ -228,10 +239,10 @@ class McpHttpTransport @Inject constructor(
      * 内置 browser server（自环）回退到 bootstrap 生成的运行时 token，
      * 否则认证恒开启的进程内 server 会拒绝自环请求。
      */
-    private fun bearerOf(server: McpServerConfig): String? {
+    private suspend fun bearerOf(server: McpServerConfig): String? {
         server.authToken.takeIf { it.isNotBlank() }?.let { return it }
         if (server.id == BuiltinMcpPresets.BROWSER_BUILTIN_ID) return BuiltinBrowserMcpAccess.token
-        return null
+        return oauthTokens?.accessToken(server)
     }
 
     /**
@@ -266,7 +277,7 @@ class McpHttpTransport @Inject constructor(
         val url = effectiveUrlOf(server)
         val sseUrl = validatedMcpHttpEndpoint(url)
         val bearer = bearerOf(server)
-        val channel = LegacySseChannel(sseUrl, sseClient, json, scope)
+            val channel = LegacySseChannel(sseUrl, sseClient, json, scope, bearer)
         try {
             val messageEndpoint = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { channel.awaitEndpoint() }
                 ?: error("Legacy SSE 握手超时：${HANDSHAKE_TIMEOUT_MS / 1000}s 内未收到 endpoint 事件")
@@ -326,7 +337,7 @@ class McpHttpTransport @Inject constructor(
             .build()
         val client = if (longRunning) callClient else fastClient
         return client.newCall(request).executeCancellable().use { response ->
-            check(response.isSuccessful) { "MCP HTTP ${response.code}" }
+            if (!response.isSuccessful) throw McpHttpStatusException(response.code)
             val rpc = readResponse(response, id)
             rpc.error?.let { error("MCP JSON-RPC ${it.code}: ${it.message}") }
             StreamableExchange(rpc, response.header("Mcp-Session-Id"))
@@ -339,7 +350,9 @@ class McpHttpTransport @Inject constructor(
             .header("MCP-Protocol-Version", session.protocolVersion)
             .post(payload.toRequestBody(JSON))
             .build()
-        fastClient.newCall(request).executeCancellable().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
+        fastClient.newCall(request).executeCancellable().use {
+            if (!it.isSuccessful) throw McpHttpStatusException(it.code)
+        }
     }
 
     private suspend fun postViaLegacy(
@@ -372,7 +385,9 @@ class McpHttpTransport @Inject constructor(
             .apply { bearer?.let { header("Authorization", "Bearer $it") } }
             .post(payload.toRequestBody(JSON)).build()
         val client = if (retryable) fastClient else nonRetryingFastClient
-        client.newCall(request).executeCancellable().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
+        client.newCall(request).executeCancellable().use {
+            if (!it.isSuccessful) throw McpHttpStatusException(it.code)
+        }
     }
 
     private suspend fun Call.executeCancellable(): Response = suspendCancellableCoroutine { continuation ->
@@ -478,9 +493,12 @@ class McpHttpTransport @Inject constructor(
         sseClient: OkHttpClient,
         private val json: Json,
         scope: CoroutineScope,
+        private val bearer: String?,
     ) {
         private val call = sseClient.newCall(
-            Request.Builder().url(url).header("Accept", "text/event-stream").build(),
+            Request.Builder().url(url).header("Accept", "text/event-stream").apply {
+                bearer?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
+            }.build(),
         )
         private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonRpcResponse>>()
         private val endpointDeferred = CompletableDeferred<HttpUrl>()
@@ -497,7 +515,7 @@ class McpHttpTransport @Inject constructor(
         private suspend fun readLoop() {
             runCatching {
                 call.execute().use { response ->
-                    check(response.isSuccessful) { "MCP HTTP ${response.code}" }
+                    if (!response.isSuccessful) throw McpHttpStatusException(response.code)
                     var event = ""
                     val data = mutableListOf<String>()
                     var eventBytes = 0

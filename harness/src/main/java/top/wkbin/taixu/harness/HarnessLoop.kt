@@ -1414,6 +1414,88 @@ class HarnessLoop @Inject constructor(
         }
     }
 
+    /**
+     * 用户回答 ask_user 提问（answersJson = `[{"index":0,"answer":"..."}]`）：
+     * 与 resolveApproval 同轨（认领 → 占位启动 → 续跑），但无需重执行工具——
+     * 答案经 [AskUserQuestions.formatAnswers] 直接作为该 toolCall 的结果落库。
+     */
+    fun resolveQuestion(requestId: String, answersJson: String) {
+        logger.i("resolveQuestion called: requestId=$requestId")
+        loopScope.launch {
+            val request = approvalRepository.find(requestId)
+            if (request == null) {
+                logger.w("resolveQuestion: request not found: $requestId")
+                return@launch
+            }
+            val sessId = request.sessionId
+            if (request.status != top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_PENDING) {
+                logger.w("resolveQuestion: request not pending (status=${request.status}), ignoring: $requestId")
+                return@launch
+            }
+            sessionJobs[sessId]?.takeIf { it.isActive }?.join()
+            val verdict = resumePolicy.evaluate(request, approved = true)
+            if (verdict.isInvalid) {
+                if (approvalRepository.claimPending(request.id, verdict.claimStatus)) {
+                    approvalRepository.mark(request.id, verdict.claimStatus)
+                    messageProjector.append(
+                        sessId,
+                        ToolResult(
+                            id = newId(), createdAt = now(), toolCallId = request.toolCallId,
+                            success = false,
+                            output = resumePolicy.invalidationResultMessage(verdict.invalidationReason.orEmpty()),
+                        ),
+                    )
+                }
+                return@launch
+            }
+            if (!approvalRepository.claimPending(request.id, verdict.claimStatus)) {
+                return@launch
+            }
+            val durableTaskId = agentTaskStateMachine.activeForSession(sessId)
+                ?.takeIf { it.status == top.wkbin.taixu.core.database.task.AgentTaskStatus.WAITING_APPROVAL }
+                ?.id
+            startClaimedSessionRun(sessId, durableTaskId) {
+                var resultPersisted = false
+                try {
+                    val result = ToolResult(
+                        id = newId(),
+                        createdAt = now(),
+                        toolCallId = request.toolCallId,
+                        success = true,
+                        output = AskUserQuestions.formatAnswers(request.argumentsJson, answersJson),
+                    )
+                    val activeOperation = operationCoordinator.active(sessId)
+                    if (activeOperation != null) {
+                        operationCoordinator.toolSettled(activeOperation.id, result, round = 0, toolName = request.toolName)
+                        messageProjector.publishPersisted(sessId, result)
+                    } else {
+                        messageProjector.append(sessId, result)
+                    }
+                    approvalRepository.mark(request.id, top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_EXECUTED)
+                    resultPersisted = true
+                    runLoopInternal(sessId, startedAt = now(), taskId = durableTaskId)
+                } catch (cancellation: CancellationException) {
+                    if (!resultPersisted) {
+                        withContext(NonCancellable) {
+                            approvalRepository.mark(request.id, top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED)
+                            repairDanglingToolCalls(sessId, interrupted = true)
+                        }
+                    }
+                    throw cancellation
+                } catch (_: ApprovalPauseException) {
+                    // 答案落库后继续循环，下一个工具又触发审批门控——正常流程。
+                    RunResult.WaitingApproval
+                } catch (throwable: Throwable) {
+                    logger.e("Question resolution failed for request ${request.id}", throwable)
+                    if (!resultPersisted) {
+                        approvalRepository.mark(request.id, top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED)
+                    }
+                    RunResult.Failed(throwable.message ?: "提交回答失败：${throwable::class.simpleName}")
+                }
+            }
+        }
+    }
+
     companion object {
         internal fun maxNetworkRetriesFor(estimatedRequestTokens: Int, configuredRetries: Int): Int =
             HarnessProviderRunner.maxNetworkRetriesFor(estimatedRequestTokens, configuredRetries)

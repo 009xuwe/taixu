@@ -1,6 +1,10 @@
 package top.wkbin.taixu
 
+import android.annotation.SuppressLint
 import android.app.Application
+import android.util.Log
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import top.wkbin.taixu.core.common.logging.CrashReporter
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.core.datastore.AppStatsPreferences
@@ -20,31 +24,41 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import top.wkbin.taixu.harness.workflow.WorkflowRunManager
+import top.wkbin.taixu.runtime.RuntimePathManager
+import top.wkbin.taixu.workflow.AppForegroundTracker
+import top.wkbin.taixu.workflow.WorkflowApprovalNotifier
+import top.wkbin.taixu.workflow.WorkflowRunUiController
+import java.io.File
 
 @HiltAndroidApp
-class TaiXuApplication : Application(), androidx.work.Configuration.Provider {
+class TaiXuApplication : Application(), Configuration.Provider {
+
+    companion object {
+        private const val TAG = "TaiXuApp"
+    }
     @Inject lateinit var crashReporter: CrashReporter
 
     // WorkManager 按需初始化 + HiltWorkerFactory：定时计划 Worker（@HiltWorker）靠它注入
     // harness 单例（WorkflowRunManager / WorkflowScheduleRepository）
-    @Inject lateinit var hiltWorkerFactory: androidx.hilt.work.HiltWorkerFactory
+    @Inject lateinit var hiltWorkerFactory: HiltWorkerFactory
 
-    override val workManagerConfiguration: androidx.work.Configuration
-        get() = androidx.work.Configuration.Builder()
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
             .setWorkerFactory(hiltWorkerFactory)
             .build()
 
     // 启动性能：HarnessLoop / Room 仓储的构造图很重（DAO、DataStore、Agent 引擎全家桶），
     // eager 注入会拖慢第一帧。改为 dagger.Lazy，把实际构建推迟到首个 IO 协程内。
     @Inject lateinit var harnessLoopLazy: Lazy<HarnessLoop>
-    @Inject lateinit var workflowRunManagerLazy: Lazy<top.wkbin.taixu.harness.workflow.WorkflowRunManager>
-    @Inject lateinit var workflowRunUiController: top.wkbin.taixu.workflow.WorkflowRunUiController
-    @Inject lateinit var workflowApprovalNotifier: top.wkbin.taixu.workflow.WorkflowApprovalNotifier
-    @Inject lateinit var appForegroundTracker: top.wkbin.taixu.workflow.AppForegroundTracker
+    @Inject lateinit var workflowRunManagerLazy: Lazy<WorkflowRunManager>
+    @Inject lateinit var workflowRunUiController: WorkflowRunUiController
+    @Inject lateinit var workflowApprovalNotifier: WorkflowApprovalNotifier
+    @Inject lateinit var appForegroundTracker: AppForegroundTracker
     @Inject lateinit var appStatsPreferences: AppStatsPreferences
     @Inject lateinit var agentSkillRepositoryLazy: Lazy<AgentSkillRepository>
     @Inject lateinit var mcpServerRepositoryLazy: Lazy<McpServerRepository>
-    @Inject lateinit var pathManagerLazy: Lazy<top.wkbin.taixu.runtime.RuntimePathManager>
+    @Inject lateinit var pathManagerLazy: Lazy<RuntimePathManager>
     @Inject lateinit var privilegeManager: PrivilegeManager
     @Inject lateinit var browserMcpBootstrap: BrowserMcpBootstrap
 
@@ -74,12 +88,12 @@ class TaiXuApplication : Application(), androidx.work.Configuration.Provider {
                         val pathManager = pathManagerLazy.get()
                         val imported = skillRepository.syncFromDirectories(
                             listOf(
-                                SkillScanRoot(java.io.File(pathManager.attachmentsDir, "skills"), "/attachments/skills"),
-                                SkillScanRoot(java.io.File(pathManager.workspaceDir, "skills"), "/workspace/skills"),
+                                SkillScanRoot(File(pathManager.attachmentsDir, "skills"), "/attachments/skills"),
+                                SkillScanRoot(File(pathManager.workspaceDir, "skills"), "/workspace/skills"),
                             )
                         )
                         if (imported.isNotEmpty()) {
-                            android.util.Log.i("TaiXuApp", "Skill 目录自动发现并导入 ${imported.size} 个：${imported.joinToString { it.name }}")
+                            Log.i(TAG, "Skill 目录自动发现并导入 ${imported.size} 个：${imported.joinToString { it.name }}")
                         }
                     }
                 }
@@ -109,10 +123,10 @@ class TaiXuApplication : Application(), androidx.work.Configuration.Provider {
             runCatching {
                 val recovered = harnessLoop.recoverAllInterruptedSessions()
                 if (recovered > 0) {
-                    android.util.Log.i("TaiXuApp", "已恢复 $recovered 个被中断的 Agent 会话/任务")
+                    Log.i(TAG, "已恢复 $recovered 个被中断的 Agent 会话/任务")
                 }
             }.onFailure {
-                android.util.Log.w("TaiXuApp", "恢复中断会话失败", it)
+                Log.w(TAG, "恢复中断会话失败", it)
             }
             // 工作流后台化：启动对账（把进程死亡遗留的非终态运行标为已中断）+ 通知/HUD
             // 控制器 + FGS 联动。工作流 agent 会话由工作流体系自管，已在恢复中排除。
@@ -121,7 +135,7 @@ class TaiXuApplication : Application(), androidx.work.Configuration.Provider {
             workflowRunUiController.start()
             workflowApprovalNotifier.start(this@TaiXuApplication)
             runCatching { workflowRunManager.reconcileInterruptedRuns() }
-                .onFailure { android.util.Log.w("TaiXuApp", "工作流启动对账失败", it) }
+                .onFailure { Log.w(TAG, "工作流启动对账失败", it) }
             launch {
                 workflowRunManager.running.collectLatest { running ->
                     if (running) {
@@ -141,13 +155,14 @@ class TaiXuApplication : Application(), androidx.work.Configuration.Provider {
      * 🌟 全局 CursorWindow 缓冲扩容：将 Android SQLite 原生游标窗口由默认 2MB 扩容至 100MB，
      * 彻底解决已有会话中超大单行记录在 Room 查询时报 `Row too big to fit into CursorWindow` 的问题。
      */
+    @SuppressLint("DiscouragedPrivateApi")
     private fun configureCursorWindowSize() {
         runCatching {
             val field = android.database.CursorWindow::class.java.getDeclaredField("sCursorWindowSize")
             field.isAccessible = true
             field.set(null, 100 * 1024 * 1024) // 100MB
         }.onFailure {
-            android.util.Log.w("TaiXuApp", "Failed to configure CursorWindow size", it)
+            Log.w(TAG, "Failed to configure CursorWindow size", it)
         }
     }
 }

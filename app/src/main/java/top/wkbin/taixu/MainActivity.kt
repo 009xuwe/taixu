@@ -7,7 +7,6 @@ import top.wkbin.taixu.ui.onboarding.OnboardingViewModel
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -52,6 +51,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -69,6 +69,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import javax.inject.Inject
 import top.wkbin.taixu.core.common.navigation.AppNavigationTarget
 import top.wkbin.taixu.core.common.navigation.GlobalNavigationBus
+import top.wkbin.taixu.harness.mcp.oauth.McpOAuthCoordinator
 import top.wkbin.taixu.service.adb.AdbNotificationManager
 
 @AndroidEntryPoint
@@ -87,6 +88,9 @@ class MainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var adbNotificationManager: AdbNotificationManager
+
+    @Inject
+    lateinit var mcpOAuthCoordinator: McpOAuthCoordinator
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -333,6 +337,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleNavigationIntent(targetIntent: Intent?) {
         val intentToHandle = targetIntent ?: intent ?: return
+        val oauthUri = intentToHandle.data
+        if (intentToHandle.action == Intent.ACTION_VIEW && oauthUri != null &&
+            oauthUri.scheme == "taixu" && oauthUri.host == "oauth" && oauthUri.path == "/mcp"
+        ) {
+            lifecycleScope.launch {
+                runCatching { mcpOAuthCoordinator.callback(oauthUri) }
+                    .onFailure { /* UI observes server auth state; never log callback code/token. */ }
+            }
+            return
+        }
         val action = intentToHandle.action
         val navigateTo = intentToHandle.getStringExtra("navigate_to")
         val isAdbLogcat = action == "top.wkbin.taixu.action.OPEN_ADB_LOGCAT" || navigateTo == "adb_logcat"

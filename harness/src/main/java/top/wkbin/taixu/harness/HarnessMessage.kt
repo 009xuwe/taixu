@@ -24,6 +24,7 @@ enum class HarnessTool {
     @SerialName("mcp") MCP,
     @SerialName("load_rule") LOAD_RULE,
     @SerialName("compress") COMPRESS,
+    @SerialName("ask_user") ASK_USER,
 }
 
 /**

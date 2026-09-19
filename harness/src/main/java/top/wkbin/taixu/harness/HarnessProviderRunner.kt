@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import top.wkbin.taixu.harness.metrics.RunMetrics
 import top.wkbin.taixu.harness.session.SessionTreeStore
+import top.wkbin.taixu.harness.compaction.CompactionManager
 import top.wkbin.taixu.harness.effects.RetryPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
 import top.wkbin.taixu.harness.events.AgentEventLogger
@@ -28,6 +29,7 @@ class HarnessProviderRunner @Inject constructor(
     private val capabilityWriter: CapabilityEventWriter,
     private val agentEventLogger: AgentEventLogger,
     private val contextAssembler: ApiContextAssembler,
+    private val compactionManager: CompactionManager,
 ) {
     /**
      * 记录本轮 @提及 的能力挂载事件（UI 展示用）。
@@ -85,6 +87,7 @@ class HarnessProviderRunner @Inject constructor(
         // valid 128k/200k conversation down to 64k.
         var requestMessages = assembleFor(model)
         var imageStripped = false
+        var overflowRecovered = false
         val estimatedRequestTokens = estimateTokens(requestMessages)
         val maxNetworkRetries = maxNetworkRetriesFor(estimatedRequestTokens, retryPolicy.maxRetries)
         val maxAttempts = maxNetworkRetries + 1
@@ -184,6 +187,49 @@ class HarnessProviderRunner @Inject constructor(
                 delay(retryPolicy.delayForRetry(netRetry).milliseconds)
             } catch (throwable: Throwable) {
                 stateMirrors.setThinkingLive(sessId, false)
+                // 上下文超限自愈闭环（对齐 opencode 的 overflow → compact → replay）：
+                // 杠杆 1 = 紧急机械压缩（每轮至多一次）；杠杆 2 = 剥离图片输入。
+                // 两个杠杆都用尽仍超限才判失败——预算估算偏差、元数据缺 contextTokens、
+                // 当前轮巨型工具输出等场景不该直接把 400 甩给用户。
+                if (throwable is LlmContextOverflowException) {
+                    currentCoroutineContext().ensureActive()
+                    if (!overflowRecovered) {
+                        overflowRecovered = true
+                        stateMirrors.setStatus(sessId, "上下文超限，正在紧急压缩历史后重试")
+                        agentEventLogger.log(sessId, "ContextOverflowRecovery", "识别到上下文超限，执行紧急压缩：${throwable.message}", throwable)
+                        val recovered = recoverFromContextOverflow(sessId, model)
+                        if (recovered != null) {
+                            agentEventLogger.log(
+                                sessId, "ContextOverflowRecovery",
+                                "紧急压缩完成：折叠 ${recovered.first} 条，保留 ${recovered.second} 条，重新组装请求重试",
+                            )
+                            streamText.clear()
+                            streamReasoning.clear()
+                            messageProjector.remove(sessId, assistantId)
+                            requestMessages = assembleFor(model)
+                            continue
+                        }
+                    }
+                    val pendingImages = requestMessages.sumOf { it.imageUrls.size }
+                    if (!imageStripped && pendingImages > 0) {
+                        imageStripped = true
+                        requestMessages = requestMessages.map { it.copy(imageUrls = emptyList()) }
+                        agentEventLogger.log(
+                            sessId, "ContextOverflowImageStrip",
+                            "紧急压缩后仍超限，剥离 $pendingImages 张图片降级重试", throwable,
+                        )
+                        streamText.clear()
+                        streamReasoning.clear()
+                        messageProjector.remove(sessId, assistantId)
+                        continue
+                    }
+                    messageProjector.remove(sessId, assistantId)
+                    agentEventLogger.log(sessId, "ContextOverflowUnrecoverable", "上下文超限且压缩/剥离图片均无法恢复", throwable)
+                    return TurnProviderOutcome.Failed(
+                        "上下文超出模型窗口，自动压缩后仍无法恢复。" +
+                            "可以让模型用 compress 工具手动压缩，或切换到更大上下文窗口的模型后重试。",
+                    )
+                }
                 // 模型不支持图片输入（HTTP 400）时，剥离全部图片降级重试一次，避免整轮中断
                 val lowerMsg = throwable.message.orEmpty().lowercase()
                 val pendingImages = requestMessages.sumOf { it.imageUrls.size }
@@ -226,6 +272,35 @@ class HarnessProviderRunner @Inject constructor(
         }
         messageProjector.endStreaming(sessId)
         return TurnProviderOutcome.Success(streamed, streamText.toString())
+    }
+
+    /**
+     * 紧急压缩：把历史折到正常预算的一小部分（返回 (折叠条数, 保留条数)）。
+     * 机械摘要（model=null）——摘要请求若 cache-replay 同一前缀，会以同样方式超限，
+     * 恢复路径上绝不能再调 LLM。无可折叠内容（历史已是最小保留态 / 分支漂移放弃折叠）
+     * 返回 null，由调用方走下一个恢复杠杆。
+     */
+    private suspend fun recoverFromContextOverflow(sessId: String, model: ModelConfig): Pair<Int, Int>? {
+        return try {
+            val context = compactionManager.project(sessId)
+            if (context.messages.size <= 1) return null
+            val keepFrom = ContextWindowPolicy.computeKeepFromIndex(
+                context.messages,
+                emergencyFoldBudget(model),
+                systemTokens = 0,
+                reserveTokens = 0,
+            )
+            if (keepFrom < 1) return null
+            val compacted = compactionManager.compact(sessId, context, keepFrom, model = null)
+            val folded = context.messages.size - compacted.messages.size
+            if (folded <= 0) return null
+            folded to compacted.messages.size
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            agentEventLogger.log(sessId, "ContextOverflowRecoveryFailed", "紧急压缩失败：${throwable.message}", throwable)
+            null
+        }
     }
 
     /** 回合结束后落库助手回复；无文本时只结算 usage 记录 */
@@ -318,6 +393,16 @@ class HarnessProviderRunner @Inject constructor(
     companion object {
         private const val LARGE_REQUEST_TOKEN_THRESHOLD = 64_000
         private const val LARGE_REQUEST_MAX_RETRIES = 1
+
+        /** 紧急压缩目标：把历史折到正常预算的 25%（computeKeepFromIndex 内部再扣输出/schema 预留）。 */
+        private const val EMERGENCY_FOLD_RATIO_PERCENT = 25
+        private const val EMERGENCY_FOLD_MIN_BUDGET = 8_000
+        private const val DEFAULT_CONTEXT_BUDGET_TOKENS = 128_000
+
+        internal fun emergencyFoldBudget(model: ModelConfig): Int =
+            (ContextWindowPolicy.clampedBudget(model.contextTokens, DEFAULT_CONTEXT_BUDGET_TOKENS) *
+                EMERGENCY_FOLD_RATIO_PERCENT / 100)
+                .coerceAtLeast(EMERGENCY_FOLD_MIN_BUDGET)
 
         internal fun maxNetworkRetriesFor(estimatedRequestTokens: Int, configuredRetries: Int): Int =
             if (estimatedRequestTokens >= LARGE_REQUEST_TOKEN_THRESHOLD) {

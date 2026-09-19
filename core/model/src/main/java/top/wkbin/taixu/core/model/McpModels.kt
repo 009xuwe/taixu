@@ -31,8 +31,17 @@ data class McpServerConfig(
     val env: Map<String, String> = emptyMap(),
     /** 远程 MCP 服务的 HTTP 端点 URL（例如 http://127.0.0.1:8000/mcp 或 .../sse） */
     val serverUrl: String = "",
+    /** Authentication mode for remote HTTP MCP services. */
+    val authMode: McpAuthMode = McpAuthMode.NONE,
+    /** Public OAuth client configuration; secrets are never stored here. */
+    val oauthClientId: String = "",
+    val oauthAuthorizationEndpoint: String = "",
+    val oauthTokenEndpoint: String = "",
+    val oauthRedirectUri: String = "taixu://oauth/mcp",
+    val oauthScope: String = "",
+    val oauthResource: String = "",
     /**
-     * 远程 HTTP MCP 服务的 Bearer token（发送 `Authorization: Bearer <token>`）。
+     * 远程 MCP 服务的 Bearer token（发送 `Authorization: Bearer <token>`）。
      * 运行时注入用（例如内置 browser server 的自环凭据）：@Transient 保证不参与序列化，
      * 既不落 Room 也不随 [toExportJsonConfig] 导出。
      */
@@ -114,6 +123,12 @@ data class SubagentTaskSpec(
     val writePaths: List<String> = emptyList(),
     /** 可选：已保存模型档案的 ID/名称，或该档案中已配置的具体模型名；null/"inherit" 继承父会话。 */
     val model: String? = null,
+    /**
+     * 可选：续跑目标（对齐 opencode task 工具的 task_id resume）。
+     * 填入上次 invoke_subagent 汇总中的 task_id（即子任务 Lane 名）时，
+     * 本次在该 Lane 已有对话上继续执行（prompt 为续跑指令），而不是创建全新 Lane。
+     */
+    val taskId: String? = null,
 )
 
 /**

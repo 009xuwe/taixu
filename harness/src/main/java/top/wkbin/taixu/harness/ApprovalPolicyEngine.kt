@@ -94,7 +94,7 @@ class ApprovalPolicyEngine @Inject constructor(
         }
         if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN ||
             tool == HarnessTool.SCRATCHPAD || tool == HarnessTool.HISTORY_SEARCH || tool == HarnessTool.HISTORY_READ ||
-            tool == HarnessTool.LOAD_RULE || tool == HarnessTool.COMPRESS
+            tool == HarnessTool.LOAD_RULE || tool == HarnessTool.COMPRESS || tool == HarnessTool.ASK_USER
         ) {
             return ApprovalDecision(false)
         }
@@ -142,7 +142,8 @@ class ApprovalPolicyEngine @Inject constructor(
                 else -> ApprovalDecision(true, "high", "MCP 工具可能访问外部服务或产生工作区之外的副作用。", summary)
             }
             HarnessTool.READ, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD,
-            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT, HarnessTool.LOAD_RULE -> ApprovalDecision(false)
+            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT, HarnessTool.LOAD_RULE,
+            HarnessTool.ASK_USER -> ApprovalDecision(false)
         }
     }
 

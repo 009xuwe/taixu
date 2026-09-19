@@ -63,7 +63,7 @@ internal class ResponsesApi(
                         if (response.code in 500..599) {
                             throw ProviderClient.transientHttpException(response.code, body, response.header("Retry-After"))
                         }
-                        throw IllegalStateException("Responses 请求失败 HTTP ${response.code}：${extractError(body)}")
+                        throw httpError(response.code, body)
                     }
                     parseFinalResponse(body)
                 }
@@ -103,7 +103,7 @@ internal class ResponsesApi(
                     if (response.code in 500..599) {
                         throw ProviderClient.transientHttpException(response.code, rawBody, response.header("Retry-After"))
                     }
-                    throw IllegalStateException("Responses 请求失败 HTTP ${response.code}：${extractError(rawBody)}")
+                    throw httpError(response.code, rawBody)
                 }
                 val source = response.body.source()
                 val demuxer = ThinkTagStreamDemuxer(onReasoning, onDelta)
@@ -452,6 +452,16 @@ internal class ResponsesApi(
         cacheReadTokens = (usage["input_tokens_details"] as? JsonObject)
             ?.get("cached_tokens")?.jsonPrimitive?.longOrNull ?: 0,
     )
+
+    /** 非 429/5xx 的 HTTP 错误：命中上下文超限文案时抛可自愈类型，供引擎紧急压缩后重试。 */
+    private fun httpError(code: Int, body: String): Exception {
+        val message = "Responses 请求失败 HTTP $code：${extractError(body)}"
+        return if (ProviderClient.isContextOverflowMessage(body)) {
+            LlmContextOverflowException(message)
+        } else {
+            IllegalStateException(message)
+        }
+    }
 
     private fun extractError(body: String): String {
         val message = runCatching {

@@ -47,6 +47,13 @@ class TransientHttpException(
     val retryAfterSeconds: Long? = null,
 ) : IOException(message)
 
+/**
+ * 上下文超限（HTTP 400 家族）：与其他 4xx 的本质区别是可自愈——引擎捕获后执行紧急
+ * 机械压缩并重试同一请求（对齐 opencode 的 overflow → compact → replay 闭环），
+ * 而不是直接把失败抛给用户。
+ */
+class LlmContextOverflowException(message: String) : IOException(message)
+
 /** 可独立测试的 HTTP 层：OpenAI 兼容 chat/completions 请求与响应解析。 */
 internal class ChatApi(
     private val okHttpClient: OkHttpClient,
@@ -69,7 +76,7 @@ internal class ChatApi(
                         if (response.code in 500..599) {
                             throw ProviderClient.transientHttpException(response.code, body, response.header("Retry-After"))
                         }
-                        throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
+                        throw ProviderClient.contextOverflowException(response.code, body)
                     }
                     if (!ProviderClient.looksLikeJsonResponse(body)) {
                         throw IllegalStateException(
@@ -161,7 +168,7 @@ internal class ChatApi(
                     if (response.code in 500..599) {
                         throw ProviderClient.transientHttpException(response.code, rawBody, response.header("Retry-After"))
                     }
-                    throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, rawBody))
+                    throw ProviderClient.contextOverflowException(response.code, rawBody)
                 }
                 val source = response.body.source()
                 val demuxer = ThinkTagStreamDemuxer(onReasoning, onDelta)
@@ -1110,6 +1117,50 @@ class ProviderClient @Inject constructor(
             return TransientHttpException(message, code, retrySeconds)
         }
 
+        /**
+         * 上下文超限识别（对齐 opencode session/retry 的 RETRYABLE 思路，但走压缩恢复而非重试）：
+         * 命中 [CONTEXT_OVERFLOW_PATTERNS] 时返回 [LlmContextOverflowException]，
+         * 其余 4xx 仍是 [IllegalStateException]。
+         * 匹配对 rawBody 原文做小写包含——各家 400 文案不同，宁滥勿缺：误报的代价只是
+         * 多一次机械压缩尝试（有界），漏报则用户直接看到失败。
+         */
+        internal fun contextOverflowException(code: Int, rawBody: String): Exception =
+            if (isContextOverflowMessage(rawBody)) {
+                LlmContextOverflowException(formatHttpErrorMessage(code, rawBody))
+            } else {
+                IllegalStateException(formatHttpErrorMessage(code, rawBody))
+            }
+
+        internal fun isContextOverflowMessage(rawBody: String): Boolean {
+            val lower = rawBody.lowercase()
+            return CONTEXT_OVERFLOW_PATTERNS.any { it in lower }
+        }
+
+        private val CONTEXT_OVERFLOW_PATTERNS = listOf(
+            // OpenAI 家族："This model's maximum context length is ... tokens"
+            "maximum context length",
+            "context length",
+            "context_length",
+            // Anthropic："prompt is too long: N tokens > M maximum"
+            "prompt is too long",
+            "exceed context limit",
+            "context window",
+            // Gemini："input token count ... exceeds the maximum number of tokens allowed"
+            "exceeds the maximum number of tokens",
+            "input token count",
+            "too many input tokens",
+            // 通用
+            "reduce the length",
+            "too many tokens",
+            "input is too long",
+            "context token limit",
+            "request entity too large",
+            "payload too large",
+            "上下文超限",
+            "超出上下文",
+            "上下文长度",
+        )
+
         internal const val READ_TIMEOUT_MS = 5 * 60 * 1000L
         internal val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -1235,9 +1286,9 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "invoke_subagent",
-                    description = "按研发部门和简短专业关键词从本地索引解析角色，并发派发隔离子智能体。用户枚举多个独立子任务时，必须在同一次调用的 subagents 数组中完整提交，禁止逐个派发；结果保持数组顺序。writePaths=[] 表示只读并行，精确路径表示局部写租约，[\"*\"] 表示整工作区独占写入。写租约对 write/edit/download 是强制闸门：writePaths=[] 的子任务调用这些工具会被直接拦截，越界路径同样拦截，需要落盘必须先声明具体路径；base 的 shell 写不受闸门约束，写租约也只在同一次调用内协调。子任务需要审批类操作（后台 Lane 无法暂停审批）时会作为待办上交，必须由你在主会话重新发起。候选目录不会进入主对话。",
+                    description = "按研发部门和简短专业关键词从本地索引解析角色，并发派发隔离子智能体。用户枚举多个独立子任务时，必须在同一次调用的 subagents 数组中完整提交，禁止逐个派发；结果保持数组顺序。writePaths=[] 表示只读并行，精确路径表示局部写租约，[\"*\"] 表示整工作区独占写入。写租约对 write/edit/download 是强制闸门：writePaths=[] 的子任务调用这些工具会被直接拦截，越界路径同样拦截，需要落盘必须先声明具体路径；base 的 shell 写不受闸门约束，写租约也只在同一次调用内协调。子任务需要审批类操作（后台 Lane 无法暂停审批）时会作为待办上交，必须由你在主会话重新发起。候选目录不会进入主对话。background=true 时立即返回、完成后结果自动注入本会话，适合耗时较长且当前无需其结果的子任务；不要等待或轮询后台任务。summary 中每个子任务都带有 task_id，把未完结子任务的 task_id 连同新指令再次提交（task_id 字段）可在同一子会话上续跑，而不是从零开始。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"subagents":{"type":"array","description":"一次性提交的完整独立子任务列表；用户枚举 N 项时必须包含全部 N 项","minItems":1,"maxItems":6,"items":{"type":"object","properties":{"taskName":{"type":"string","description":"简短子任务名称"},"department":{"type":"string","enum":["engineering","design","product","project-management","testing","security","game-development","spatial-computing","specialized"],"description":"先选研发部门，匹配严格限制在该部门"},"agentQuery":{"type":"string","minLength":2,"maxLength":80,"description":"2-5 个简短英文专业关键词，如 frontend react、mobile android、test automation；不要复制完整任务"},"role":{"type":"string","description":"可选：仅兼容已知 profile id/name 的精确覆盖；存在时优先于索引匹配"},"prompt":{"type":"string","description":"详细任务指令与交付要求"},"writePaths":{"type":"array","description":"必须声明。纯调研/分析填空数组 []；修改文件时列出精确相对路径；只有整工作区独占写入才填 [\"*\"]","items":{"type":"string"}},"model":{"type":"string","description":"可选：已保存模型档案的 ID/名称，或档案中已配置的具体模型名；优先于角色默认模型。传 inherit 强制继承父会话模型；不填则使用角色默认模型，角色未配置时继承父会话"}},"required":["taskName","department","agentQuery","prompt","writePaths"]}}},"required":["subagents"]}""",
+                        """{"type":"object","properties":{"background":{"type":"boolean","description":"true=后台执行：立即返回，完成后结果自动注入本会话并触发后续推理；期间请处理其他独立工作或直接结束本轮回复，不要休眠、轮询或重复派发"},"subagents":{"type":"array","description":"一次性提交的完整独立子任务列表；用户枚举 N 项时必须包含全部 N 项","minItems":1,"maxItems":6,"items":{"type":"object","properties":{"taskName":{"type":"string","description":"简短子任务名称"},"department":{"type":"string","enum":["engineering","design","product","project-management","testing","security","game-development","spatial-computing","specialized"],"description":"先选研发部门，匹配严格限制在该部门"},"agentQuery":{"type":"string","minLength":2,"maxLength":80,"description":"2-5 个简短英文专业关键词，如 frontend react、mobile android、test automation；不要复制完整任务"},"role":{"type":"string","description":"可选：仅兼容已知 profile id/name 的精确覆盖；存在时优先于索引匹配"},"prompt":{"type":"string","description":"详细任务指令与交付要求；填写 task_id 时为本轮续跑指令"},"writePaths":{"type":"array","description":"必须声明。纯调研/分析填空数组 []；修改文件时列出精确相对路径；只有整工作区独占写入才填 [\"*\"]","items":{"type":"string"}},"model":{"type":"string","description":"可选：已保存模型档案的 ID/名称，或档案中已配置的具体模型名；优先于角色默认模型。传 inherit 强制继承父会话模型；不填则使用角色默认模型，角色未配置时继承父会话"},"task_id":{"type":"string","description":"可选：续跑已有子任务时填入上次汇总中的 task_id（原样复制），本次在该子会话已有上下文上继续；此时 role/department/agentQuery 会被忽略"}},"required":["taskName","department","agentQuery","prompt","writePaths"]}}},"required":["subagents"]}""",
 
                     ).jsonObject,
                 ),
@@ -1257,6 +1308,15 @@ class ProviderClient @Inject constructor(
                     description = "按需加载系统提示词的详细规则块（workflow / code-navigation / security / memory / environment-proot / tools）。当当前任务需要某块规则但系统提示词中未注入时调用；只读，无副作用。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"rule":{"type":"string","enum":["workflow","code-navigation","security","memory","environment-proot","tools"],"description":"要加载的规则块名称"}},"required":["rule"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "ask_user",
+                    description = "在关键决策点向用户提出结构化问题（选择题或自由输入）。当多个合理方案难以自行取舍、或缺失会显著影响结果的关键信息时使用；不要用它确认显而易见的步骤，也不要频繁调用打断用户。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"questions":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","properties":{"question":{"type":"string","description":"问题正文，具体、可直接回答"},"header":{"type":"string","description":"短标签（≤12 字），用于卡片分组"},"options":{"type":"array","minItems":0,"maxItems":6,"items":{"type":"object","properties":{"label":{"type":"string","description":"选项短文本"},"description":{"type":"string","description":"选项补充说明，可省略"}},"required":["label"]},"description":"候选项；省略或为空表示自由文本问题"},"allow_custom":{"type":"boolean","description":"除候选项外是否允许用户自定义输入；有 options 时默认 true"}},"required":["question"]}}},"required":["questions"]}""",
                     ).jsonObject,
                 ),
             ),

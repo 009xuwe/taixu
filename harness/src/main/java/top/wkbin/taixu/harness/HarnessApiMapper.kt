@@ -53,6 +53,7 @@ internal object HarnessApiMapper {
             lower == "invoke_subagent" || lower == "subagent" || lower == "invoke_dual_agent" -> HarnessTool.SUBAGENT
             lower == "load_rule" -> HarnessTool.LOAD_RULE
             lower == "compress" -> HarnessTool.COMPRESS
+            lower == "ask_user" -> HarnessTool.ASK_USER
             lower == "use_capability" -> HarnessTool.MCP
             trimmed.startsWith("mcp__") -> HarnessTool.MCP
             else -> HarnessTool.BASE
@@ -77,5 +78,6 @@ internal object HarnessApiMapper {
         HarnessTool.MCP -> "mcp"
         HarnessTool.LOAD_RULE -> "load_rule"
         HarnessTool.COMPRESS -> "compress"
+        HarnessTool.ASK_USER -> "ask_user"
     }
 }
