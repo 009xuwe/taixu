@@ -25,6 +25,7 @@ import top.wkbin.taixu.harness.subagent.SubagentTermination
 import top.wkbin.taixu.harness.subagent.adjudicateSubagentClaim
 import top.wkbin.taixu.harness.subagent.buildSubagentTimeoutSummary
 import top.wkbin.taixu.harness.subagent.declaresWriteIntent
+import top.wkbin.taixu.harness.subagent.detectSuspectedShellWrites
 import top.wkbin.taixu.harness.subagent.extractSubagentReceipts
 import top.wkbin.taixu.harness.subagent.parseSubagentClaim
 import top.wkbin.taixu.harness.subagent.renderSubagentClaimAdjudication
@@ -213,6 +214,7 @@ class SubagentOrchestrator @Inject constructor(
             blockedWrites = laneResult?.blockedWrites.orEmpty(),
             readOnlyWriteIntent = readOnlyWriteIntent,
             tokenUsage = SubagentTokenUsage.extractFrom(transcript),
+            suspectedShellWrites = detectSuspectedShellWrites(transcript, spec.writePaths),
         )
         // 完成 claim 的 host 裁定：只对 host 已判 CONCLUDED 的结论生效，且只降级不升格。
         // claim 缺失/解析失败 = 旧行为原样保留（fail-open）。
@@ -367,6 +369,8 @@ class SubagentOrchestrator @Inject constructor(
         val claimAdjudication: SubagentClaimAdjudication? = null,
         /** 委托经济学：本 lane 的 token 用量（含缓存命中），从 transcript 的 AssistantText 聚合。 */
         val tokenUsage: SubagentTokenUsage? = null,
+        /** 疑似租约外 shell 写命令（软警告，无法静态核验范围）；整工作区租约恒为空。 */
+        val suspectedShellWrites: List<String> = emptyList(),
     )
 }
 

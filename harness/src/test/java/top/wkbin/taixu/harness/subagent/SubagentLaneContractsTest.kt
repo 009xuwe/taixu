@@ -389,4 +389,55 @@ class SubagentLaneContractsTest {
         ToolCall("c3", 6L, HarnessTool.READ, buildJsonObject { put("path", "c.kt") }, rawToolName = "read"),
         ToolResult("r3", 7L, "c3", true, "z".repeat(resultChars)),
     )
+
+    // ---------- 疑似 shell 写软检测 ----------
+
+    private fun baseCall(id: String, command: String, success: Boolean = true) = listOf(
+        top.wkbin.taixu.harness.ToolCall(id, 1L, top.wkbin.taixu.harness.HarnessTool.BASE, buildJsonObject { put("command", kotlinx.serialization.json.JsonPrimitive(command)) }, rawToolName = "base"),
+        top.wkbin.taixu.harness.ToolResult("r$id", 2L, id, success = success, output = "ok"),
+    )
+
+    @Test
+    fun `suspected shell writes are detected for narrow or readonly claims`() {
+        val transcript = listOf(
+            top.wkbin.taixu.harness.UserMessage("u1", 1L, "任务"),
+        ) + baseCall("c1", "echo done | tee /tmp/x.txt") + baseCall("c2", "grep foo app/src/Main.kt") + baseCall("c3", "sed -i 's/a/b/' docs/g.md")
+
+        val hits = detectSuspectedShellWrites(transcript, writePaths = listOf("docs/"))
+        // tee 与 sed -i 命中；grep 只读不命中
+        assertEquals(2, hits.size)
+    }
+
+    @Test
+    fun `readonly lane shell writes are flagged`() {
+        val transcript = baseCall("c1", "rm -rf build/") + baseCall("c2", "cat README.md")
+        val hits = detectSuspectedShellWrites(transcript, writePaths = emptyList())
+        assertEquals(1, hits.size)
+        assertTrue(hits.single().contains("rm -rf"))
+    }
+
+    @Test
+    fun `whole workspace claim skips shell write detection`() {
+        val transcript = baseCall("c1", "echo x > out.txt")
+        assertTrue(detectSuspectedShellWrites(transcript, writePaths = listOf("*")).isEmpty())
+    }
+
+    @Test
+    fun `error-stream suppression and dev-null targets are not writes`() {
+        val transcript = baseCall("c1", "gradle test 2>/dev/null") + baseCall("c2", "ls foo 2>&1 | head -5")
+        assertTrue(detectSuspectedShellWrites(transcript, writePaths = emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `stdout redirect to a real file is a suspected write`() {
+        val transcript = baseCall("c1", "echo hello > docs/note.md")
+        val hits = detectSuspectedShellWrites(transcript, writePaths = emptyList())
+        assertEquals(1, hits.size)
+    }
+
+    @Test
+    fun `failed commands are not counted`() {
+        val transcript = baseCall("c1", "rm -rf build/", success = false)
+        assertTrue(detectSuspectedShellWrites(transcript, writePaths = emptyList()).isEmpty())
+    }
 }

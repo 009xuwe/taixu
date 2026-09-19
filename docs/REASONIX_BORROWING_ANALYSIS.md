@@ -13,7 +13,7 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 | P0 | 每轮 recall / routedBlocks 移出 system prompt | 小（移注入位置） | 消除逐轮前缀缓存击穿 | ✅ 已落地（2026-09-19） |
 | P1 | MCP 稳定代理 `use_capability` | 大（动 provider 可见面） | 缓存稳定 + 延迟连接缓解启动慢 | ✅ 已落地（⑫：统一代理 + 延迟连接；@ 裁剪移除见⑨） |
 | P1 | 子代理完成 claim 的 host 裁定 | 中 | 防止子代理虚报完成 | ✅ 已落地（2026-09-19） |
-| P2 | 写租约收缩/扩张语义 | 中 | 补上 shell 写边界 | 待做（移动端语义取舍待定） |
+| P2 | 写租约收缩/扩张语义 | 中 | 补上 shell 写边界 | ✅ 可落地部分已落地（⑬：疑似 shell 写软检测 + 父汇总可见性；动态调度收缩因静态波次设计不适用） |
 | P2 | 审批"本会话内记住"粒度 | 中 | 减少 REQUEST 模式重复打扰 | ✅ 已落地（2026-09-19） |
 | P2 | 记忆召回 BM25 + CJK bigram + 预算 | 中 | 召回质量（表结构已就绪） | ✅ 已落地（2026-09-19） |
 | P3 | 中散小件（见第七节） | 小 | 各自独立 | ✅ 全部完成（⑦⑧⑩⑪：字节预算/storm breaker/委托经济学/冲突检测/undo rewind/compress） |
@@ -116,7 +116,18 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 - **会话授权**：`SessionApprovalGrants` 对 use_capability(call) 按 args.server 记 `mcp:<server>` 键，"本会话内记住"继续生效。
 - **提示词**：MCP 能力章节重写为"发现-调用"指引（数据源=设置库启用清单，零发现零进程）；`CapabilityEventWriter` 的 MCP 挂载事件随裁剪移除而停用（@ 对 MCP 可用性无影响）。
 
+
 验证（⑫）：`:harness:testDebugUnitTest` 全量通过（`BuiltinToolContractTest` 改写为代理断言）；`:app:compileDebugKotlin` 通过。
+
+**⑬ 写租约：疑似 shell 写的软检测（P2，2026-09-19）**
+
+- Reasonix §3.12 的"运行后 host 对比凭据与租约、向父智能体报告越界路径"中，可落地于太墟的部分：结构化写已有租约闸门，唯一盲区是 base/process 的 shell 写（无法静态判定路径范围，也无 OS 沙箱可绑定写根）。
+- `detectSuspectedShellWrites`：lane 结束后扫描 transcript 中**成功**的 base/process 命令，按高召回特征（sed -i / tee / mv / rm / cp / touch / mkdir / chmod / wget / 重定向到非 /dev/null 目标等）识别疑似写命令；整工作区租约（`["*"]`）的 lane 天然在租约内、不检测。
+- 结果作为 ⚠️ 软警告渲染进父汇总状态头（"疑似租约外 shell 写…请复核产物后再采信"），**绝不据此拦截或判失败**——误报的代价只是提示，漏报的代价是静默越界。
+- 动态调度层面的收缩/扩张（Reasonix 的 reservation shrink）不适配太墟的静态波次调度（波次在派发前按声明计算），且移动端并发度低、收益有限——记为不采用。
+- 另核查：`invoke_subagent` schema 对 write_paths 的三态语义（[] 只读 / 精确路径 / ["*"] 整工作区）说明已完整，无需改动。
+
+验证（⑬）：`:harness:testDebugUnitTest` 全绿（`SubagentLaneContractsTest` +6 项）；`:app:compileDebugKotlin` 通过。
 
 ## 一、太墟已对齐的能力（不要重复建设）
 
