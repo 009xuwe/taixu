@@ -48,6 +48,12 @@ enum class SubagentTermination {
 
     /** 编排层超时取消。 */
     TIMEOUT,
+
+    /**
+     * 模型自报 complete，但完成 claim 的验收标准未被 host 凭据完全背书，
+     * 已按规则降级为 partial（见 SubagentClaim.kt）。host 永不升格，只降级。
+     */
+    CLAIM_DOWNGRADED,
 }
 
 /**

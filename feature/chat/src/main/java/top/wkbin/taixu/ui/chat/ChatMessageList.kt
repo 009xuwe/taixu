@@ -113,7 +113,7 @@ internal fun ChatMessageList(
     activeCompaction: CompactionSnapshot?,
     activePlan: AgentPlanEntity?,
     pendingApprovals: List<AgentApprovalRequestEntity>,
-    onResolveApproval: (String, Boolean) -> Unit,
+    onResolveApproval: (String, Boolean, Boolean) -> Unit,
     onViewSubagentLanes: () -> Unit = {},
     subagentBranches: List<top.wkbin.taixu.harness.session.ConversationBranch> = emptyList(),
     onOpenSubagent: (top.wkbin.taixu.harness.session.ConversationBranch) -> Unit = {},
@@ -273,8 +273,8 @@ internal fun ChatMessageList(
             pendingApprovals.firstOrNull()?.let { request ->
                 ApprovalRequestCard(
                     request = request,
-                    onApprove = { onResolveApproval(request.id, true) },
-                    onReject = { onResolveApproval(request.id, false) },
+                    onApprove = { rememberForSession -> onResolveApproval(request.id, true, rememberForSession) },
+                    onReject = { onResolveApproval(request.id, false, false) },
                 )
                 Spacer(Modifier.height(8.dp))
             }

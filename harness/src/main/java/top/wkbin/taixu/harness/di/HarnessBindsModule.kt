@@ -7,6 +7,8 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import top.wkbin.taixu.harness.checkpoint.ConversationRewinder
 import top.wkbin.taixu.harness.checkpoint.SessionForkConversationRewinder
+import top.wkbin.taixu.harness.mcp.ActiveMcpToolCatalog
+import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.harness.prompt.DefaultPrivilegeSectionRenderer
 import top.wkbin.taixu.harness.prompt.PrivilegeSectionRenderer
 import top.wkbin.taixu.harness.projection.LiveMessagePort
@@ -16,6 +18,12 @@ import top.wkbin.taixu.harness.projection.SessionMessageProjector
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class HarnessBindsModule {
+
+    @Binds
+    @Singleton
+    abstract fun bindActiveMcpToolCatalog(
+        impl: McpManager,
+    ): ActiveMcpToolCatalog
 
     @Binds
     @Singleton

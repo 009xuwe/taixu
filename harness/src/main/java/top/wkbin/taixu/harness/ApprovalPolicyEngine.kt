@@ -198,8 +198,24 @@ class ApprovalPolicyEngine @Inject constructor(
         }
 
         private val CD_PREFIX = Regex("""^cd\s+[^\s;&|<>`$()]+$""")
+
+        /**
+         * 管道过滤段白名单。只保留参数无法执行外部命令、也无法写文件的过滤命令：
+         * awk（system()/getline 是完整编程语言）、rg（--pre 可指定任意预处理器命令）、
+         * sort（-o/--output 可写任意路径）曾在此列，均因存在执行/写入面被移出——
+         * 出现在过滤段时一律需要审批。
+         */
         private val SAFE_READ_FILTER = Regex(
-            """^(head|tail|grep|rg|wc|cat|awk|sort|uniq|tr|cut)(\s|$)""",
+            """^(head|tail|grep|wc|cat|uniq|tr|cut)(\s|$)""",
+        )
+
+        /** "看似只读实则可执行"的特性黑名单：awk system()/getline、rg --pre 等（纵深防御）。
+         *  --pre 用 (\s|=|$) 而非 \b 结尾：`--pre-glob` 是无害旗标不应误伤，`--pre=`/`--pre x` 必须命中。 */
+        private val UNSAFE_EXEC_FEATURES = Regex("""system\s*\(|getline|popen|\|&|--pre(\s|=|$)""")
+
+        /** find 的落盘/交互执行原语：-fls/-fprint 系列写任意文件，-ok 系列交互执行。 */
+        private val FIND_WRITE_OR_EXEC = Regex(
+            "\\bfind\\b.*\\s(-delete|-exec|-execdir|-ok|-okdir|-fprint|-fprint0|-fprintf|-fls)\\b",
         )
         private val BLOCKED_NETWORK_OR_MUTATION = Regex(
             """\b(curl|wget|nc|ssh|scp|adb|taixu-host|mount|umount|kill|pkill|chmod|chown|apt(-get)?|apk|dnf|pacman|npm\s+(install|publish)|pip\s+install|git\s+(push|reset|clean))\b""",
@@ -288,13 +304,29 @@ class ApprovalPolicyEngine @Inject constructor(
     }
 
     private fun isRoutinePrimaryCommand(command: String): Boolean {
-        if (Regex("\\bfind\\b.*\\s(-delete|-exec|-execdir)\\b").containsMatchIn(command)) return false
-        if (BLOCKED_NETWORK_OR_MUTATION.containsMatchIn(command)) return false
+        // 黑名单匹配必须在去混淆文本上进行（见 [shellDeobfuscated]）；白名单正匹配仍用
+        // 原文——混淆形态的直接不自动放行，归一化只负责放大拦截面。
+        val deobfuscated = shellDeobfuscated(command)
+        if (FIND_WRITE_OR_EXEC.containsMatchIn(deobfuscated)) return false
+        // rg --pre 可执行任意预处理器命令，rg 同时是白名单首选检索命令，必须单独拦。
+        if (UNSAFE_EXEC_FEATURES.containsMatchIn(deobfuscated)) return false
+        if (BLOCKED_NETWORK_OR_MUTATION.containsMatchIn(deobfuscated)) return false
         return ROUTINE_PRIMARY.containsMatchIn(command)
     }
 
-    private fun isSafeReadFilter(command: String): Boolean =
-        SAFE_READ_FILTER.containsMatchIn(command) && !hasDynamicShellSyntax(command)
+    private fun isSafeReadFilter(command: String): Boolean {
+        if (!SAFE_READ_FILTER.containsMatchIn(command)) return false
+        if (hasDynamicShellSyntax(command)) return false
+        return !UNSAFE_EXEC_FEATURES.containsMatchIn(shellDeobfuscated(command))
+    }
+
+    /**
+     * shell 词法近似：剥引号并折叠反斜杠转义（\c → c）。`find "-exec" rm`、`rg --p\re`
+     * 在原文上匹配不到旗标，shell 却会还原成实际 argv。归一化只用于黑名单匹配（宁可
+     * 多审批）；已知误伤：`grep -n "system()" f`（检索字面量）会被要求审批——安全方向。
+     */
+    private fun shellDeobfuscated(command: String): String =
+        command.replace("\"", "").replace("'", "").replace("\\", "")
 
     /** File redirection (`>` / `<`) except fd-to-fd forms like `2>&1`. */
     private fun hasUnsafeFileRedirection(command: String): Boolean {

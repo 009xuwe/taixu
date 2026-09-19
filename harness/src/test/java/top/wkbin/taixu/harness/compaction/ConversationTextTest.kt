@@ -37,6 +37,24 @@ class ConversationTextTest {
     }
 
     @Test
+    fun `serialize honors the per-model maxChars cap`() {
+        val messages: List<HarnessMessage> = (0 until 200).map { index ->
+            UserMessage("u-$index", index.toLong(), "用户消息内容-$index。" + "x".repeat(500))
+        }
+
+        val capped = ConversationText.serialize(messages, maxChars = 5_000)
+
+        assertTrue("超上限必须触发头尾截断", capped.contains("…[中段"))
+        assertTrue(capped.length <= 5_000 + 200)
+        assertTrue("头部（初始目标）保留", capped.contains("用户消息内容-0。"))
+        assertTrue("尾部（最新进展）保留", capped.contains("用户消息内容-199。"))
+        // 不传上限时保持全量口径，不触发截断
+        val full = ConversationText.serialize(messages)
+        assertTrue(full.length > 5_000)
+        assertFalse(full.contains("…[中段"))
+    }
+
+    @Test
     fun `merges consecutive tool calls into one line`() {
         val messages: List<HarnessMessage> = listOf(
             UserMessage("u1", 1, "go"),

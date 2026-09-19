@@ -66,6 +66,51 @@ class SessionTreeStore @Inject constructor(
         }
     }
 
+    /**
+     * 持久化某条用户消息的记忆召回后缀（recall_context entry，紧随该用户消息追加）。
+     *
+     * entry id 由 userMessageId 确定性推导，幂等性由存储层语义保证（ensureUniqueStorageEntry）：
+     * 同 id 同 payload 幂等复用（分支重放场景直接重新激活原 entry）；同 id 不同 payload
+     * （该轮之后记忆库变了的重跑）自动派生新 id 落库，投影按 sequence 取最新者。
+     * 该 entry 不解码进消息流（entryType 不是 "message"），仅由 CompactionManager.project
+     * 读出并映射到 provider 投影的对应 user 消息后缀；UI 与检索路径天然不可见。
+     *
+     * @return 是否成功持久化。调用方必须在 false 时放弃挂载——未持久化的字节一旦进入
+     *   投影，下一轮组装便会漂移，违背 prefix cache 稳定性契约（低权威背景资料缺失无损正确性）。
+     */
+    suspend fun appendRecallBlock(
+        sessionId: String,
+        userMessageId: String,
+        block: String,
+        laneName: String = MAIN_LANE,
+    ): Boolean {
+        if (block.isBlank()) return false
+        return laneLock(sessionId, laneName).withLock {
+            runCatching {
+                val lane = repository.ensureLane(sessionId, laneName)
+                val entry = HarnessEntryEntity(
+                    id = RECALL_ENTRY_PREFIX + userMessageId,
+                    sessionId = sessionId,
+                    parentId = lane.leafId,
+                    createdAt = System.currentTimeMillis(),
+                    entryType = RECALL_ENTRY_TYPE,
+                    customType = userMessageId,
+                    payloadJson = block,
+                )
+                repository.appendToLane(sessionId, laneName, entry)
+            }.onFailure {
+                logger.w("Failed to persist recall block for $userMessageId: ${it.message}")
+            }.isSuccess
+        }
+    }
+
+    /**
+     * 供压缩等"读快照-落库"协作方复用同一把 per-lane 锁：保证 compaction entry 的
+     * 重读与写入和本 lane 的 append 串行化。锁内不得执行长耗时挂起调用（如 LLM）。
+     */
+    suspend fun <T> withLaneLock(sessionId: String, laneName: String = MAIN_LANE, block: suspend () -> T): T =
+        laneLock(sessionId, laneName).withLock { block() }
+
     /** Navigate to the parent of [entryId], preserving the abandoned branch. */
     suspend fun rewindBefore(sessionId: String, entryId: String, laneName: String = MAIN_LANE) {
         laneLock(sessionId, laneName).withLock {
@@ -169,6 +214,9 @@ class SessionTreeStore @Inject constructor(
 
     companion object {
         const val MAIN_LANE = "main"
+        const val RECALL_ENTRY_PREFIX = "recall_"
+        /** 记忆召回后缀 entry 类型：紧随用户轮持久化，project() 读出映射为该轮 provider 后缀。 */
+        const val RECALL_ENTRY_TYPE = "recall_context"
         /** Maximum decoded messages retained per live UI/session projection. */
         const val MAX_LIVE_ENTRIES = 600
         private val SEARCH_TERM_SEPARATOR = Regex("[\\s,，;；|]+")

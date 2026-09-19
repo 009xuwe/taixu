@@ -43,7 +43,7 @@ class BranchSummarizerTest {
         val json = Json { ignoreUnknownKeys = true }
         val logger = AppLogger(context, SensitiveDataRedactor { it })
         store = SessionTreeStore(repository, json, logger)
-        compaction = CompactionManager(repository, json)
+        compaction = CompactionManager(repository, json, store)
         branchSummarizer = BranchSummarizer(repository, json, logger)
     }
 

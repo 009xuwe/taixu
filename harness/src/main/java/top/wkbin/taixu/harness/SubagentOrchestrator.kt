@@ -19,10 +19,16 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.harness.subagent.SubagentApprovalHandoff
+import top.wkbin.taixu.harness.subagent.SubagentClaimAdjudication
 import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
 import top.wkbin.taixu.harness.subagent.SubagentTermination
+import top.wkbin.taixu.harness.subagent.adjudicateSubagentClaim
 import top.wkbin.taixu.harness.subagent.buildSubagentTimeoutSummary
 import top.wkbin.taixu.harness.subagent.declaresWriteIntent
+import top.wkbin.taixu.harness.subagent.extractSubagentReceipts
+import top.wkbin.taixu.harness.subagent.parseSubagentClaim
+import top.wkbin.taixu.harness.subagent.renderSubagentClaimAdjudication
+import top.wkbin.taixu.harness.subagent.stripSubagentClaimBlock
 import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 
@@ -190,7 +196,7 @@ class SubagentOrchestrator @Inject constructor(
             .getOrElse { runCatching { laneManager.transcript(parentSessionId, laneName) }.getOrDefault(emptyList()) }
         val toolCallCount = resolveSubagentToolCallCount(laneResult?.toolCallCount, transcript)
 
-        return SubagentExecutionOutcome(
+        var outcome = SubagentExecutionOutcome(
             spec = spec,
             subSessionId = laneName,
             isSuccess = laneResult?.success == true,
@@ -207,6 +213,31 @@ class SubagentOrchestrator @Inject constructor(
             blockedWrites = laneResult?.blockedWrites.orEmpty(),
             readOnlyWriteIntent = readOnlyWriteIntent,
         )
+        // 完成 claim 的 host 裁定：只对 host 已判 CONCLUDED 的结论生效，且只降级不升格。
+        // claim 缺失/解析失败 = 旧行为原样保留（fail-open）。
+        if (outcome.isSuccess && laneResult != null) {
+            val claim = parseSubagentClaim(laneResult.summary)
+            if (claim != null) {
+                val adjudication = adjudicateSubagentClaim(claim, extractSubagentReceipts(transcript))
+                // 剔除协议块后正文可能为空（整条结论只有一个 claim 块）：回退 claim.summary，
+                // 再不行保留原文——父汇总的「子任务输出」不能是空串。
+                val strippedSummary = stripSubagentClaimBlock(laneResult.summary, claim)
+                    .ifBlank { claim.summaryText.ifBlank { laneResult.summary } }
+                outcome = outcome.copy(
+                    // 凭据不背书 → complete 降级 partial，isSuccess 随之转负（父汇总 ⚠️）。
+                    isSuccess = !adjudication.downgraded,
+                    termination = if (adjudication.downgraded) {
+                        SubagentTermination.CLAIM_DOWNGRADED
+                    } else {
+                        outcome.termination
+                    },
+                    // 原始 claim JSON 不进父上下文：正文剔除协议块，裁定结论进状态头。
+                    summary = strippedSummary,
+                    claimAdjudication = adjudication,
+                )
+            }
+        }
+        return outcome
     }
 
 
@@ -328,6 +359,11 @@ class SubagentOrchestrator @Inject constructor(
         val blockedWrites: List<String> = emptyList(),
         /** 任务文字要求落盘但未声明 write_paths，本次按只读执行。 */
         val readOnlyWriteIntent: Boolean = false,
+        /**
+         * 完成 claim 的 host 裁定。null = 模型未提交结构化 claim（旧行为不变）；
+         * 非 null 时 [SubagentClaimAdjudication.adjudicatedStatus] 是交给父智能体的唯一可信状态。
+         */
+        val claimAdjudication: SubagentClaimAdjudication? = null,
     )
 }
 
@@ -502,6 +538,10 @@ private fun subagentOutcomeHeader(
     if (!outcome.isSuccess) {
         append("- **终止原因**：${subagentTerminationLabel(outcome.termination)}\n")
     }
+    // 完成 claim 裁定：无论最终状态如何都展示——✅ 也让父智能体看到"凭据背书了什么"。
+    if (outcome.claimAdjudication != null) {
+        append(renderSubagentClaimAdjudication(outcome.claimAdjudication))
+    }
     if (outcome.pendingApprovals.isNotEmpty()) {
         append("- **待主智能体重新发起并审批**：")
         append(outcome.pendingApprovals.joinToString("、") { it.toolName })
@@ -525,6 +565,7 @@ private fun subagentTerminationLabel(termination: SubagentTermination): String =
     SubagentTermination.MAX_ROUNDS -> "用尽工具轮数预算"
     SubagentTermination.FAILED -> "执行异常"
     SubagentTermination.TIMEOUT -> "执行超时"
+    SubagentTermination.CLAIM_DOWNGRADED -> "自报 complete 未被 host 凭据完全背书，降级为 partial"
 }
 
 /**

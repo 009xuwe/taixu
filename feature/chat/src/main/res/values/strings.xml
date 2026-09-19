@@ -103,6 +103,7 @@
     <string name="chat_approval_required">需要你的批准</string>
     <string name="chat_reject">拒绝</string>
     <string name="chat_approve_continue">批准并继续</string>
+    <string name="chat_approval_remember_session">本会话内同类操作不再询问（仅本会话有效，不会永久记住）</string>
     <string name="chat_resend_description">重发将移除该消息之后的所有会话记录，并以此指令重新生成回答。</string>
     <string name="chat_send">确认发送</string>
     <string name="chat_stop_generation">停止生成</string>

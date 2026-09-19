@@ -58,11 +58,78 @@ class ContextWindowPolicyTest {
     }
 
     @Test
+    fun `full-width CJK punctuation is estimated like CJK characters`() {
+        // 全角标点（U+FF00-FF5E：，！？：等）在中文上下文实际 ~1 token/字，
+        // 曾落入 ASCII 标点桶被按 /2.8 估算，系统性低估
+        val punct = "，。！？：；（）".repeat(10)
+        val han = "汉字测试样例闭环".repeat(10)
+        assertEquals(
+            ContextWindowPolicy.estimateTokens(han),
+            ContextWindowPolicy.estimateTokens(punct),
+        )
+    }
+
+    @Test
     fun `oversized system prompt is bounded`() {
         val fitted = ContextWindowPolicy.fitSystemPrompt("x".repeat(100_000), budget = 8_000)
 
         assertTrue(fitted.length < 100_000)
         assertTrue(fitted.contains("系统提示因上下文预算受限已截断"))
+        // 截断结果必须落在预算上限内（budget × 0.6，该预算下 MIN 512 不生效）
+        assertTrue(
+            "ASCII 截断后仍超预算：${ContextWindowPolicy.estimateTokens(fitted)}",
+            ContextWindowPolicy.estimateTokens(fitted) <= (8_000 * 0.60).toInt(),
+        )
+    }
+
+    @Test
+    fun `oversized CJK system prompt is bounded by the real token estimate`() {
+        val cjkPrompt = "系统规则行".repeat(4_000) // 20_000 CJK 字符 ≈ 11_111 tokens
+        val budget = 8_000
+        val fitted = ContextWindowPolicy.fitSystemPrompt(cjkPrompt, budget)
+        val suffix = "\n\n[系统提示因上下文预算受限已截断；请优先遵守以上核心规则]"
+
+        assertTrue(fitted.contains("系统提示因上下文预算受限已截断"))
+        assertTrue(
+            "中文截断后仍超预算：${ContextWindowPolicy.estimateTokens(fitted)}",
+            ContextWindowPolicy.estimateTokens(fitted) <= (8_000 * 0.60).toInt(),
+        )
+        // 反证锚点：旧的固定 4 字符/token 截断在同样输入下必然超限——本测试修复前必红
+        val naiveKeep = (8_000 * 0.60).toInt() * 4 - suffix.length
+        assertTrue(
+            "锚点失效：固定字符比截断在 CJK 下已不再超限，需复核口径",
+            ContextWindowPolicy.estimateTokens(cjkPrompt.take(naiveKeep)) > (8_000 * 0.60).toInt(),
+        )
+    }
+
+    @Test
+    fun `giant last user message is truncated to fit the folding limit`() {
+        val giantText = "文档内容行。".repeat(4_000) // 24_000 CJK 字符 ≈ 13_333 tokens
+        val messages = listOf(
+            UserMessage("u1", 1, "早前请求"),
+            AssistantText("a1", 2, "早前回复"),
+            UserMessage("giant", 3, giantText),
+        )
+        val limit = 4_000
+
+        val folded = ContextWindowPolicy.truncateOversizedUserMessages(messages, limit)
+        val foldedTotal = folded.sumOf { message ->
+            when (message) {
+                is UserMessage -> ContextWindowPolicy.estimateTokens(message.text)
+                is AssistantText -> ContextWindowPolicy.estimateTokens(message.text)
+                else -> 0
+            }
+        }
+
+        assertTrue("截断后必须回到折叠线内：$foldedTotal", foldedTotal <= limit)
+        val truncatedGiant = folded.last() as UserMessage
+        assertTrue(truncatedGiant.text.contains("消息过长已截断"))
+        assertTrue("头部保留", truncatedGiant.text.startsWith("文档内容行。"))
+        assertTrue("尾部保留", truncatedGiant.text.endsWith("文档内容行。"))
+        // 投影级截断：落库 transcript 与 UI 看到的原消息不动
+        assertEquals(giantText, (messages.last() as UserMessage).text)
+        // 预算充裕时整列表原样返回，不受影响
+        assertEquals(messages, ContextWindowPolicy.truncateOversizedUserMessages(messages, limit = 100_000))
     }
 
     @Test

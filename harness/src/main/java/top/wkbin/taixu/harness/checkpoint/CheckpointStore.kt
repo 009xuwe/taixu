@@ -17,7 +17,8 @@ import kotlinx.serialization.json.Json
  *
  * 落盘布局（[Persistence] 配置了根目录时启用）：
  * `<root>/<sessionId>/<turn>.index.json` + `<turn>/<seq>-<safeName>`（内容文件，null 快照无内容文件）。
- * 关轮时异步写入（失败仅放弃持久化，不影响内存态）；启动后首次访问该会话时从磁盘恢复。
+ * 关轮时异步写入（失败仅放弃持久化，不影响内存态；进程在写入前被杀会丢最近一轮的持久化——
+ * 安全网特性可接受，且该轮大概率会被重做）；启动后首次访问该会话时从磁盘恢复。
  * 未配置根目录时退化为纯内存（进程被杀后 rewind 丢失），行为与旧版一致。
  */
 @Singleton
@@ -26,6 +27,17 @@ class CheckpointStore @Inject constructor() {
     /** 持久化配置；null = 纯内存模式。由宿主在初始化期一次性注入。 */
     @Volatile
     var persistence: Persistence? = null
+
+    /**
+     * 落盘执行器：单线程串行（写索引与内容文件、超龄清理无并发竞争）。写入绝不能在
+     * [closeTurn] 的实例锁内同步执行——@Synchronized 覆盖全部方法，一次慢盘（listFiles +
+     * deleteRecursively 清理）会串行阻塞其他会话每次 write/edit 前的 capture 路径。
+     */
+    @Volatile
+    internal var diskWriteExecutor: java.util.concurrent.Executor =
+        java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "checkpoint-disk").apply { isDaemon = true }
+        }
 
     /** 磁盘恢复标记：会话首次访问时懒恢复，避免启动期全量 IO。 */
     private val restoredSessions = ConcurrentHashMap.newKeySet<String>()
@@ -90,7 +102,9 @@ class CheckpointStore @Inject constructor() {
     fun dropSession(sessionId: String) {
         sessions.remove(sessionId)
         restoredSessions.remove(sessionId)
-        persistence?.delete(sessionId)
+        // 删除走同一单线程执行器排队：先于它的待写任务先落盘、随后被整体删除——
+        // 消除"异步写在 dropSession 之后执行、write() 的 mkdirs 复活已删目录"的竞态
+        persistence?.let { disk -> diskWriteExecutor.execute { runCatching { disk.delete(sessionId) } } }
     }
 
     @Synchronized
@@ -169,8 +183,10 @@ class CheckpointStore @Inject constructor() {
             state.checkpoints.add(checkpoint)
             while (state.checkpoints.size > MAX_KEPT) state.checkpoints.removeAt(0)
             if (checkpoint.turn > state.lastTurn) state.lastTurn = checkpoint.turn
-            // 同步落盘：每轮一次、单文件 ≤1MiB（快照捕获上限），失败只放弃持久化不影响内存态
-            persistence?.let { disk -> runCatching { disk.write(sessionId, checkpoint) } }
+            // 异步落盘（checkpoint 不可变，可安全移交）：失败只放弃持久化不影响内存态
+            persistence?.let { disk ->
+                diskWriteExecutor.execute { runCatching { disk.write(sessionId, checkpoint) } }
+            }
         }
         state.active = null
         state.activeAnchorMessageId = null
@@ -186,7 +202,11 @@ class CheckpointStore @Inject constructor() {
  * 默认文件系统持久化：`<root>/<sessionId>/<turn>.index.json` + `<root>/<sessionId>/<turn>/<seq>.snap`。
  * 根目录由宿主指定（应用私有目录，不经 SAF；不会出现在 PRoot 工作区中，模型不可见）。
  */
-class FileCheckpointPersistence(private val root: File) : CheckpointStore.Persistence {
+class FileCheckpointPersistence(
+    private val root: File,
+    /** 单会话快照总量预算；默认值见 [DEFAULT_MAX_SESSION_BYTES]，测试可注入更小预算。 */
+    private val maxSessionBytes: Long = DEFAULT_MAX_SESSION_BYTES,
+) : CheckpointStore.Persistence {
 
     @Serializable
     private data class IndexEntry(
@@ -244,6 +264,32 @@ class FileCheckpointPersistence(private val root: File) : CheckpointStore.Persis
                     if (turn < keptFloor) index.delete()
                 }
             }
+        enforceByteBudget(sessionDir, checkpoint.turn, keptFloor)
+    }
+
+    /**
+     * 字节预算（对齐 Reasonix 的 blob quota）：MAX_KEPT 只限轮数，快照是整文件 pre-image，
+     * 长会话反复编辑大文件时总量可能轻松破百 MB——移动端私有目录必须加总量护栏。
+     * 超预算按轮号从最旧开始整轮删除（索引 + 内容目录），永不触碰当前轮；
+     * 内存态未同步裁剪：本轮内 rewind 仍可用内存快照，重启后按磁盘实况恢复。
+     */
+    private fun enforceByteBudget(sessionDir: File, currentTurn: Int, keptFloor: Int) {
+        var totalBytes = sessionDir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+        if (totalBytes <= maxSessionBytes) return
+        val candidateTurns = sessionDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.mapNotNull { it.name.toIntOrNull() }
+            ?.filter { it >= keptFloor && it != currentTurn }
+            ?.sorted()
+            .orEmpty()
+        for (turn in candidateTurns) {
+            if (totalBytes <= maxSessionBytes) break
+            val turnDir = File(sessionDir, turn.toString())
+            val index = File(sessionDir, "$turn.index.json")
+            val freed = turnDir.walkBottomUp().filter { it.isFile }.sumOf { it.length() } + index.length()
+            if (turnDir.deleteRecursively()) index.delete()
+            totalBytes -= freed
+        }
     }
 
     override fun readAll(sessionId: String): List<Checkpoint> {
@@ -254,12 +300,17 @@ class FileCheckpointPersistence(private val root: File) : CheckpointStore.Persis
                 val entry = json.decodeFromString<IndexEntry>(indexFile.readText(Charsets.UTF_8))
                 val snaps = entry.paths.keys.sorted().mapNotNull { seq ->
                     val path = entry.paths.getValue(seq)
-                    val content: String? = if (seq in entry.absent) {
-                        null
-                    } else {
-                        val snapFile = File(sessionDir, "${entry.turn}/${entry.files[seq] ?: return@mapNotNull null}")
-                        if (snapFile.isFile) snapFile.readText(Charsets.UTF_8) else null
+                    if (seq in entry.absent) {
+                        // 显式记录的"文件当时不存在"：null 内容是 rewind 执行删除的合法信号
+                        return@mapNotNull FileSnap(path, null)
                     }
+                    // 索引条目或内容文件缺失 = 快照损坏：整体跳过（路径不进回滚方案，文件保持原样）。
+                    // 绝不能映射为 null 内容——那会被 RewindController 当作"当时不存在"而误删现存文件。
+                    val fileName = entry.files[seq] ?: return@mapNotNull null
+                    val snapFile = File(sessionDir, "${entry.turn}/$fileName")
+                    if (!snapFile.isFile) return@mapNotNull null
+                    val content = runCatching { snapFile.readText(Charsets.UTF_8) }.getOrNull()
+                        ?: return@mapNotNull null
                     FileSnap(path, content)
                 }
                 Checkpoint(
@@ -275,5 +326,10 @@ class FileCheckpointPersistence(private val root: File) : CheckpointStore.Persis
 
     override fun delete(sessionId: String) {
         File(root, sessionId).deleteRecursively()
+    }
+
+    private companion object {
+        /** 单会话快照总量预算：超过即按最旧整轮淘汰（当前轮与 MAX_KEPT 窗口保护见 [enforceByteBudget]）。 */
+        const val DEFAULT_MAX_SESSION_BYTES = 64L * 1024 * 1024
     }
 }

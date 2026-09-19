@@ -37,6 +37,7 @@ class HarnessCompactionAndQueueIntegrationTest {
 
     private lateinit var database: AppDatabase
     private lateinit var repository: top.wkbin.taixu.core.database.HarnessRuntimeRepository
+    private lateinit var store: top.wkbin.taixu.harness.session.SessionTreeStore
     private lateinit var compaction: CompactionManager
     private lateinit var queues: PromptQueueManager
 
@@ -47,8 +48,13 @@ class HarnessCompactionAndQueueIntegrationTest {
             .allowMainThreadQueries()
             .build()
         repository = RoomHarnessRuntimeRepository(database.harnessRuntimeDao())
-        compaction = CompactionManager(repository, Json)
-        queues = PromptQueueManager(repository, Json)
+        store = top.wkbin.taixu.harness.session.SessionTreeStore(
+            repository,
+            Json,
+            top.wkbin.taixu.core.common.logging.AppLogger(context, top.wkbin.taixu.core.common.logging.SensitiveDataRedactor { it }),
+        )
+        compaction = CompactionManager(repository, Json, store)
+        queues = PromptQueueManager(repository, Json, store)
     }
 
     @After
@@ -157,6 +163,101 @@ class HarnessCompactionAndQueueIntegrationTest {
         assertEquals("m-9", second.messages.last().id)
     }
 
+    private suspend fun appendMessageEntry(sessionId: String, id: String, text: String, createdAt: Long) {
+        repository.appendToLane(
+            sessionId, "main",
+            top.wkbin.taixu.core.database.HarnessEntryEntity(
+                id = id,
+                sessionId = sessionId,
+                parentId = repository.findLane(sessionId, "main")!!.leafId,
+                createdAt = createdAt,
+                entryType = "message",
+                customType = "user",
+                payloadJson = Json.encodeToString(
+                    top.wkbin.taixu.harness.HarnessMessage.serializer(),
+                    UserMessage(id = id, createdAt = createdAt, text = text),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `messages appended after the caller snapshot are retained, not lost`() = runBlocking {
+        val sessionId = "s-stale"
+        repository.ensureLane(sessionId, "main")
+        repeat(10) { index -> appendMessageEntry(sessionId, "m-$index", "消息 $index", index.toLong()) }
+        val context = compaction.project(sessionId)
+
+        // 模拟摘要生成期间（压缩临界区之外）新消息落库：调用方快照已过期。
+        // 旧实现直接折叠过期快照，迟到的两条因 sequence 小于压缩 entry 被投影永久丢弃。
+        appendMessageEntry(sessionId, "m-10", "迟到消息 A", 100L)
+        appendMessageEntry(sessionId, "m-11", "迟到消息 B", 101L)
+
+        val compacted = compaction.compact(sessionId, context, keepFromIndex = 6)
+        assertEquals(
+            "保留窗口必须来自锁内重读快照，覆盖迟到的两条",
+            listOf("m-6", "m-7", "m-8", "m-9", "m-10", "m-11"),
+            compacted.messages.map { it.id },
+        )
+        val projected = compaction.project(sessionId)
+        assertEquals(
+            listOf("m-6", "m-7", "m-8", "m-9", "m-10", "m-11"),
+            projected.messages.map { it.id },
+        )
+    }
+
+    @Test
+    fun `messages landing between the re-read and the compaction write are healed on projection`() = runBlocking {
+        val sessionId = "s-heal"
+        repository.ensureLane(sessionId, "main")
+        repeat(10) { index -> appendMessageEntry(sessionId, "m-$index", "消息 $index", index.toLong()) }
+        val context = compaction.project(sessionId)
+
+        // 模拟 acceptRun 直写（不经 laneLock）：发生在锁内重读之后、压缩 entry 落库之前。
+        // 这些消息不在 retainedMessagesJson 里，只能靠 sourceWatermarkSequence 水位线在投影时补回。
+        compaction.beforeCompactionWriteForTest = {
+            appendMessageEntry(sessionId, "m-late-1", "重读后落库的消息 A", 200L)
+            appendMessageEntry(sessionId, "m-late-2", "重读后落库的消息 B", 201L)
+            // 分支摘要落在同一窗口同样会被 afterSequence 过滤排除，须一并自愈补回
+            repository.appendToLane(
+                sessionId, "main",
+                top.wkbin.taixu.core.database.HarnessEntryEntity(
+                    id = "bs-late",
+                    sessionId = sessionId,
+                    parentId = repository.findLane(sessionId, "main")!!.leafId,
+                    createdAt = 202L,
+                    entryType = CompactionManager.BRANCH_SUMMARY_ENTRY_TYPE,
+                    customType = null,
+                    payloadJson = Json.encodeToString(
+                        BranchSummaryPayload.serializer(),
+                        BranchSummaryPayload(
+                            summary = "被放弃分支的关键结论",
+                            fromLeafId = null,
+                            summarizedMessageCount = 3,
+                            createdAt = 202L,
+                        ),
+                    ),
+                ),
+            )
+        }
+        try {
+            compaction.compact(sessionId, context, keepFromIndex = 6)
+        } finally {
+            compaction.beforeCompactionWriteForTest = null
+        }
+
+        val projected = compaction.project(sessionId)
+        assertEquals(
+            "水位线自愈必须补回重读与落库之间被直写的消息",
+            listOf("m-6", "m-7", "m-8", "m-9", "m-late-1", "m-late-2"),
+            projected.messages.map { it.id },
+        )
+        assertTrue(
+            "窗口内的分支摘要须一并自愈注入",
+            projected.branchSummaries.contains("被放弃分支的关键结论"),
+        )
+    }
+
     @Test
     fun `queued prompts survive runtime recreation in order`() = runBlocking {
         val sessionId = "s-queue"
@@ -165,7 +266,7 @@ class HarnessCompactionAndQueueIntegrationTest {
         queues.enqueue(sessionId, PromptQueue.STEER, PendingMessage("插队", createdAt = 3L))
 
         // 模拟进程重启：仅从数据库重建队列管理器
-        val revived = PromptQueueManager(repository, Json)
+        val revived = PromptQueueManager(repository, Json, store)
 
         val nextRun = revived.list(sessionId, PromptQueue.NEXT_RUN)
         assertEquals(listOf("第一条", "第二条"), nextRun.map { it.second.text })
