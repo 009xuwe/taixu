@@ -18,8 +18,13 @@ import top.wkbin.taixu.harness.session.SessionTreeStore
 class CompactionManager @Inject constructor(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
+    private val sessionStore: SessionTreeStore,
     private val summarizer: CompactionSummarizer? = null,
 ) {
+    /** 测试钩子：压缩落库前注入并发写，模拟 acceptRun 等直写路径的竞态窗口。 */
+    @Volatile
+    internal var beforeCompactionWriteForTest: (suspend () -> Unit)? = null
+
     suspend fun project(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): CompactedContext {
         val lane = repository.ensureLane(sessionId, laneName)
         // Provider projection must walk the complete active branch. A UI-sized tail limit here
@@ -36,6 +41,18 @@ class CompactionManager @Inject constructor(
 
         val payload = json.decodeFromString(CompactionPayload.serializer(), latestCompaction.payloadJson)
         val retained = json.decodeFromString(ListSerializer(HarnessMessage.serializer()), payload.retainedMessagesJson)
+        // 自愈：重读快照之后、压缩 entry 落库之前被并发直写落库的消息（acceptRun 不经
+        // laneLock），不在 retainedMessagesJson 里、又因 sequence 更小被 afterMessages
+        // 过滤——按水位线补回，否则从 provider 投影中永久丢失。
+        val healed = payload.sourceWatermarkSequence
+            ?.takeIf { it < latestCompaction.sequence }
+            ?.let { watermark ->
+                entries.asSequence()
+                    .filter { it.entryType == "message" && it.sequence > watermark && it.sequence < latestCompaction.sequence }
+                    .mapNotNull(::decodeMessage)
+                    .toList()
+            }
+            .orEmpty()
         val afterMessages = entries.asSequence()
             .filter { it.sequence > latestCompaction.sequence }
             .mapNotNull(::decodeMessage)
@@ -43,7 +60,7 @@ class CompactionManager @Inject constructor(
         // 压缩之后的分支摘要原样注入；之前的已在 compact() 时折叠进压缩摘要，避免重复
         return CompactedContext(
             summary = payload.summary,
-            messages = retained + afterMessages,
+            messages = retained + healed + afterMessages,
             branchSummaries = branchSummariesWithin(entries, afterSequence = latestCompaction.sequence),
         )
     }
@@ -76,18 +93,18 @@ class CompactionManager @Inject constructor(
         model: ModelConfig? = null,
     ): CompactedContext {
         require(keepFromIndex in 1..context.messages.size) { "Compaction must remove at least one message" }
-        val lane = repository.ensureLane(sessionId, laneName)
-        val collapsed = context.messages.take(keepFromIndex)
-        val retained = context.messages.drop(keepFromIndex)
+        // 摘要在锁外生成：前缀对账通过时锁内重读的折叠段与调用方快照完全一致，摘要输入不变；
+        // 不能持 laneLock 跨 LLM 调用——否则分支切换/消息追加会被阻塞整个摘要时长。
+        val collapsedForSummary = context.messages.take(keepFromIndex)
         // 上一份摘要层（压缩摘要 + 尚未折叠的分支摘要）作为迭代上下文传入 LLM，
         // 天然实现滚动合并；LLM 不可用时机械摘要 + 字符串拼接兜底。
         val previousSummaries = buildList {
             context.summary?.takeIf { it.isNotBlank() }?.let { add(it) }
             addAll(context.branchSummaries.filter { it.isNotBlank() })
         }
-        val llmSummary = if (model != null && summarizer != null && collapsed.isNotEmpty()) {
+        val llmSummary = if (model != null && summarizer != null && collapsedForSummary.isNotEmpty()) {
             try {
-                summarizer.generateSummary(model, collapsed, previousSummaries)
+                summarizer.generateSummary(model, collapsedForSummary, previousSummaries)
             } catch (cancellation: kotlinx.coroutines.CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
@@ -103,45 +120,68 @@ class CompactionManager @Inject constructor(
         val summary = if (llmSummary != null) {
             llmSummary
         } else {
-            val incrementalSummary = ContextWindowPolicy.buildHistorySummary(collapsed)
+            val incrementalSummary = ContextWindowPolicy.buildHistorySummary(collapsedForSummary)
             mergeRollingSummary(previousSummaries.joinToString("\n\n"), incrementalSummary)
         }
-        val now = System.currentTimeMillis()
-        val previousFoldedCount = repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
-            ?.let { entry ->
-                runCatching { json.decodeFromString(CompactionPayload.serializer(), entry.payloadJson) }.getOrNull()
+
+        // "重读-对账-落库"在 laneLock 内原子完成：调用方传入的 context 是锁外快照，若期间有
+        // 消息落库而直接折叠旧快照，新消息的 sequence 会小于压缩 entry、被投影的 afterMessages
+        // 过滤，从 provider 视角永久丢失。重读必须走 project() 的投影口径（而非裸 branch），
+        // 否则已压缩过的会话前缀对不上，增量压缩会被误判为分支漂移而跳过。
+        return sessionStore.withLaneLock(sessionId, laneName) {
+            val fresh = project(sessionId, laneName)
+            val rawEntries = repository.branch(sessionId, repository.ensureLane(sessionId, laneName).leafId)
+            val prefixConsistent = fresh.messages.size >= context.messages.size &&
+                fresh.messages.subList(0, context.messages.size)
+                    .zip(context.messages)
+                    .all { (current, snapshot) -> current.id == snapshot.id }
+            if (!prefixConsistent) {
+                // 期间发生过分支切换等不可对账的变更：放弃本次压缩，返回最新投影
+                // （携带既有摘要层）；下一次组装会重新触发压缩。
+                return@withLaneLock fresh
             }
-            ?.let { it.cumulativeCompactedMessageCount ?: it.compactedMessageCount }
-            ?: 0
-        val payload = CompactionPayload(
-            sourceLeafId = lane.leafId,
-            summary = summary,
-            retainedMessagesJson = json.encodeToString(ListSerializer(HarnessMessage.serializer()), retained),
-            compactedMessageCount = collapsed.size,
-            cumulativeCompactedMessageCount = previousFoldedCount + collapsed.size,
-            retainedMessageCount = retained.size,
-            estimatedTokensBefore = context.messages.sumOf(::messageTokens),
-            createdAt = now,
-        )
-        val entry = HarnessEntryEntity(
-            id = UUID.randomUUID().toString(),
-            sessionId = sessionId,
-            parentId = lane.leafId,
-            createdAt = now,
-            entryType = ENTRY_TYPE,
-            customType = null,
-            payloadJson = json.encodeToString(CompactionPayload.serializer(), payload),
-        )
-        repository.appendToLane(sessionId, laneName, entry)
-        Log.d(
-            "ContextCompaction",
-            "压缩会话 $sessionId：折叠 ${collapsed.size} 条（累计 ${payload.cumulativeCompactedMessageCount}），" +
-                "保留 ${retained.size} 条，摘要 ${summary.length} 字符" +
-                "（${if (llmSummary != null) "LLM 结构化" else "机械回退"}），" +
-                "折叠分支摘要 ${context.branchSummaries.size} 份，" +
-                "压缩前估算 ${payload.estimatedTokensBefore} tokens",
-        )
-        return CompactedContext(summary, retained)
+            val lane = repository.ensureLane(sessionId, laneName)
+            val collapsed = fresh.messages.take(keepFromIndex)
+            val retained = fresh.messages.drop(keepFromIndex)
+            val now = System.currentTimeMillis()
+            val previousFoldedCount = repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
+                ?.let { entry ->
+                    runCatching { json.decodeFromString(CompactionPayload.serializer(), entry.payloadJson) }.getOrNull()
+                }
+                ?.let { it.cumulativeCompactedMessageCount ?: it.compactedMessageCount }
+                ?: 0
+            val payload = CompactionPayload(
+                sourceLeafId = lane.leafId,
+                summary = summary,
+                retainedMessagesJson = json.encodeToString(ListSerializer(HarnessMessage.serializer()), retained),
+                compactedMessageCount = collapsed.size,
+                cumulativeCompactedMessageCount = previousFoldedCount + collapsed.size,
+                retainedMessageCount = retained.size,
+                estimatedTokensBefore = fresh.messages.sumOf(::messageTokens),
+                createdAt = now,
+                sourceWatermarkSequence = rawEntries.maxOfOrNull { it.sequence },
+            )
+            val entry = HarnessEntryEntity(
+                id = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                parentId = lane.leafId,
+                createdAt = now,
+                entryType = ENTRY_TYPE,
+                customType = null,
+                payloadJson = json.encodeToString(CompactionPayload.serializer(), payload),
+            )
+            beforeCompactionWriteForTest?.invoke()
+            repository.appendToLane(sessionId, laneName, entry)
+            Log.d(
+                "ContextCompaction",
+                "压缩会话 $sessionId：折叠 ${collapsed.size} 条（累计 ${payload.cumulativeCompactedMessageCount}），" +
+                    "保留 ${retained.size} 条，摘要 ${summary.length} 字符" +
+                    "（${if (llmSummary != null) "LLM 结构化" else "机械回退"}），" +
+                    "折叠分支摘要 ${context.branchSummaries.size} 份，" +
+                    "压缩前估算 ${payload.estimatedTokensBefore} tokens",
+            )
+            CompactedContext(summary, retained)
+        }
     }
 
     private fun decodeMessage(entry: HarnessEntryEntity): HarnessMessage? =

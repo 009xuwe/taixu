@@ -100,13 +100,21 @@ class SessionModelSwitcher @Inject constructor(
         var pending = false
         if (keepFrom > 0) {
             if (compactIfNeeded) {
-                // 切换模型立即压缩：用目标模型生成 LLM 结构化摘要（解析失败回退机械摘要）
+                // 切换模型立即压缩：用目标模型生成 LLM 结构化摘要（解析失败回退机械摘要）。
+                // 压缩失败（DB 异常等）不得中断切换——模型绑定已落库，标记待压缩，
+                // 下一次请求组装会按新预算重新触发压缩。
                 val targetModelConfig = providerClient?.let { client ->
                     runCatching { client.resolveSavedModelProfile(profile.id, resolvedVariant) }.getOrNull()
                 }
-                compactionManager.compact(sessionId, context, keepFrom, model = targetModelConfig)
-                compacted = true
-                folded = keepFrom
+                try {
+                    compactionManager.compact(sessionId, context, keepFrom, model = targetModelConfig)
+                    compacted = true
+                    folded = keepFrom
+                } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                    throw cancellation
+                } catch (throwable: Throwable) {
+                    pending = true
+                }
             } else {
                 pending = true
             }

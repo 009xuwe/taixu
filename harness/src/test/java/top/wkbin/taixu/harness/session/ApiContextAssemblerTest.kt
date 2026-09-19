@@ -73,8 +73,8 @@ class ApiContextAssemblerTest {
         val json = Json { ignoreUnknownKeys = true }
         val agentPrefs = AgentPreferences(SettingsDataStore(context, SecretManager()))
 
-        compactionManager = CompactionManager(runtimeRepo, json)
         store = top.wkbin.taixu.harness.session.SessionTreeStore(runtimeRepo, json, logger)
+        compactionManager = CompactionManager(runtimeRepo, json, store)
 
         val promptAssets = PromptAssetLoader(context)
         val builder = SystemPromptBuilder(

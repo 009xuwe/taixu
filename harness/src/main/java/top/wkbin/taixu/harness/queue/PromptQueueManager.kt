@@ -27,6 +27,7 @@ enum class PromptQueue(val id: String) {
 class PromptQueueManager @Inject constructor(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
+    private val sessionStore: SessionTreeStore,
 ) {
     suspend fun enqueue(
         sessionId: String,
@@ -89,7 +90,10 @@ class PromptQueueManager @Inject constructor(
         queue: PromptQueue,
         limit: Int = Int.MAX_VALUE,
         laneName: String = SessionTreeStore.MAIN_LANE,
-    ): List<UserMessage> {
+    ): List<UserMessage> = sessionStore.withLaneLock(sessionId, laneName) {
+        // 与 SessionTreeStore.append 同一把 per-lane 锁：consume 会把队列项转成 lane 上的
+        // message entry（读 leafId → 写 entry → 移动叶子），不持锁时与并发 append 只靠
+        // DAO 的乐观校验兜底。锁内只有本地 DB 读写，无长耗时挂起。
         val items = repository.listQueue(sessionId, laneName, queue.id).take(limit)
         val consumed = ArrayList<UserMessage>(items.size)
         for (item in items) {
@@ -118,6 +122,6 @@ class PromptQueueManager @Inject constructor(
             )
             consumed += message
         }
-        return consumed
+        consumed
     }
 }

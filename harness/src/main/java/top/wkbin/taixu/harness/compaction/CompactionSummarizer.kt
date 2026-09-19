@@ -8,6 +8,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
+import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.HarnessApiMapper
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ModelConfig
@@ -44,6 +45,8 @@ object ConversationText {
     fun serialize(
         messages: List<HarnessMessage>,
         toolCallDetails: Map<String, Pair<String, JsonObject>> = toolCallDetailsOf(messages),
+        /** 序列化文本上限（字符）；超出保头尾。调用方按目标模型窗口推导（见 CompactionSummarizer）。 */
+        maxChars: Int = MAX_SERIALIZED_CHARS,
     ): String {
         val lines = mutableListOf<String>()
         var index = 0
@@ -78,13 +81,13 @@ object ConversationText {
             index++
         }
         val text = lines.joinToString("\n")
-        return if (text.length <= MAX_SERIALIZED_CHARS) text else clipSerialized(text)
+        return if (text.length <= maxChars) text else clipSerialized(text, maxChars)
     }
 
     /** 超长时保留首部（初始目标）与尾部（最新进展），中段标注省略量。 */
-    private fun clipSerialized(text: String): String {
-        val headBudget = MAX_SERIALIZED_CHARS / 6
-        val tailBudget = MAX_SERIALIZED_CHARS - headBudget
+    private fun clipSerialized(text: String, maxChars: Int): String {
+        val headBudget = maxChars / 6
+        val tailBudget = maxChars - headBudget
         val omitted = text.length - headBudget - tailBudget
         return text.take(headBudget) +
             "\n…[中段 $omitted 字符已省略]…\n" +
@@ -244,7 +247,7 @@ class CompactionSummarizer @Inject constructor(
         previousSummaries: List<String> = emptyList(),
     ): String? {
         if (messages.isEmpty()) return null
-        val serialized = ConversationText.serialize(messages)
+        val serialized = ConversationText.serialize(messages, maxChars = serializedCharCap(model, previousSummaries))
         if (serialized.isBlank()) return null
         val prompt = buildPrompt(serialized, previousSummaries)
         val summaryModel = model.copy(
@@ -269,9 +272,32 @@ class CompactionSummarizer @Inject constructor(
         return if (fileTags.isEmpty()) body else "$body\n\n$fileTags"
     }
 
+    /**
+     * 摘要请求的序列化字符上限，按目标模型窗口推导。全局 240k 字符上限对 8k 窗口模型
+     * 必然溢出——最需要压缩的小预算场景恰恰是 LLM 摘要永远失败、长期降级为机械摘要的场景。
+     * 字符/token 取 1.5（CJK 1.8、ASCII 2.5 的保守下界），先扣除系统提示、格式指令与
+     * 既有摘要的估算占用，再预留摘要输出空间。
+     */
+    internal fun serializedCharCap(model: ModelConfig, previousSummaries: List<String>): Int {
+        val budgetTokens = ContextWindowPolicy.clampedBudget(model.contextTokens, DEFAULT_COMPACTION_BUDGET_TOKENS)
+        val reservedTokens = ContextWindowPolicy.estimateTokens(SYSTEM_PROMPT) +
+            ContextWindowPolicy.estimateTokens(buildPrompt("", previousSummaries)) +
+            DEFAULT_SUMMARY_MAX_TOKENS
+        val inputTokens = (budgetTokens - reservedTokens).coerceAtLeast(MIN_PROMPT_INPUT_TOKENS)
+        return (inputTokens * SERIALIZED_CHARS_PER_TOKEN).toInt()
+            .coerceIn(MIN_SERIALIZED_CHARS_CAP, ConversationText.MAX_SERIALIZED_CHARS)
+    }
+
     private companion object {
         const val DEFAULT_SUMMARY_MAX_TOKENS = 4_096
         const val MIN_SUMMARY_CHARS = 60
+
+        /** 模型未配置窗口时的摘要请求预算兜底。 */
+        const val DEFAULT_COMPACTION_BUDGET_TOKENS = 128_000
+        /** 小窗口模型下摘要输入的最低保障（tokens）；再小就交给机械摘要兜底。 */
+        const val MIN_PROMPT_INPUT_TOKENS = 2_000
+        const val MIN_SERIALIZED_CHARS_CAP = 3_000
+        const val SERIALIZED_CHARS_PER_TOKEN = 1.5f
         const val SYSTEM_PROMPT =
             "你是会话压缩器。任务：把长对话历史压缩为结构化摘要。只输出摘要正文，" +
                 "保留全部关键信息（目标、约束、进度、决策、下一步、关键上下文），不要复述无关细节。"

@@ -66,6 +66,13 @@ class SessionTreeStore @Inject constructor(
         }
     }
 
+    /**
+     * 供压缩等"读快照-落库"协作方复用同一把 per-lane 锁：保证 compaction entry 的
+     * 重读与写入和本 lane 的 append 串行化。锁内不得执行长耗时挂起调用（如 LLM）。
+     */
+    suspend fun <T> withLaneLock(sessionId: String, laneName: String = MAIN_LANE, block: suspend () -> T): T =
+        laneLock(sessionId, laneName).withLock { block() }
+
     /** Navigate to the parent of [entryId], preserving the abandoned branch. */
     suspend fun rewindBefore(sessionId: String, entryId: String, laneName: String = MAIN_LANE) {
         laneLock(sessionId, laneName).withLock {

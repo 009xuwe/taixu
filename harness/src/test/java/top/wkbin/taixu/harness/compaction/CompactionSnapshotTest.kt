@@ -36,7 +36,12 @@ class CompactionSnapshotTest {
             .allowMainThreadQueries()
             .build()
         repository = RoomHarnessRuntimeRepository(database.harnessRuntimeDao())
-        compaction = CompactionManager(repository, Json)
+        val store = top.wkbin.taixu.harness.session.SessionTreeStore(
+            repository,
+            Json,
+            top.wkbin.taixu.core.common.logging.AppLogger(context, top.wkbin.taixu.core.common.logging.SensitiveDataRedactor { it }),
+        )
+        compaction = CompactionManager(repository, Json, store)
     }
 
     @After
@@ -117,12 +122,28 @@ class CompactionSnapshotTest {
         val sessionId = "s-rolling"
         repository.ensureLane(sessionId, "main")
         val latestMarker = "LATEST_DECISION_USE_SQL_QUERY"
+        // 折叠段必须真实存在于 lane 上（compact 会按分支前缀对账，拒绝折叠 lane 外的消息）
+        listOf(
+            UserMessage(id = "latest", createdAt = 1, text = "关键决定：$latestMarker"),
+            UserMessage(id = "retained", createdAt = 2, text = "continue"),
+        ).forEach { message ->
+            repository.appendToLane(
+                sessionId,
+                "main",
+                HarnessEntryEntity(
+                    id = message.id,
+                    sessionId = sessionId,
+                    parentId = repository.findLane(sessionId, "main")!!.leafId,
+                    createdAt = message.createdAt,
+                    entryType = "message",
+                    customType = "user",
+                    payloadJson = Json.encodeToString(HarnessMessage.serializer(), message),
+                ),
+            )
+        }
         val context = CompactedContext(
             summary = "old-context ".repeat(600),
-            messages = listOf(
-                UserMessage("latest", 1, "关键决定：$latestMarker"),
-                UserMessage("retained", 2, "continue"),
-            ),
+            messages = compaction.project(sessionId).messages,
         )
 
         val compacted = compaction.compact(sessionId, context, keepFromIndex = 1)

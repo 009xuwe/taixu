@@ -71,7 +71,7 @@ class SessionModelSwitcherTest {
         val runtimeRepo = RoomHarnessRuntimeRepository(database.harnessRuntimeDao())
         val logger = AppLogger(context, SensitiveDataRedactor { it })
         store = SessionTreeStore(runtimeRepo, json, logger)
-        compaction = CompactionManager(runtimeRepo, json)
+        compaction = CompactionManager(runtimeRepo, json, store)
         port = RecordingPort()
         switcher = SessionModelSwitcher(
             sessionDao = sessions,
