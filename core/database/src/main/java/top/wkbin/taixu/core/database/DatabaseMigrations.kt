@@ -301,3 +301,18 @@ val MIGRATION_48_49 = object : Migration(48, 49) {
     }
 }
 
+/** MCP OAuth credentials and short-lived PKCE transactions. */
+val MIGRATION_49_50 = object : Migration(49, 50) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS `mcp_oauth_credentials` (`serverId` TEXT NOT NULL, `accessTokenCiphertext` TEXT NOT NULL, `refreshTokenCiphertext` TEXT NOT NULL, `tokenType` TEXT NOT NULL, `scope` TEXT, `expiresAt` INTEGER, `authorizationServer` TEXT, `tokenEndpoint` TEXT, `clientId` TEXT NOT NULL, `resource` TEXT, `credentialRevision` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`serverId`))""")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS `mcp_oauth_transactions` (`state` TEXT NOT NULL, `serverId` TEXT NOT NULL, `codeVerifierCiphertext` TEXT NOT NULL, `redirectUri` TEXT NOT NULL, `clientId` TEXT NOT NULL, `authorizationEndpoint` TEXT NOT NULL, `tokenEndpoint` TEXT NOT NULL, `resource` TEXT, `createdAt` INTEGER NOT NULL, `expiresAt` INTEGER NOT NULL, PRIMARY KEY(`state`))""")
+        db.execSQL("ALTER TABLE `mcp_servers` ADD COLUMN `authMode` TEXT NOT NULL DEFAULT 'NONE'")
+        db.execSQL("ALTER TABLE `mcp_servers` ADD COLUMN `oauthClientId` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `mcp_servers` ADD COLUMN `oauthAuthorizationEndpoint` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `mcp_servers` ADD COLUMN `oauthTokenEndpoint` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `mcp_servers` ADD COLUMN `oauthRedirectUri` TEXT NOT NULL DEFAULT 'taixu://oauth/mcp'")
+        db.execSQL("ALTER TABLE `mcp_servers` ADD COLUMN `oauthScope` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `mcp_servers` ADD COLUMN `oauthResource` TEXT NOT NULL DEFAULT ''")
+    }
+}
+

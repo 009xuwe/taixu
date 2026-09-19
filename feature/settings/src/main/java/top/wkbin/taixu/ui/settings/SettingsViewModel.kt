@@ -27,6 +27,8 @@ import top.wkbin.taixu.core.tools.AgentModelConnectionTester
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.McpConnectionState
+import top.wkbin.taixu.core.model.McpAuthState
+import top.wkbin.taixu.core.model.McpAuthMode
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.RuntimePathManager
@@ -82,6 +84,8 @@ class SettingsViewModel @Inject constructor(
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
     private val agentSkillRepository: AgentSkillRepository,
     private val mcpServerRepository: McpServerRepository,
+    private val mcpOAuthCoordinator: top.wkbin.taixu.harness.mcp.oauth.McpOAuthCoordinator,
+    private val mcpOAuthCredentials: top.wkbin.taixu.core.database.McpOAuthCredentialRepository,
     private val storageMountBindingRepository: StorageMountBindingRepository,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
     private val sessionDao: top.wkbin.taixu.core.database.HarnessSessionRepository,
@@ -392,7 +396,47 @@ class SettingsViewModel @Inject constructor(
     /** 各 MCP 服务的实时连通性状态（与 McpManager 共享，设置页与聊天页联动）。 */
     val mcpConnectionStates: StateFlow<Map<String, McpConnectionState>> = mcpManager.connectionStates
 
-    /** 手动/自动触发一次全量 MCP 连通性探测。 */
+    private val _mcpAuthOverrides = MutableStateFlow<Map<String, McpAuthState>>(emptyMap())
+
+    fun markMcpAuthorizing(serverId: String) {
+        _mcpAuthOverrides.value = _mcpAuthOverrides.value + (serverId to McpAuthState.Authorizing)
+    }
+
+    fun markMcpAuthError(serverId: String, message: String) {
+        _mcpAuthOverrides.value = _mcpAuthOverrides.value + (serverId to McpAuthState.Error(message))
+    }
+
+    fun clearMcpAuthOverride(serverId: String) {
+        _mcpAuthOverrides.value = _mcpAuthOverrides.value - serverId
+    }
+
+    /** MCP OAuth 状态独立于在线状态，token 不进入 UI。 */
+    val mcpAuthStates: StateFlow<Map<String, McpAuthState>> = combine(
+        mcpServers,
+        mcpOAuthCredentials.authorizedServerIds(),
+        mcpOAuthCoordinator.states,
+    ) { servers, authorizedIds, overrides ->
+        servers.associate { server ->
+            server.id to (overrides[server.id] ?: when {
+                server.authMode != McpAuthMode.OAUTH -> McpAuthState.Unsupported
+                server.id in authorizedIds -> McpAuthState.Authorized(expiresAt = null)
+                else -> McpAuthState.Unauthenticated
+            })
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    suspend fun beginMcpAuthorization(server: top.wkbin.taixu.core.model.McpServerConfig): String =
+        mcpOAuthCoordinator.begin(server)
+
+    fun logoutMcpAuthorization(serverId: String) {
+        viewModelScope.launch {
+            mcpOAuthCoordinator.logout(serverId)
+            mcpManager.invalidateServer(serverId)
+            mcpManager.refreshConnections()
+        }
+    }
+
+
     fun refreshMcpConnections() {
         viewModelScope.launch { mcpManager.refreshConnections() }
     }
@@ -439,6 +483,8 @@ class SettingsViewModel @Inject constructor(
 
     fun deleteMcpServer(serverId: String) {
         viewModelScope.launch {
+            mcpManager.invalidateServer(serverId)
+            mcpOAuthCredentials.deleteForServer(serverId)
             mcpServerRepository.delete(serverId)
             mcpManager.refreshConnections()
         }

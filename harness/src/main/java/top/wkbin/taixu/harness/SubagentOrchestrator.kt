@@ -1,5 +1,6 @@
 package top.wkbin.taixu.harness
 
+import java.util.concurrent.ConcurrentHashMap
 import top.wkbin.taixu.core.database.AgentContextRepository
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.common.logging.AppLogger
@@ -13,10 +14,15 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.harness.subagent.SubagentApprovalHandoff
 import top.wkbin.taixu.harness.subagent.SubagentClaimAdjudication
@@ -65,25 +71,38 @@ class SubagentOrchestrator @Inject constructor(
      * while larger batches still queue to protect the shared API/PRoot/Room resources.
      */
     private val globalParallelism = SubagentConcurrencyGate()
+    private val resumeLaneLocks = ConcurrentHashMap<String, Mutex>()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     suspend fun executeSubagents(
         args: JsonObject,
         parentSessionId: String,
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        val parentSession = sessionDao.findById(parentSessionId)
-        val workspace = parentSession?.workspace.orEmpty()
-        val modelId = parentSession?.modelId
-        val modelVariant = parentSession?.modelVariant
-        val projectType = parentSession?.projectType.orEmpty()
         val specs = SubagentArgsParser.parse(args)
         if (specs.isEmpty()) {
             return@withContext false to "未解析到有效的 subagents 任务列表，请检查参数"
         }
+        val background = args["background"]?.jsonPrimitive?.booleanOrNull == true
+        if (background) {
+            return@withContext false to
+                "background=true 暂不可用：移动端后台子任务尚未接入持久批次恢复与前台服务保活。" +
+                "为避免应用退后台后任务静默丢失，本次没有启动任何子任务；请移除 background 并以前台模式重试。"
+        }
+        runBatch(specs, parentSessionId)
+    }
 
+    private suspend fun runBatch(
+        specs: List<SubagentTaskSpec>,
+        parentSessionId: String,
+    ): Pair<Boolean, String> {
+        return coroutineScope {
+        val parentSession = sessionDao.findById(parentSessionId)
+        val workspace = parentSession?.workspace.orEmpty()
+        val modelId = parentSession?.modelId
+        val modelVariant = parentSession?.modelVariant
         val profileIndex = subagentRepository.enabledIndex()
         if (profileIndex.isEmpty()) {
-            return@withContext false to "当前没有启用的子智能体角色，请先在 Agent 设置中添加或启用角色"
+            return@coroutineScope false to "当前没有启用的子智能体角色，请先在 Agent 设置中添加或启用角色"
         }
         val parentLeaf = laneManager.get(parentSessionId, "main")?.leafId
 
@@ -130,6 +149,7 @@ class SubagentOrchestrator @Inject constructor(
         // 在父会话里显示为成功工具调用，模型据此继续往下走，正文里的部分失败说明形同虚设。
         val allSucceeded = orderedResults.all { it.isSuccess }
         allSucceeded to summaryMarkdown
+        }
     }
 
     private suspend fun runSubagent(
@@ -141,14 +161,63 @@ class SubagentOrchestrator @Inject constructor(
         modelVariant: String?,
         profileIndex: List<AgentSubagentIndexEntry>,
     ): SubagentExecutionOutcome {
-        val profile = resolveProfile(spec, profileIndex)
-        if (profile == null) {
-            return SubagentExecutionOutcome(
-                spec = spec,
-                subSessionId = "",
-                isSuccess = false,
-                summary = routingFailure(spec),
-                toolCallCount = 0,
+        // task_id 续跑（对齐 opencode task 工具）：跳过 create，直接在同名 Lane 已有
+        // 对话上追加本轮指令；角色取自 lane 名内嵌的 profileId，忽略本次派发参数。
+        val resumeLaneName = spec.taskId?.trim()?.takeIf { it.isNotBlank() }
+        val laneName: String
+        val profile: AgentSubagent
+        if (resumeLaneName != null) {
+            val existing = laneManager.get(parentSessionId, resumeLaneName)
+            if (existing == null || !existing.name.startsWith("subagent:")) {
+                return SubagentExecutionOutcome(
+                    spec = spec,
+                    subSessionId = resumeLaneName,
+                    isSuccess = false,
+                    summary = "task_id=$resumeLaneName 不存在或不是本会话的子任务 Lane，无法续跑。" +
+                        "请从最近一次 invoke_subagent 汇总中原样复制 task_id；Lane 已删除时改为派发全新任务。",
+                    toolCallCount = 0,
+                )
+            }
+            val resumedProfile = subagentRepository.findEnabledProfile(
+                resumeLaneName.removePrefix("subagent:").substringBeforeLast(':'),
+            )
+            if (resumedProfile == null) {
+                return SubagentExecutionOutcome(
+                    spec = spec,
+                    subSessionId = resumeLaneName,
+                    isSuccess = false,
+                    summary = "续跑 Lane 的角色已禁用或删除，无法续跑；请改为派发全新任务。",
+                    toolCallCount = 0,
+                )
+            }
+            profile = resumedProfile
+            laneName = resumeLaneName
+        } else {
+            val resolved = resolveProfile(spec, profileIndex)
+            if (resolved == null) {
+                return SubagentExecutionOutcome(
+                    spec = spec,
+                    subSessionId = "",
+                    isSuccess = false,
+                    summary = routingFailure(spec),
+                    toolCallCount = 0,
+                )
+            }
+            profile = resolved
+            laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
+            laneManager.create(parentSessionId, laneName, parentLeaf)
+        }
+        val readOnlyWriteIntent = spec.writePaths.isEmpty() && declaresWriteIntent(spec.prompt)
+        val prompt = if (resumeLaneName != null) {
+            buildSubagentResumePrompt(spec, workspace, parentSessionId, readOnlyWriteIntent)
+        } else {
+            buildSubagentPrompt(spec, profile, workspace, parentSessionId, readOnlyWriteIntent)
+        }
+        if (readOnlyWriteIntent) {
+            logger.logAgent(
+                parentSessionId,
+                "SubagentWriteScope",
+                "task=${spec.taskName} 任务文字要求落盘但未声明 write_paths，本 Lane 按只读执行",
             )
         }
         val targetModel = runCatching {
@@ -160,7 +229,7 @@ class SubagentOrchestrator @Inject constructor(
         }.getOrElse { failure ->
             return SubagentExecutionOutcome(
                 spec = spec,
-                subSessionId = "",
+                subSessionId = resumeLaneName ?: "",
                 isSuccess = false,
                 summary = failure.message ?: "无法解析子智能体模型",
                 toolCallCount = 0,
@@ -168,26 +237,34 @@ class SubagentOrchestrator @Inject constructor(
                 resolvedProfileName = profile.name,
             )
         }
-        val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
-        laneManager.create(parentSessionId, laneName, parentLeaf)
-        val readOnlyWriteIntent = spec.writePaths.isEmpty() && declaresWriteIntent(spec.prompt)
-        val prompt = buildSubagentPrompt(spec, profile, workspace, parentSessionId, readOnlyWriteIntent)
-        if (readOnlyWriteIntent) {
-            logger.logAgent(
-                parentSessionId,
-                "SubagentWriteScope",
-                "task=${spec.taskName} 任务文字要求落盘但未声明 write_paths，本 Lane 按只读执行",
+        val laneLockKey = "$parentSessionId::$laneName"
+        val laneLock = resumeLaneLocks.getOrPut(laneLockKey) { Mutex() }
+        if (!laneLock.tryLock()) {
+            return SubagentExecutionOutcome(
+                spec = spec,
+                subSessionId = laneName,
+                isSuccess = false,
+                summary = "task_id=$laneName 正在运行，拒绝并发续跑；请等待当前执行完成后再提交新指令。",
+                toolCallCount = 0,
+                resolvedProfileId = profile.id,
+                resolvedProfileName = profile.name,
+                termination = SubagentTermination.INCOMPLETE,
             )
         }
-        val laneResult = withTimeoutOrNull(SUBAGENT_TIMEOUT_MS) {
-            laneRunner.run(
-                parentSessionId,
-                laneName,
-                prompt,
-                workspace,
-                modelConfig = targetModel,
-                writePaths = spec.writePaths,
-            )
+        val laneResult = try {
+            withTimeoutOrNull(SUBAGENT_TIMEOUT_MS) {
+                laneRunner.run(
+                    parentSessionId,
+                    laneName,
+                    prompt,
+                    workspace,
+                    modelConfig = targetModel,
+                    writePaths = spec.writePaths,
+                )
+            }
+        } finally {
+            laneLock.unlock()
+            resumeLaneLocks.remove(laneLockKey, laneLock)
         }
 
         // 超时取消时 withTimeoutOrNull 返回 null，若直接 ?: 0 会把子智能体在超时窗口内
@@ -274,27 +351,7 @@ class SubagentOrchestrator @Inject constructor(
         readOnlyWriteIntent: Boolean,
     ): String {
         val factsPack = buildParentFactsPack(parentSessionId, workspace)
-        val writeLine = when {
-            spec.writePaths.isEmpty() -> buildString {
-                append("本任务为只读任务：禁止调用 write/edit/download，禁止执行会修改工作区的命令；只返回分析或数据。")
-                append("write/edit/download 在本 Lane 内会被强制拦截；base 命令不受该闸门约束，")
-                append("因此绝不允许用 shell 重定向、sed -i、mv、rm 等方式绕过。")
-                if (readOnlyWriteIntent) {
-                    // 任务文字要求落盘却没有写租约：必须显式指出冲突，否则子智能体会在
-                    // "要写"与"不许写"之间自行猜测，并可能把"没法写"当成完成。
-                    append("\n注意：本任务文字提到了落盘/写入，但主智能体未声明 write_paths。")
-                    append("请把需要落盘的完整内容直接放进结论正文（含目标路径与完整文件内容），")
-                    append("由主智能体写入；不要声称文件已生成。")
-                }
-            }
-            spec.writePaths.any(::isWholeWorkspaceWritePath) ->
-                "本任务持有整工作区独占写租约；仅修改任务确实需要的文件，避免无关改动。"
-            else -> buildString {
-                append("限定写入范围（write/edit/download 会强制校验，越界写入直接拦截）：")
-                append(spec.writePaths.joinToString("、"))
-                append("。base 命令不受该闸门约束，也必须遵守同一范围。")
-            }
-        }
+        val writeLine = buildWriteLeaseLine(spec, readOnlyWriteIntent)
         return promptAssets.render(
             "prompts/subagent_task.md",
             mapOf(
@@ -308,6 +365,49 @@ class SubagentOrchestrator @Inject constructor(
                 "FACTS_PACK" to factsPack,
             ),
         )
+    }
+
+    /** 写租约约束文案：全新派发与续跑共用同一份语义（空=只读、精确路径=局部租约、["*"]=独占）。 */
+    private fun buildWriteLeaseLine(spec: SubagentTaskSpec, readOnlyWriteIntent: Boolean): String = when {
+        spec.writePaths.isEmpty() -> buildString {
+            append("本任务为只读任务：禁止调用 write/edit/download，禁止执行会修改工作区的命令；只返回分析或数据。")
+            append("write/edit/download 在本 Lane 内会被强制拦截；base 命令不受该闸门约束，")
+            append("因此绝不允许用 shell 重定向、sed -i、mv、rm 等方式绕过。")
+            if (readOnlyWriteIntent) {
+                // 任务文字要求落盘却没有写租约：必须显式指出冲突，否则子智能体会在
+                // "要写"与"不许写"之间自行猜测，并可能把"没法写"当成完成。
+                append("\n注意：本任务文字提到了落盘/写入，但主智能体未声明 write_paths。")
+                append("请把需要落盘的完整内容直接放进结论正文（含目标路径与完整文件内容），")
+                append("由主智能体写入；不要声称文件已生成。")
+            }
+        }
+        spec.writePaths.any(::isWholeWorkspaceWritePath) ->
+            "本任务持有整工作区独占写租约；仅修改任务确实需要的文件，避免无关改动。"
+        else -> buildString {
+            append("限定写入范围（write/edit/download 会强制校验，越界写入直接拦截）：")
+            append(spec.writePaths.joinToString("、"))
+            append("。base 命令不受该闸门约束，也必须遵守同一范围。")
+        }
+    }
+
+    /**
+     * 续跑指令：Lane 已持有原任务的完整上下文（角色提示词、任务原文、前序工具记录），
+     * 这里只注入新指令与写租约提醒，不再重放整份任务模板。
+     */
+    private suspend fun buildSubagentResumePrompt(
+        spec: SubagentTaskSpec,
+        workspace: String,
+        parentSessionId: String,
+        readOnlyWriteIntent: Boolean,
+    ): String {
+        val factsPack = buildParentFactsPack(parentSessionId, workspace)
+        return buildString {
+            append("【任务续跑】原任务「${spec.taskName}」未完结，主智能体要求在本 Lane 已有工作基础上继续：\n")
+            append(spec.prompt.trim())
+            append("\n\n")
+            append(buildWriteLeaseLine(spec, readOnlyWriteIntent))
+            if (factsPack.isNotBlank()) append("\n\n$factsPack")
+        }
     }
 
     /** 父级 facts pack：把父会话已 pin 的长期指令/事实浓缩为一段低体积背景，而非整段父 transcript。 */
@@ -427,6 +527,23 @@ internal fun selectSubagentModel(
     }
 }
 
+
+/** background=true 时立即返回给模型的启动确认：明确"不要轮询"（对齐 opencode task 工具的输出约定）。 */
+internal fun backgroundStartedText(specs: List<SubagentTaskSpec>): String = buildString {
+    append("已启动 ${specs.size} 个后台子任务：${specs.joinToString("、") { it.taskName }}。\n")
+    append("任务在后台执行，完成后结果会自动注入本会话并触发后续推理。")
+    append("不要等待、轮询进度或重复派发相同任务；可先处理其他独立工作，或直接结束本轮回复。")
+}
+
+/** 后台批次完成后的注入文本：汇总 + 续跑指引；由 HarnessLoop.send 以用户消息触发新轮推理。 */
+internal fun backgroundCompletionText(allSucceeded: Boolean, summaryMarkdown: String): String = buildString {
+    append("【后台子任务已完成】\n\n")
+    append(summaryMarkdown.trim())
+    append("\n\n---\n以上为后台子任务结果，请基于它继续推进原任务。")
+    if (!allSucceeded) {
+        append("失败子任务可在新的 invoke_subagent 调用中用其 task_id 续跑（附新指令），或重新派发全新任务。")
+    }
+}
 
 /**
  * 将任务按 write_paths 冲突切成若干互不相交的"波"。
@@ -572,6 +689,10 @@ private fun subagentOutcomeHeader(
     val modelBadge = if (includeModelBadge) outcome.resolvedModel?.let { " · 专用模型: $it" } ?: "" else ""
     append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole$modelBadge)\n")
     append("- **工具调用次数**：${outcome.toolCallCount} 次\n")
+    // task_id 暴露给父智能体：未完结的子任务可凭它在同一 Lane 上续跑（对齐 opencode task 工具）。
+    if (outcome.subSessionId.isNotBlank()) {
+        append("- **task_id**（续跑用，原样复制到 invoke_subagent 的 task_id 字段）: ${outcome.subSessionId}\n")
+    }
     // 委托经济学：把成本摊开给父智能体与用户看——缓存命中率低的大输入是委派不划算的主要信号。
     outcome.tokenUsage?.let { usage ->
         append(

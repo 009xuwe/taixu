@@ -86,6 +86,14 @@ class ToolExecutor @Inject constructor(
         operationId: String? = null,
     ): ToolResult {
         val now = System.currentTimeMillis()
+        // ask_user 是向用户提问的动作本身，不走审批门控（策略引擎对它亦豁免）：
+        // 校验参数 → 落一条 pending 请求（复用审批请求的暂停/恢复管道）→ 返回
+        // awaitingApproval 让整轮暂停；UI 渲染问题卡，答案由 HarnessLoop.resolveQuestion
+        // 直接作为工具结果落库并续跑，无需重执行。bypassApproval（批准路径误重放）时
+        // 返回中性结果，避免重复建问题请求。
+        if (toolCall.tool == HarnessTool.ASK_USER) {
+            return executeAskUser(toolCall, sessionId, workspace, operationId, now)
+        }
         val outcome = try {
             if (!bypassApproval && sessionId.isNotBlank()) {
                 val repository = approvalRepository
@@ -158,26 +166,38 @@ class ToolExecutor @Inject constructor(
             rawOutput
         }
         linuxEnvironmentManager?.refreshIfNeeded()
+        // 先对全量输出脱敏，再截断/落盘：落盘引流文件必须与结果正文同一脱敏口径
+        val redactedOutput = secretRedactor.redact(
+            value = finalOutput,
+            secretValues = linuxEnvironmentManager?.values?.value?.values.orEmpty(),
+            privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
+        )
         return ToolResult(
             id = UUID.randomUUID().toString(),
             createdAt = now,
             toolCallId = toolCall.id,
             success = success,
-            output = secretRedactor.redact(
-                value = truncateOutput(finalOutput),
-                secretValues = linuxEnvironmentManager?.values?.value?.values.orEmpty(),
-                privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
+            output = truncateOutput(
+                redactedOutput,
+                toolCall.rawToolName,
+                if (workspace.isNotBlank()) fileAccess.withBase(workspace) else null,
             ),
         )
     }
 
     /**
      * 输出超限时带元数据截断（pi 的 truncate 设计）：保留头部，并明确告知模型
-     * 完整输出的规模与截断事实，引导其用 grep/head/tail 精准取段，
-     * 而不是对静默截断的内容得出片面结论。
+     * 完整输出的规模与截断事实。截断之上叠加落盘引流（对齐 opencode Truncate）：
+     * 全量输出写入工作区 `.taixu-outputs/` 并在正文附路径，模型可用 read 分页回读，
+     * 从「有损截断 + 引导重新取数」升级为「无损引流」。
      */
-    private fun truncateOutput(output: String): String {
+    private suspend fun truncateOutput(
+        output: String,
+        toolName: String?,
+        fileAccess: WorkspaceFileAccess?,
+    ): String {
         if (output.length <= MAX_OUTPUT_LENGTH) return output
+        val spillPath = fileAccess?.let { ToolOutputSpillStore.spill(it, toolName, output) }
         val kept = output.take(TRUNCATE_KEEP_LENGTH)
         val totalLines = output.count { it == '\n' } + 1
         val keptLines = kept.count { it == '\n' } + 1
@@ -189,7 +209,12 @@ class ToolExecutor @Inject constructor(
             append(output.length)
             append(" 字符，以上仅显示前 ")
             append(keptLines)
-            append(" 行。需要其余部分请用 grep 过滤关键字、head/tail 取首尾、或 sed -n 'N,Mp' 取指定行段，不要原样重复执行同一命令。]")
+            append(" 行。")
+            if (spillPath != null) {
+                append("完整输出已保存至 $spillPath，可用 read 工具（offset/limit 分页）查看其余部分。]")
+            } else {
+                append("需要其余部分请用 grep 过滤关键字、head/tail 取首尾、或 sed -n 'N,Mp' 取指定行段，不要原样重复执行同一命令。]")
+            }
         }
     }
 
@@ -248,6 +273,8 @@ class ToolExecutor @Inject constructor(
             HarnessTool.HISTORY_SEARCH -> executeHistorySearch(args, sessionId)
             HarnessTool.HISTORY_READ -> executeHistoryRead(args, sessionId)
             HarnessTool.COMPRESS -> executeCompress(args, sessionId)
+            // ask_user 在 execute() 入口特判（不走审批门控）；此处仅为 when 穷尽兜底
+            HarnessTool.ASK_USER -> false to "ask_user 应在执行入口处理，不应到达工具分派"
             HarnessTool.BUILD_SCRIPT -> buildScriptToolExecutor?.execute(args, workspace) ?: (false to "未初始化构建脚本管理器")
             HarnessTool.SUBAGENT -> if (rawToolName.equals("invoke_dual_agent", ignoreCase = true)) {
                 dualAgentCoordinator?.executeFromTool(args, sessionId, workspace) ?: (false to "未初始化双智能体编排器")
@@ -648,6 +675,64 @@ class ToolExecutor @Inject constructor(
      * 让模型换更长的摘录重试，而不是猜一个边界静默压错地方。走与自动压缩相同的
      * cache-replay 摘要路径；原文不丢，仍可 history_read 回读。
      */
+    /**
+     * ask_user：把结构化提问落成一条 pending 请求（toolName=ask_user，复用审批请求的
+     * 存储/过期/认领生命周期），返回 awaitingApproval 让工具回合暂停。
+     * 校验失败回写可纠正文案（不暂停、不建请求）；仓储不可用同理。
+     */
+    private suspend fun executeAskUser(
+        toolCall: ToolCall,
+        sessionId: String,
+        workspace: String,
+        operationId: String?,
+        now: Long,
+    ): ToolResult {
+        fun failure(output: String) = ToolResult(
+            id = UUID.randomUUID().toString(),
+            createdAt = now,
+            toolCallId = toolCall.id,
+            success = false,
+            output = output,
+        )
+        if (sessionId.isBlank()) return failure("ask_user 需要会话上下文（sessionId 为空）")
+        val questions = runCatching { AskUserQuestions.parse(toolCall.args) }.getOrElse { error ->
+            return failure("ask_user 参数校验未通过：${error.message}。请修正参数后重新调用。")
+        }
+        val repository = approvalRepository ?: return failure("审批仓储未初始化，无法向用户提问")
+        val request = approvalPolicyEngine.createRequest(
+            sessionId = sessionId,
+            toolCall = ToolCall(
+                id = toolCall.id,
+                createdAt = now,
+                tool = HarnessTool.ASK_USER,
+                args = toolCall.args,
+                rawToolName = AskUserQuestions.TOOL_NAME,
+            ),
+            workspace = workspace,
+            decision = ApprovalDecision(
+                required = true,
+                riskLevel = "none",
+                reason = questions.first().question.take(200),
+                summary = "智能体向你提问（${questions.size} 个问题）",
+            ),
+            operationId = operationId,
+        )
+        // 问题等待的是用户的思考与决策，TTL 比操作类审批（10 分钟）宽裕
+        runCatching { repository.create(request.copy(expiresAt = now + QUESTION_TTL_MS)) }
+            .getOrElse { throwable ->
+                return failure("问题请求落库失败：${throwable.message ?: throwable::class.simpleName}")
+            }
+        return ToolResult(
+            id = UUID.randomUUID().toString(),
+            createdAt = now,
+            toolCallId = toolCall.id,
+            success = true,
+            output = "已向用户提出 ${questions.size} 个问题，等待回答。",
+            awaitingApproval = true,
+            approvalRequestId = request.id,
+        )
+    }
+
     private suspend fun executeCompress(args: JsonObject, sessionId: String): Pair<Boolean, String> {
         val manager = compactionManager ?: return false to "未初始化压缩管理器"
         val mode = args.stringArg("mode").orEmpty().trim().lowercase()
@@ -1161,6 +1246,8 @@ class ToolExecutor @Inject constructor(
         // 前台单命令上限 15min：防模型把 timeout_seconds 拉到 1h 导致界面长时间"像卡死"；
         // 超过 15min 的全量编译/长构建应走后台 process（其 Long.MAX_VALUE 有 stop 管理，属合理设计）。
         const val MAX_BASE_TIMEOUT_SECONDS = 900L
+        /** ask_user 问题请求的有效期：等待用户思考与决策，比操作类审批的 10 分钟宽裕。 */
+        const val QUESTION_TTL_MS: Long = 30 * 60 * 1000L
         const val MAX_OUTPUT_LENGTH = 64 * 1024
         const val TRUNCATE_KEEP_LENGTH = 60 * 1024
         const val MAX_COMMAND_LENGTH = 32 * 1024

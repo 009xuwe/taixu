@@ -114,6 +114,7 @@ internal fun ChatMessageList(
     activePlan: AgentPlanEntity?,
     pendingApprovals: List<AgentApprovalRequestEntity>,
     onResolveApproval: (String, Boolean, Boolean) -> Unit,
+    onResolveQuestion: (String, String) -> Unit = { _, _ -> },
     onViewSubagentLanes: () -> Unit = {},
     subagentBranches: List<top.wkbin.taixu.harness.session.ConversationBranch> = emptyList(),
     onOpenSubagent: (top.wkbin.taixu.harness.session.ConversationBranch) -> Unit = {},
@@ -271,11 +272,19 @@ internal fun ChatMessageList(
         }
         item {
             pendingApprovals.firstOrNull()?.let { request ->
-                ApprovalRequestCard(
-                    request = request,
-                    onApprove = { rememberForSession -> onResolveApproval(request.id, true, rememberForSession) },
-                    onReject = { onResolveApproval(request.id, false, false) },
-                )
+                if (request.toolName == top.wkbin.taixu.harness.AskUserQuestions.TOOL_NAME) {
+                    AskUserCard(
+                        request = request,
+                        onAnswer = onResolveQuestion,
+                        onSkip = { onResolveApproval(request.id, false, false) },
+                    )
+                } else {
+                    ApprovalRequestCard(
+                        request = request,
+                        onApprove = { rememberForSession -> onResolveApproval(request.id, true, rememberForSession) },
+                        onReject = { onResolveApproval(request.id, false, false) },
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
             }
             Spacer(Modifier.height(4.dp))

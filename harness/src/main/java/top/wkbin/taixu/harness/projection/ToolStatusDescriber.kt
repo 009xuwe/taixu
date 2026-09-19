@@ -50,5 +50,6 @@ object ToolStatusDescriber {
         HarnessTool.MCP -> "正在调用 MCP 插件工具：${rawToolName ?: "mcp"}…"
         HarnessTool.LOAD_RULE -> "正在加载规则块：${arg(args, "rule") ?: "load_rule"}…"
         HarnessTool.COMPRESS -> "正在压缩会话历史…"
+        HarnessTool.ASK_USER -> "正在向你提问…"
     }
 }

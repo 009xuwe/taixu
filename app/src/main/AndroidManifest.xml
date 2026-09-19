@@ -66,6 +66,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="taixu" android:host="oauth" android:path="/mcp" />
+            </intent-filter>
         </activity>
         <!-- 应用内 APK 更新安装文件提供器 -->
         <provider

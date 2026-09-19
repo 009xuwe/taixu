@@ -22,6 +22,8 @@ import top.wkbin.taixu.core.database.task.AgentTaskDao
         AgentSubagentEntity::class,
         AgentSubagentSettingsEntity::class,
         McpServerEntity::class,
+        McpOAuthCredentialEntity::class,
+        McpOAuthTransactionEntity::class,
         AgentSkillEntity::class,
         StorageMountBindingEntity::class,
         ToolSettingsEntity::class,
@@ -42,7 +44,7 @@ import top.wkbin.taixu.core.database.task.AgentTaskDao
         WorkflowExecutionLogEntity::class,
         WorkflowScheduleEntity::class,
     ],
-    version = 49,
+    version = 50,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -57,6 +59,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun agentContextDao(): AgentContextDao
     abstract fun agentSubagentDao(): AgentSubagentDao
     abstract fun mcpServerDao(): McpServerDao
+    abstract fun mcpOAuthCredentialDao(): McpOAuthCredentialDao
+    abstract fun mcpOAuthTransactionDao(): McpOAuthTransactionDao
     abstract fun agentSkillDao(): AgentSkillDao
     abstract fun storageMountBindingDao(): StorageMountBindingDao
     abstract fun toolSettingsDao(): ToolSettingsDao

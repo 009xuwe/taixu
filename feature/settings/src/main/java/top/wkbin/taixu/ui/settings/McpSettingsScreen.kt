@@ -5,6 +5,8 @@ import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -74,6 +76,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.core.model.McpConnectionState
+import top.wkbin.taixu.core.model.McpAuthMode
+import top.wkbin.taixu.core.model.McpAuthState
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.model.McpTransportType
@@ -89,7 +93,10 @@ fun McpSettingsScreen(
 ) {
     val servers by viewModel.mcpServers.collectAsStateWithLifecycle()
     val connectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
+    val mcpAuthStates by viewModel.mcpAuthStates.collectAsStateWithLifecycle()
     val browserGates by viewModel.browserGates.collectAsStateWithLifecycle()
+    val screenScope = rememberCoroutineScope()
+    val screenContext = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
     var showLocalDiscoveryDialog by remember { mutableStateOf(false) }
     var viewingDetailServer by remember { mutableStateOf<McpServerConfig?>(null) }
@@ -301,6 +308,15 @@ fun McpSettingsScreen(
                 viewModel.refreshMcpConnections()
                 res
             },
+            authState = mcpAuthStates[server.id] ?: McpAuthState.Unsupported,
+            onAuthorize = {
+                screenScope.launch {
+                    runCatching { viewModel.beginMcpAuthorization(server) }
+                        .onSuccess { screenContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
+                        .onFailure { Toast.makeText(screenContext, "授权启动失败：${it.message}", Toast.LENGTH_SHORT).show() }
+                }
+            },
+            onLogout = { viewModel.logoutMcpAuthorization(server.id) },
         )
     }
 }
@@ -615,6 +631,9 @@ private fun McpServerDetailDialog(
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
     onTest: suspend () -> Result<List<McpToolInfo>>,
+    authState: McpAuthState = McpAuthState.Unsupported,
+    onAuthorize: () -> Unit = {},
+    onLogout: () -> Unit = {},
 ) {
     var testing by remember { mutableStateOf(false) }
     var discoveredTools by remember { mutableStateOf<List<McpToolInfo>?>(null) }
@@ -749,6 +768,40 @@ private fun McpServerDetailDialog(
                     }
                 }
 
+                // OAuth 身份与授权
+                if (server.authMode == McpAuthMode.OAUTH) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "身份与授权",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            val label = when (authState) {
+                                McpAuthState.Unauthenticated -> "未授权"
+                                McpAuthState.Authorizing -> "授权中…"
+                                is McpAuthState.Authorized -> "已授权"
+                                is McpAuthState.Error -> "授权失败"
+                                McpAuthState.Unsupported -> "不支持"
+                            }
+                            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            when (authState) {
+                                McpAuthState.Unauthenticated, is McpAuthState.Error ->
+                                    Button(onClick = onAuthorize, enabled = server.oauthClientId.isNotBlank()) { Text("授权") }
+                                is McpAuthState.Authorized ->
+                                    OutlinedButton(onClick = onLogout) { Text("退出授权") }
+                                McpAuthState.Authorizing ->
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                                McpAuthState.Unsupported -> Unit
+                            }
+                        }
+                    }
+                }
+
                 // 测试与工具探测区域
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -868,6 +921,12 @@ private fun AddMcpServerDialog(
     var command by remember { mutableStateOf("npx") }
     var argsStr by remember { mutableStateOf("") }
     var serverUrl by remember { mutableStateOf("http://127.0.0.1:8000/sse") }
+    var oauthEnabled by remember { mutableStateOf(false) }
+    var oauthClientId by remember { mutableStateOf("") }
+    var oauthAuthorizationEndpoint by remember { mutableStateOf("") }
+    var oauthTokenEndpoint by remember { mutableStateOf("") }
+    var oauthScope by remember { mutableStateOf("") }
+    var oauthResource by remember { mutableStateOf("") }
 
     // JSON 模式状态
     var jsonText by remember {
@@ -1026,10 +1085,28 @@ private fun AddMcpServerDialog(
                         OutlinedTextField(
                             value = serverUrl,
                             onValueChange = { serverUrl = it },
-                            label = { Text("SSE 端点 URL") },
+                            label = { Text("HTTP / SSE 端点 URL") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("OAuth 2.0 + PKCE", style = MaterialTheme.typography.labelMedium)
+                                Text("授权码模式；token 加密保存且不会导出", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = oauthEnabled, onCheckedChange = { oauthEnabled = it })
+                        }
+                        if (oauthEnabled) {
+                            OutlinedTextField(oauthClientId, { oauthClientId = it }, label = { Text("OAuth client ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(oauthAuthorizationEndpoint, { oauthAuthorizationEndpoint = it }, label = { Text("Authorization endpoint") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(oauthTokenEndpoint, { oauthTokenEndpoint = it }, label = { Text("Token endpoint") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(oauthScope, { oauthScope = it }, label = { Text("Scope（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(oauthResource, { oauthResource = it }, label = { Text("Resource（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        }
                     }
                 } else {
                     // 📋 JSON 模式
@@ -1091,12 +1168,19 @@ private fun AddMcpServerDialog(
                                 command = command.trim(),
                                 args = argsList,
                                 serverUrl = serverUrl.trim(),
+                                authMode = if (oauthEnabled) McpAuthMode.OAUTH else McpAuthMode.NONE,
+                                oauthClientId = oauthClientId.trim(),
+                                oauthAuthorizationEndpoint = oauthAuthorizationEndpoint.trim(),
+                                oauthTokenEndpoint = oauthTokenEndpoint.trim(),
+                                oauthScope = oauthScope.trim(),
+                                oauthResource = oauthResource.trim(),
                                 isEnabled = true,
                                 isBuiltin = false,
                             )
                         )
                     },
-                    enabled = name.isNotBlank() && (transport != McpTransportType.STDIO || command.isNotBlank()),
+                    enabled = name.isNotBlank() && (transport != McpTransportType.STDIO || command.isNotBlank()) &&
+                        (!oauthEnabled || (oauthClientId.isNotBlank() && oauthAuthorizationEndpoint.isNotBlank() && oauthTokenEndpoint.isNotBlank())),
                 ) {
                     Text("添加")
                 }
@@ -1137,6 +1221,12 @@ private fun parseMcpJson(rawJson: String): Result<List<McpServerConfig>> = runCa
             val args = sObj["args"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
             val env = sObj["env"]?.jsonObject?.mapValues { it.value.jsonPrimitive.contentOrNull.orEmpty() }.orEmpty()
             val desc = sObj["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val authMode = if (sObj["authMode"]?.jsonPrimitive?.contentOrNull.equals("OAUTH", ignoreCase = true)) McpAuthMode.OAUTH else McpAuthMode.NONE
+            val oauthClientId = sObj["oauthClientId"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val oauthAuthorizationEndpoint = sObj["oauthAuthorizationEndpoint"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val oauthTokenEndpoint = sObj["oauthTokenEndpoint"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val oauthScope = sObj["oauthScope"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val oauthResource = sObj["oauthResource"]?.jsonPrimitive?.contentOrNull.orEmpty()
 
             val isSse = url.isNotBlank() || (command.isBlank() && sObj.containsKey("url"))
             list.add(
@@ -1149,6 +1239,12 @@ private fun parseMcpJson(rawJson: String): Result<List<McpServerConfig>> = runCa
                     args = args,
                     env = env,
                     serverUrl = url,
+                    authMode = authMode,
+                    oauthClientId = oauthClientId,
+                    oauthAuthorizationEndpoint = oauthAuthorizationEndpoint,
+                    oauthTokenEndpoint = oauthTokenEndpoint,
+                    oauthScope = oauthScope,
+                    oauthResource = oauthResource,
                     isEnabled = true,
                     isBuiltin = false,
                 )

@@ -80,6 +80,14 @@ class McpManager @Inject constructor(
         withTimeoutOrNull(DISCOVERY_TIMEOUT_MS.milliseconds) { transport(bound).check(bound) } ?: false
     }
 
+    suspend fun invalidateServer(serverId: String) {
+        cache.remove(serverId)
+        lastErrors.remove(serverId)
+        clearDiscoveryCooldown(serverId)
+        repository.servers.first().firstOrNull { it.id == serverId }?.let { closeTransportConnection(it) }
+        _connectionStates.update { it + (serverId to McpConnectionState.UNKNOWN) }
+    }
+
     suspend fun refreshConnections() = withContext(Dispatchers.IO) {
         val servers = repository.servers.first()
         servers.filterNot { it.isEnabled }.forEach { server ->

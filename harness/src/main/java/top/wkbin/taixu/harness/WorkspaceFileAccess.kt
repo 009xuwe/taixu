@@ -107,6 +107,33 @@ class WorkspaceFileAccess(
         }
     }
 
+    /**
+     * Harness 内部产物写入：不经过模型 write 工具的 1 MiB 限制，但仍受工作区边界、
+     * 原子替换和独立 16 MiB 配额约束。仅供日志/子代理产物引流使用。
+     */
+    internal suspend fun writeHarnessArtifact(path: String, content: String): AppResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val bytes = content.toByteArray(Charsets.UTF_8)
+            require(bytes.size <= MAX_HARNESS_ARTIFACT_BYTES) {
+                "Harness 产物过大（${bytes.size} 字节，上限 $MAX_HARNESS_ARTIFACT_BYTES）"
+            }
+            val file = resolveWritable(path)
+            file.parentFile?.mkdirs()
+            val temporary = File(file.parentFile, ".${file.name}.tmp-${System.nanoTime()}")
+            try {
+                temporary.outputStream().buffered().use { it.write(bytes) }
+                if (!temporary.renameTo(file)) {
+                    temporary.copyTo(file, overwrite = true)
+                }
+            } finally {
+                temporary.delete()
+            }
+            AppResult.Success(Unit)
+        } catch (throwable: Throwable) {
+            failure(path, throwable)
+        }
+    }
+
     suspend fun edit(path: String, oldText: String, newText: String): AppResult<Unit> = withContext(Dispatchers.IO) {
         try {
             require(oldText.isNotEmpty()) { "oldText 不能为空" }
@@ -241,6 +268,7 @@ class WorkspaceFileAccess(
     companion object {
         const val MAX_READ_BYTES = 1 * 1024 * 1024L
         const val MAX_WRITE_BYTES = 1 * 1024 * 1024
+        internal const val MAX_HARNESS_ARTIFACT_BYTES = 16 * 1024 * 1024
         const val MAX_EDIT_BYTES = 1 * 1024 * 1024L
         const val MAX_LIST_ENTRIES = 5_000
 
