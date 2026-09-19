@@ -13,6 +13,10 @@ object ContextWindowPolicy {
     internal const val TOOL_SCHEMA_RESERVE_TOKENS = 4_096
     private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
     private const val MIN_SYSTEM_PROMPT_TOKENS = 512
+    /** 超过此 token 数的用户消息才参与巨型消息截断（普通消息交给折叠线，避免误伤）。 */
+    private const val MIN_GIANT_USER_MESSAGE_TOKENS = 2_000
+    /** 巨型用户消息截断后至少保留的头部 token 数。 */
+    private const val MIN_KEPT_USER_TURN_TOKENS = 800
     /**
      * 历史消息占用的绝对安全上限（token）。无论模型标称窗口多高，
      * 压缩触发线都不超过此值，避免 flash 级模型在超高 token 下参数生成崩塌。
@@ -26,6 +30,12 @@ object ContextWindowPolicy {
     const val MIN_FOLDING_RATIO_PERCENT = 10
     /** 折叠线比例上限。 */
     const val MAX_FOLDING_RATIO_PERCENT = 100
+
+    /**
+     * 图片的保守 token 估算（每张）。Claude 实际 ~1600/图，取高值方向安全：
+     * 低估会让请求溢出 provider 400，高估只是折叠稍早。
+     */
+    const val ESTIMATED_IMAGE_TOKENS = 1_600
 
     /**
      * 历史折叠触发线（token），供 UI 预览与 [computeKeepFromIndex] 共用。
@@ -52,7 +62,6 @@ object ContextWindowPolicy {
             TOOL_SCHEMA_RESERVE_TOKENS
         return minOf(rawLimit, SAFE_GENERATION_CAP)
     }
-    private const val APPROX_CHARS_PER_TOKEN = 4
 
     /**
      * Compaction threshold (in characters) per tool type. `read`/`base` commonly
@@ -215,7 +224,9 @@ object ContextWindowPolicy {
         var punctuation = 0
         text.forEach { ch ->
             when {
-                ch.code in 0x2E80..0x9FFF || ch.code in 0xAC00..0xD7AF -> cjk++
+                // 全角区（FF00-FFEF，如 ，！？：）与 CJK 区同价：中文标点实际 ~1 token/字，
+                // 落入 ASCII 标点桶按 /2.8 估算会对中文上下文系统性低估
+                ch.code in 0x2E80..0x9FFF || ch.code in 0xAC00..0xD7AF || ch.code in 0xFF00..0xFFEF -> cjk++
                 ch.isWhitespace() -> Unit
                 ch.isLetterOrDigit() -> ascii++
                 else -> punctuation++
@@ -419,7 +430,7 @@ object ContextWindowPolicy {
 
     private fun tokensOf(message: HarnessMessage): Int = when (message) {
         is CapabilityEvent, is ModelSwitchEvent -> 0
-        is UserMessage -> estimateTokens(message.text) + message.imageUrls.size * 1_000
+        is UserMessage -> estimateTokens(message.text) + message.imageUrls.size * ESTIMATED_IMAGE_TOKENS
         is AssistantText -> estimateTokens(assistantTextForContext(message.text)) +
             estimateTokens(message.reasoning.orEmpty())
         is ToolResult -> estimateTokens(message.output)
@@ -464,7 +475,67 @@ object ContextWindowPolicy {
         val maxTokens = (budget * MAX_SYSTEM_PROMPT_FRACTION).toInt().coerceAtLeast(MIN_SYSTEM_PROMPT_TOKENS)
         if (estimateTokens(prompt) <= maxTokens) return prompt
         val suffix = "\n\n[系统提示因上下文预算受限已截断；请优先遵守以上核心规则]"
-        return prompt.take((maxTokens * APPROX_CHARS_PER_TOKEN - suffix.length).coerceAtLeast(0)) + suffix
+        // 截断长度必须按 estimateTokens 二分校准：CJK ≈1.8 字/token、ASCII ≈2.5 字/token，
+        // 与固定 4 字符/token 的换算差近 2 倍——中文系统提示按固定比截断后仍会超限 2 倍以上。
+        var low = 0
+        var high = prompt.length
+        var fitted = suffix
+        while (low <= high) {
+            val mid = (low + high) / 2
+            val candidate = prompt.take(mid) + suffix
+            if (estimateTokens(candidate) <= maxTokens) {
+                fitted = candidate
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return fitted
+    }
+
+    /**
+     * 巨型用户消息兜底：折叠线算法只能按消息边界或轮内切割，单条自身超线的用户消息
+     * （粘贴长文档/日志）无法折叠，保留尾区恒超预算 → 每次请求必被 provider 400，
+     * 且压缩判定每次命中、每次失败，形成稳定失败循环。
+     * 对保留区中超大的用户消息做"头尾保留 + 指针标记"的投影级截断——只影响发给
+     * provider 的正文，落库 transcript 与 UI 不变，完整内容可用 history_read 找回。
+     */
+    fun truncateOversizedUserMessages(messages: List<HarnessMessage>, limit: Int): List<HarnessMessage> {
+        if (limit <= 0 || messages.isEmpty()) return messages
+        val total = messages.sumOf(::tokensOf)
+        if (total <= limit) return messages
+        var overage = total - limit
+        val out = messages.toMutableList()
+        // 从最大的用户消息开始截：粘贴的长文档是超限主因，也是唯一可无损压缩的正文
+        val candidateIndexes = out.withIndex()
+            .filter { it.value is UserMessage && tokensOf(it.value) > MIN_GIANT_USER_MESSAGE_TOKENS }
+            .sortedByDescending { tokensOf(it.value) }
+            .map { it.index }
+        for (index in candidateIndexes) {
+            if (overage <= 0) break
+            val message = out[index] as UserMessage
+            val oldTokens = estimateTokens(message.text)
+            val targetTokens = (oldTokens - overage).coerceAtLeast(MIN_KEPT_USER_TURN_TOKENS)
+            val fittedText = fitUserText(message.text, targetTokens) ?: continue
+            val newTokens = estimateTokens(fittedText)
+            if (newTokens >= oldTokens) continue
+            overage -= oldTokens - newTokens
+            out[index] = message.copy(text = fittedText)
+        }
+        return out
+    }
+
+    private fun fitUserText(text: String, targetTokens: Int): String? {
+        val marker = "\n\n[…… 消息过长已截断：完整原文保留在会话记录中，需要时可用 history_read 读取 ……]\n\n"
+        var keptChars = (targetTokens * 1.5f).toInt().coerceAtLeast(marker.length + 2)
+        repeat(6) {
+            if (text.length <= keptChars) return null
+            val head = keptChars * 3 / 4
+            val candidate = text.take(head) + marker + text.takeLast(keptChars - head)
+            if (estimateTokens(candidate) <= targetTokens) return candidate
+            keptChars = (keptChars * 3 / 4).coerceAtLeast(marker.length + 2)
+        }
+        return null
     }
 
     /**

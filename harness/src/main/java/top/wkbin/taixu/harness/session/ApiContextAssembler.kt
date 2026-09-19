@@ -124,6 +124,22 @@ class ApiContextAssembler @Inject constructor(
                     msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetails)
                 }
             }
+            if (compactionEnabled) {
+                // 巨型用户消息兜底（与 computeKeepFromIndex 同一条折叠线，foldingLimitFor
+                // 内部自钳比例）：单条自身超线的用户消息（粘贴长文档/日志）无法按边界折叠，
+                // kept 恒超预算 → 每轮请求必被 provider 400。对保留区超大用户消息做
+                // 投影级头尾截断，落库 transcript 与 UI 不受影响。
+                msgs = ContextWindowPolicy.truncateOversizedUserMessages(
+                    msgs,
+                    ContextWindowPolicy.foldingLimitFor(
+                        budget = budgetTokens,
+                        ratioPercent = foldingRatioPercent,
+                        systemTokens = ContextWindowPolicy.estimateTokens(systemPrompt) +
+                            ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer),
+                        reserveTokens = model.compactionReserveTokens,
+                    ),
+                )
+            }
             val summaryLayer = compactedContext.summaryLayer
             if (summaryLayer.isNotBlank()) {
                 add(
