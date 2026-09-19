@@ -254,7 +254,13 @@ class McpStdioTransport @Inject constructor(
             pending[id] = waiter
             try {
                 writeLine(json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params)))
+            } catch (cancellation: CancellationException) {
+                // 写锁上被取消 ≠ 通道故障：必须原样重抛，否则用户取消会误判为传输失败销毁连接；
+                // 等待者同步移除，否则 inFlight 永真、空闲清扫永不回收此连接
+                pending.remove(id)
+                throw cancellation
             } catch (t: Throwable) {
+                pending.remove(id)
                 throw McpStdioChannelException("MCP 请求 " + method + " 写入失败：" + (t.message ?: t::class.simpleName))
             }
             // 超时必须以普通异常而非 TimeoutCancellationException 暴露：TCE 会沿 McpManager /
@@ -288,8 +294,15 @@ class McpStdioTransport @Inject constructor(
                     countIgnored("MCP 输出了过多无效响应帧")
                     return
                 }
-            val waiter = parsed.id?.let { pending.remove(it) } ?: return
-            waiter.complete(parsed)
+            val waiter = parsed.id?.let { pending.remove(it) }
+            if (waiter != null) {
+                waiter.complete(parsed)
+                return
+            }
+            // 无等待者的响应 = 超时后的迟到响应或 id 错乱的 server：计入中毒阈值——
+            // 迟到响应每次超时至多一条，正常服务远达不到 256；持续错乱说明 server 坏了，
+            // 与旧实现（按 id 匹配失败计数）保持同等回收能力
+            countIgnored("MCP 输出了过多无主响应帧")
         }
 
         private fun countIgnored(reason: String) {

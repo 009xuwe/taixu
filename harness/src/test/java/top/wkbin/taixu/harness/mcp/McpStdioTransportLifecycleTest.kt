@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -277,6 +278,49 @@ class McpStdioTransportLifecycleTest {
         }
     }
 
+    @Test
+    fun `cancellation during write propagates and leaves no pending waiter`() = runBlocking {
+        val channel = BlockingWriteMcpChannel()
+        val transport = newTransport(FakeChannelFactory(channel))
+        transport.injectConnection(echoServer, channel)
+
+        var caught: Throwable? = null
+        val job = launch {
+            try {
+                transport.discover(echoServer)
+            } catch (t: Throwable) {
+                caught = t
+            }
+        }
+        delay(200) // 等请求注册并挂起在 writeLine 上
+        job.cancelAndJoin()
+
+        assertTrue(
+            "写路径取消必须以 CancellationException 透传，不得包装成通道异常销毁连接，got: " +
+                caught?.let { it::class.simpleName },
+            caught is kotlinx.coroutines.CancellationException,
+        )
+        assertEquals("等待者必须同步移除，否则 inFlight 永真、连接无法被空闲回收", 0, transport.test_pendingCount(echoServer.id))
+        assertTrue("取消不代表通道损坏，连接必须保留", transport.test_connectionKeys().contains(echoServer.id))
+    }
+
+    /** writeLine 永久挂起的通道：验证写路径上的取消传播与等待者清理。 */
+    private class BlockingWriteMcpChannel : McpStdioChannel {
+        override val incoming: Channel<String> = Channel(Channel.UNLIMITED)
+        @Volatile private var alive = true
+        override val isAlive: Boolean get() = alive
+        private val writeGate = CompletableDeferred<Unit>()
+
+        override suspend fun writeLine(line: String) {
+            writeGate.await()
+        }
+
+        override suspend fun close() {
+            alive = false
+            incoming.close()
+        }
+    }
+
     private class FakeMcpChannel(
         private val aliveAfterOpen: Boolean,
         // Tests preload more than MAX_IGNORED_FRAMES before discover() starts consuming.
@@ -383,6 +427,16 @@ internal fun McpStdioTransport.test_markConnectionInFlight(serverId: String, inF
     @Suppress("UNCHECKED_CAST")
     val pending = field.get(connection) as java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<JsonRpcResponse>>
     if (inFlight) pending.putIfAbsent("test-in-flight", kotlinx.coroutines.CompletableDeferred()) else pending.clear()
+}
+
+@Suppress("FunctionName")
+internal fun McpStdioTransport.test_pendingCount(serverId: String): Int {
+    val connections = reflectedConnections()
+    val connection = connections[serverId] ?: return 0
+    val field = connection.javaClass.getDeclaredField("pending").apply { isAccessible = true }
+    @Suppress("UNCHECKED_CAST")
+    val pending = field.get(connection) as java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<JsonRpcResponse>>
+    return pending.size
 }
 
 private fun McpStdioTransport.reflectedConnections(): java.util.concurrent.ConcurrentHashMap<String, Any> {
