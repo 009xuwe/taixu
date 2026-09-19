@@ -162,4 +162,66 @@ class RewindControllerTest {
         assertTrue(result.conflicts.contains("b.txt"))
         assertFalse(root.resolve("b.txt").exists())
     }
+
+    @Test
+    fun `undo restores the pre-rewind disk state`() = runBlocking {
+        val root = temporaryFolder.newFolder("workspace")
+        val store = CheckpointStore()
+        val rc = RewindController(store, WorkspaceFileAccess(root))
+
+        // turn0：agent 把 a.txt 写到 "v2"（凭据齐全）
+        rc.beginTurn("s", "p0")
+        store.capture("s", "a.txt", "v1")
+        write(root, "a.txt", "v1")
+        store.captureAfterImage("s", "a.txt", "v2")
+        write(root, "a.txt", "v2")
+
+        // rewind 到 turn0：a.txt 回到 "v1"
+        rc.commit(rc.prepare("s", 0, RewindScope.CODE))
+        assertEquals("v1", textOf(root, "a.txt"))
+
+        // undo：a.txt 回到 rewind 前的 "v2"
+        val undoResult = rc.undoLastRewind("s")!!
+        assertEquals(1, undoResult.filesRestored)
+        assertFalse(undoResult.partial)
+        assertEquals("v2", textOf(root, "a.txt"))
+        // 单层级：记录已消费，再次 undo 返回 null
+        assertNull(rc.undoLastRewind("s"))
+    }
+
+    @Test
+    fun `undo record is invalidated by a new agent write`() = runBlocking {
+        val root = temporaryFolder.newFolder("workspace")
+        val store = CheckpointStore()
+        val rc = RewindController(store, WorkspaceFileAccess(root))
+
+        rc.beginTurn("s", "p0")
+        store.capture("s", "a.txt", "v1")
+        write(root, "a.txt", "v2")
+        rc.commit(rc.prepare("s", 0, RewindScope.CODE))
+
+        // rewind 之后智能体又写文件 → 撤销窗口关闭（undo 会覆盖新写入）
+        rc.beginTurn("s", "p1")
+        store.capture("s", "a.txt", "v1")
+        assertNull(rc.undoLastRewind("s"))
+    }
+
+    @Test
+    fun `undo skips path externally modified after the rewind`() = runBlocking {
+        val root = temporaryFolder.newFolder("workspace")
+        val store = CheckpointStore()
+        val rc = RewindController(store, WorkspaceFileAccess(root))
+
+        rc.beginTurn("s", "p0")
+        store.capture("s", "a.txt", "v1")
+        write(root, "a.txt", "v2")
+        rc.commit(rc.prepare("s", 0, RewindScope.CODE))
+        assertEquals("v1", textOf(root, "a.txt"))
+
+        // rewind 之后用户把文件改成 "external" → undo 跳过该路径
+        write(root, "a.txt", "external")
+        val undoResult = rc.undoLastRewind("s")!!
+        assertTrue(undoResult.conflicts.contains("a.txt"))
+        assertEquals("external", textOf(root, "a.txt"))
+    }
 }

@@ -974,14 +974,41 @@ class ChatViewModel @Inject constructor(
                 if (forkedSessionId != null) {
                     harnessLoop.loadSession(forkedSessionId)
                 }
-                _notice.value = buildString {
-                    append(context.getString(R.string.chat_rewind_done, result.filesRestored, result.filesDeleted))
-                    if (forkedSessionId != null) append(" · ").append(context.getString(R.string.chat_rewind_switched))
-                    result.note?.let { append("\n").append(it) }
-                }
+                // 成功的 rewind 走带「撤销回滚」动作的 Snackbar（Toast 无法承载动作）；
+                // 失败/无锚点仍走 _notice Toast。
+                _rewindCompletedEvents.tryEmit(
+                    buildString {
+                        append(context.getString(R.string.chat_rewind_done, result.filesRestored, result.filesDeleted))
+                        if (forkedSessionId != null) append(" · ").append(context.getString(R.string.chat_rewind_switched))
+                        result.note?.let { append("\n").append(it) }
+                    },
+                )
             }.onFailure { throwable ->
                 _notice.value = context.getString(R.string.chat_rewind_failed, throwable.message ?: "unknown")
             }
+        }
+    }
+
+    private val _rewindCompletedEvents = kotlinx.coroutines.flow.MutableSharedFlow<String>(
+        extraBufferCapacity = 4,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+
+    /** rewind 成功完成的事件（消息正文）；UI 以 Snackbar 呈现并附「撤销回滚」动作。 */
+    val rewindCompletedEvents: kotlinx.coroutines.flow.SharedFlow<String> = _rewindCompletedEvents
+
+    /** 撤销最近一次 rewind：文件还原到 rewind 前状态（对话侧切回原会话即可）。 */
+    fun undoLastRewind() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sessionId = harnessLoop.currentSessionId.value
+            runCatching { harnessLoop.undoRewind(sessionId, workspace.value) }.getOrNull()
+                ?.let { result ->
+                    _notice.value = buildString {
+                        append(context.getString(R.string.chat_rewind_undone, result.filesRestored, result.filesDeleted))
+                        result.note?.let { append("\n").append(it) }
+                    }
+                }
+                ?: run { _notice.value = context.getString(R.string.chat_rewind_no_undo) }
         }
     }
 

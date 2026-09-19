@@ -132,6 +132,12 @@ class HarnessLoop @Inject constructor(
         workspace: String = "",
     ): top.wkbin.taixu.harness.checkpoint.RewindResult = rewindController.commit(plan, workspace)
 
+    /** 撤销最近一次 rewind（单层级）；null = 当前没有可撤销的 rewind。 */
+    suspend fun undoRewind(
+        sessionId: String,
+        workspace: String = "",
+    ): top.wkbin.taixu.harness.checkpoint.RewindResult? = rewindController.undoLastRewind(sessionId, workspace)
+
     /** Loads persisted history without changing the Android UI's foreground session. */
     suspend fun prepareRemoteSession(sessionId: String): List<HarnessMessage> {
         val flow = messageProjector.preparedForLoad(sessionId)

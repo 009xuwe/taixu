@@ -352,6 +352,21 @@ fun ChatScreen(
         }
     }
 
+    // rewind 完成：Snackbar 附「撤销回滚」动作（Toast 无法承载动作）
+    val rewindUndoLabel = stringResource(R.string.chat_rewind_undo)
+    LaunchedEffect(Unit) {
+        viewModel.rewindCompletedEvents.collect { message ->
+            val result = snackbarHostState.showSnackbar(
+                message = message,
+                actionLabel = rewindUndoLabel,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.undoLastRewind()
+            }
+        }
+    }
+
     // 切换会话后自动关闭遗留的子智能体成果抽屉，避免跨会话展示旧 lane
     LaunchedEffect(currentSessionId) {
         val opened = subagentResult

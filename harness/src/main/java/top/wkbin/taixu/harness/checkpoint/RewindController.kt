@@ -42,6 +42,10 @@ class RewindController @Inject constructor(
         var deleted = 0
         val problems = mutableListOf<String>()
         val conflicts = mutableListOf<String>()
+        // 撤销快照：仅记录实际会被本方案改动的路径在**改动前**的磁盘状态；
+        // 超过快照上限的路径无法经 write 还原，不进撤销记录（该路径 rewind 后不可 undo）。
+        val appliedSnaps = mutableListOf<FileSnap>()
+        val undoSnaps = mutableListOf<FileSnap>()
         for (snap in plan.fileSnaps) {
             // 外部改动冲突检测：当前文件内容与本 store 记录的最后改动后凭据不一致，
             // 说明会话之外有人改过该文件——恢复会静默覆盖外部修改，保守跳过并报告。
@@ -50,6 +54,9 @@ class RewindController @Inject constructor(
                 conflicts += snap.path
                 continue
             }
+            val size = activeFileAccess.fileSizeOrNull(snap.path)
+            val undoable = size == null || size <= CheckpointStore.SNAPSHOT_MAX_BYTES
+            val currentContent = if (undoable) activeFileAccess.previewOrNull(snap.path) else null
             val ok = if (snap.content == null) {
                 activeFileAccess.delete(snap.path)
             } else {
@@ -57,9 +64,16 @@ class RewindController @Inject constructor(
             }
             if (ok) {
                 if (snap.content == null) deleted++ else restored++
+                if (undoable) {
+                    appliedSnaps += snap
+                    undoSnaps += FileSnap(snap.path, currentContent)
+                }
             } else {
                 problems += snap.path
             }
+        }
+        if (appliedSnaps.isNotEmpty()) {
+            store.recordRewindUndo(plan.sessionId, RewindUndoRecord(applied = appliedSnaps, undoSnaps = undoSnaps))
         }
 
         var partial = problems.isNotEmpty() || conflicts.isNotEmpty()
@@ -85,6 +99,58 @@ class RewindController @Inject constructor(
             partial = partial,
             note = note,
             forkedSessionId = forkedSessionId,
+            conflicts = conflicts,
+        )
+    }
+
+    /**
+     * 撤销最近一次 rewind（单层级，对齐 Reasonix 的 UndoRewind）：把文件还原到
+     * rewind 前的磁盘状态。冲突基线是 rewind 实际写入的状态——rewind 之后智能体
+     * 又写过文件（capture 使记录失效）或用户再次外部改动，都会跳过对应路径。
+     * 对话侧不在 undo 范围：fork 不改动原会话，切回原会话即可。
+     *
+     * @return null = 当前没有可撤销的 rewind。
+     */
+    suspend fun undoLastRewind(sessionId: String, workspace: String = ""): RewindResult? {
+        val record = store.takeRewindUndo(sessionId) ?: return null
+        val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
+        var restored = 0
+        var deleted = 0
+        val conflicts = mutableListOf<String>()
+        record.undoSnaps.forEachIndexed { index, undoSnap ->
+            val applied = record.applied.getOrNull(index) ?: return@forEachIndexed
+            // 冲突基线 = rewind 实际写入的状态；不一致说明 rewind 之后又被改过
+            val expected = applied.content
+            val currentSize = activeFileAccess.fileSizeOrNull(undoSnap.path)
+            val externallyModified = when {
+                expected == null -> currentSize != null // rewind 时删除，如今又存在 → 外部重建
+                currentSize == null -> true             // rewind 时写入，如今消失 → 外部删除
+                currentSize > CheckpointStore.SNAPSHOT_MAX_BYTES -> true
+                else -> activeFileAccess.previewOrNull(undoSnap.path) != expected
+            }
+            if (externallyModified) {
+                conflicts += undoSnap.path
+                return@forEachIndexed
+            }
+            val ok = if (undoSnap.content == null) {
+                activeFileAccess.delete(undoSnap.path)
+            } else {
+                activeFileAccess.write(undoSnap.path, undoSnap.content).isSuccess
+            }
+            if (ok) {
+                if (undoSnap.content == null) deleted++ else restored++
+            }
+        }
+        val note = if (conflicts.isNotEmpty()) {
+            "以下文件在 rewind 后又被改动，已跳过撤销：${conflicts.joinToString("；")}"
+        } else {
+            null
+        }
+        return RewindResult(
+            filesRestored = restored,
+            filesDeleted = deleted,
+            partial = conflicts.isNotEmpty(),
+            note = note,
             conflicts = conflicts,
         )
     }

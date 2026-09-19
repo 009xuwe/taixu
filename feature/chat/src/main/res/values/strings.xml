@@ -331,6 +331,9 @@
     <string name="chat_rewind_both_desc">恢复文件改动并派生对话回退分支</string>
     <string name="chat_rewind_done">已恢复 %1$d 个文件、删除 %2$d 个文件</string>
     <string name="chat_rewind_switched">已切换到回退分支</string>
+    <string name="chat_rewind_undo">撤销回滚</string>
+    <string name="chat_rewind_undone">已撤销回滚：恢复 %1$d 个文件、删除 %2$d 个文件</string>
+    <string name="chat_rewind_no_undo">当前没有可撤销的回滚</string>
     <string name="chat_rewind_no_checkpoint">该轮没有可撤销的改动记录（仅记录有文件写入的轮次）</string>
     <string name="chat_rewind_failed">撤回失败：%1$s</string>
     <!-- 会话级结构化任务规划看板（plan 工具数据源） -->

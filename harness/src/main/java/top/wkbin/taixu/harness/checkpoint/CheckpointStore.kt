@@ -44,6 +44,9 @@ class CheckpointStore @Inject constructor() {
 
     private val sessions = ConcurrentHashMap<String, SessionState>()
 
+    /** 每次 rewind 的撤销记录（单层级）；新写入/新 rewind/会话删除时失效。 */
+    private val rewindUndoRecords = ConcurrentHashMap<String, RewindUndoRecord>()
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /** 磁盘持久化接缝：把轮 checkpoint 以索引 + 内容文件形式落盘/读回。 */
@@ -88,8 +91,20 @@ class CheckpointStore @Inject constructor() {
         val active = state.active ?: return false
         if (path in active) return false
         active[path] = FileSnap(path, before)
+        // rewind 之后智能体又开始写文件：撤销窗口关闭（再 undo 会覆盖新写入）
+        rewindUndoRecords.remove(sessionId)
         return true
     }
+
+    /** 覆盖式记录某次 rewind 的撤销快照（同会话重复 rewind 以最后一次为准）。 */
+    @Synchronized
+    fun recordRewindUndo(sessionId: String, record: RewindUndoRecord) {
+        rewindUndoRecords[sessionId] = record
+    }
+
+    /** 取出（消费）撤销记录；null = 当前没有可撤销的 rewind。 */
+    @Synchronized
+    fun takeRewindUndo(sessionId: String): RewindUndoRecord? = rewindUndoRecords.remove(sessionId)
 
     /**
      * 记录某路径**成功写入后**的内容（改动后凭据）。同轮同路径多次写入时后者覆盖前者，
@@ -130,6 +145,7 @@ class CheckpointStore @Inject constructor() {
     fun dropSession(sessionId: String) {
         sessions.remove(sessionId)
         restoredSessions.remove(sessionId)
+        rewindUndoRecords.remove(sessionId)
         // 删除走同一单线程执行器排队：先于它的待写任务先落盘、随后被整体删除——
         // 消除"异步写在 dropSession 之后执行、write() 的 mkdirs 复活已删目录"的竞态
         persistence?.let { disk -> diskWriteExecutor.execute { runCatching { disk.delete(sessionId) } } }
