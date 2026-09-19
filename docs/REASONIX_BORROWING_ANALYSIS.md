@@ -11,7 +11,7 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 | :--- | :--- | :--- | :--- | :--- |
 | P0 | 摘要请求复用原 system + tool schemas | 小（改 CompactionSummarizer 请求形状） | 长会话压缩成本降约一个量级 | ✅ 已落地（2026-09-19） |
 | P0 | 每轮 recall / routedBlocks 移出 system prompt | 小（移注入位置） | 消除逐轮前缀缓存击穿 | ✅ 已落地（2026-09-19） |
-| P1 | MCP 稳定代理 `use_capability` | 大（动 provider 可见面） | 缓存稳定 + 延迟连接缓解启动慢 | 部分：@ 裁剪已移出 system prompt（章节改用全量清单） |
+| P1 | MCP 稳定代理 `use_capability` | 大（动 provider 可见面） | 缓存稳定 + 延迟连接缓解启动慢 | ✅ 第一步已落地：@ 裁剪移出 tools 数组；余：延迟连接、完整代理 |
 | P1 | 子代理完成 claim 的 host 裁定 | 中 | 防止子代理虚报完成 | ✅ 已落地（2026-09-19） |
 | P2 | 写租约收缩/扩张语义 | 中 | 补上 shell 写边界 | 待做（移动端语义取舍待定） |
 | P2 | 审批"本会话内记住"粒度 | 中 | 减少 REQUEST 模式重复打扰 | ✅ 已落地（2026-09-19） |
@@ -80,6 +80,14 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 - agent 自己的写入与凭据天然一致，正常 rewind 不受影响；冲突只在真正的会话外改动时出现。
 
 验证（⑧）：`:harness:testDebugUnitTest` 全绿（`RewindControllerTest` +3 项、`CheckpointPersistenceTest` +1 项）；`:app:compileDebugKotlin` 通过。
+
+**⑨ use_capability 第一步：@ 裁剪移出 tools 数组（P1，2026-09-19）**
+
+- `HarnessProviderRunner.resolveEffectiveModel` 不再按 @提及裁剪 `model.dynamicMcpTools`：原实现把 provider 可见 tools 数组在有提及的轮次裁到被提及的 server、下一轮恢复全集——两次字节漂移各击穿一次整个前缀缓存，被击穿重计费的代价（全前缀 × 全价）远大于保留全集 schema 的增量 token。
+- @提及仍写入能力挂载事件（UI 展示）；工具可用性只由 MCP server 的启用/连接状态决定。系统提示词同步改为"@ 提及只产生能力挂载记录，不影响工具可用性"。
+- provider 可见 tools 数组的剩余变化源只剩 MCP server 启停（既定缓存重置事件）；完整 use_capability 代理（list/inspect/call/decline + 延迟连接）仍需单独规划一轮。
+
+验证（⑨）：`:harness:testDebugUnitTest` 全绿；`:app:compileDebugKotlin` 通过。
 
 ## 一、太墟已对齐的能力（不要重复建设）
 

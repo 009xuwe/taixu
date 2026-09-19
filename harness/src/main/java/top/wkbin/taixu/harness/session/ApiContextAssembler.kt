@@ -91,8 +91,8 @@ class ApiContextAssembler @Inject constructor(
         }
 
         // 技能 @提及按全会话累计（一旦提及，规则常驻本会话）：避免「下一轮未提及→章节
-        // 撤出」造成的 system prompt 漂移。MCP @ 裁剪（工具面）仍按当轮最新消息，见
-        // HarnessProviderRunner.resolveEffectiveModel——那条路影响的是 tools 数组而非提示词。
+        // 撤出」造成的 system prompt 漂移。MCP @ 提及已不裁剪 tools 数组也不动提示词
+        // （只写能力事件，见 HarnessProviderRunner.resolveEffectiveModel）。
         val mentionedNames = msgs.filterIsInstance<UserMessage>()
             .flatMapTo(mutableSetOf()) { MentionExtractor.parse(it.text) }
         val userMessageTexts = msgs.filterIsInstance<UserMessage>().map { it.text }

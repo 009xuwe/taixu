@@ -29,25 +29,21 @@ class HarnessProviderRunner @Inject constructor(
     private val agentEventLogger: AgentEventLogger,
     private val contextAssembler: ApiContextAssembler,
 ) {
-    /** 按最新用户消息中的 @提及 过滤动态 MCP 工具，并写入能力挂载记录 */
+    /**
+     * 记录本轮 @提及 的能力挂载事件（UI 展示用）。
+     *
+     * prefix-cache 稳定性（use_capability 第一步，对齐 Reasonix 的稳定 provider 面）：
+     * @提及 **不再裁剪** provider 可见的 tools 数组——原实现在有提及的轮次把数组裁到
+     * 被提及的 server、下一轮恢复全集，两次字节漂移都会击穿整个前缀缓存；而被击穿
+     * 重新计费的代价（全前缀 × 全价）远大于保留全集 schema 的增量 token。提及只产生
+     * 能力事件记录，工具可用性由 MCP server 的启用/连接状态决定。
+     */
     suspend fun resolveEffectiveModel(sessId: String, model: ModelConfig): ModelConfig {
         val msgs = messageProjector.messagesFlow(sessId).value
         val latestUserMessage = msgs.filterIsInstance<UserMessage>().lastOrNull()
-        val latestUserText = latestUserMessage?.text.orEmpty()
-        val mentionedNames = MentionExtractor.parse(latestUserText)
-        val effectiveModel = if (mentionedNames.isNotEmpty()) {
-            val matchedTools = model.dynamicMcpTools.filter { tool ->
-                val sName = tool.serverName.lowercase()
-                val sId = tool.serverId.lowercase()
-                val tName = tool.name.lowercase()
-                sName in mentionedNames || sId in mentionedNames || tName in mentionedNames
-            }
-            if (matchedTools.isNotEmpty()) model.copy(dynamicMcpTools = matchedTools) else model
-        } else {
-            model
-        }
-        capabilityWriter.writeIfMentioned(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, effectiveModel)
-        return effectiveModel
+        val mentionedNames = MentionExtractor.parse(latestUserMessage?.text.orEmpty())
+        capabilityWriter.writeIfMentioned(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, model)
+        return model
     }
 
     /** 流式调用 + 限流/网络退避重试。恢复不了的失败以 Failed 终态返回；取消与超过重试上限的原样抛出 */
