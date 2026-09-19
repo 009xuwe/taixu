@@ -702,7 +702,8 @@ class ToolExecutor @Inject constructor(
     /**
      * use_capability 统一代理的分发（对齐 Reasonix）：
      * - list：列出已启用的服务与缓存工具数，**不启动任何服务器进程**；
-     * - inspect：查看某服务的工具清单与参数（只读缓存，未连接则提示直接 call）；
+     * - inspect：查看某服务的工具清单与参数（缓存为空时按需发现一次——模型必须拿到
+     *   完整清单才能构造 call；失败时回 getLastError 给出可读原因）；
      * - call：按 (server, tool) 执行——未连接的服务在此按需启动并发现；
      * - decline：模型显式放弃某能力，确认即回。
      */
@@ -730,10 +731,16 @@ class ToolExecutor @Inject constructor(
             "inspect" -> {
                 val serverId = args.stringArg("server")?.trim().orEmpty()
                 if (serverId.isBlank()) return false to "inspect 需要 server 参数（先用 list 查看可用的服务 id）"
-                val tools = manager.cachedToolsOf(serverId)
+                // 缓存为空 = 服务尚未连接过：按需发现一次（唯一会拉起进程的 inspect 场景——
+                // 模型无从得知未连接服务的工具名，必须给它完整清单才能构造 call）
+                var tools = manager.cachedToolsOf(serverId)
                 if (tools.isEmpty()) {
-                    return false to "MCP[$serverId] 暂无缓存的工具清单（该服务尚未连接过）。" +
-                        "直接 use_capability(action=\"call\", server=\"$serverId\", tool=…) 调用其任一工具即可自动启动并发现。"
+                    tools = manager.discoverServerTools(serverId)
+                }
+                if (tools.isEmpty()) {
+                    val lastError = manager.getLastError(serverId)
+                    return false to "MCP[$serverId] 工具发现失败或服务不可用${lastError?.let { "：$it" } ?: "（未启用或不存在）"}。" +
+                        "可稍后重试 inspect，或检查该服务的设置与沙箱环境。"
                 }
                 val rendered = tools.joinToString("\n\n") { tool ->
                     buildString {

@@ -105,6 +105,18 @@ class McpManager @Inject constructor(
         }
     }
 
+    /**
+     * 按需发现单个启用服务的工具清单（use_capability inspect 的兜底路径）：
+     * 缓存为空时才真正连接并发现——这是 inspect 唯一会拉起进程的场景
+     * （模型无从得知未连接服务的工具名，必须给它完整清单）。失败（冷却/超时）
+     * 返回空列表，调用方用 getLastError 给出可读原因。
+     */
+    suspend fun discoverServerTools(serverId: String): List<McpToolInfo> = withContext(Dispatchers.IO) {
+        val server = repository.servers.first().firstOrNull { it.id == serverId && it.isEnabled }
+            ?: return@withContext emptyList()
+        discoverServerIfNeeded(server)
+    }
+
     suspend fun getActiveMcpTools(): List<McpToolInfo> = withContext(Dispatchers.IO) {
         sweepDisabledServers()
         val enabledServers = repository.servers.first().filter { it.isEnabled }
