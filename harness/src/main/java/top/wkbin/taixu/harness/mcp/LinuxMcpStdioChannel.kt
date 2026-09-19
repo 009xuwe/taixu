@@ -5,6 +5,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.launch
@@ -84,5 +85,9 @@ class LinuxMcpStdioChannel(
 
     override suspend fun close() {
         runCatching { session.close() }
+        // 只关 session 不够：泵协程可能正挂起在 lines.send 上（消费方超时离场、缓冲已满），
+        // 此时 output flow 的完成永远观察不到，协程与 Channel 永久泄漏。取消 scope 让泵
+        // 走 catch 分支收尾（lines.close(cause)）。
+        scope.cancel()
     }
 }

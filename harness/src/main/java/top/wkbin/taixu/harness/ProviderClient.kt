@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -748,7 +749,7 @@ class ProviderClient @Inject constructor(
                 apiKey = providerRepository.readApiKey(),
             )
         }
-        val dynamicMcp = runCatching { mcpManager.getActiveMcpTools() }.getOrDefault(emptyList())
+        val dynamicMcp = activeMcpToolsOrEmpty()
         baseConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
     }
 
@@ -783,8 +784,20 @@ class ProviderClient @Inject constructor(
         } else {
             baseConfig
         }
-        val dynamicMcp = runCatching { mcpManager.getActiveMcpTools() }.getOrDefault(emptyList())
+        val dynamicMcp = activeMcpToolsOrEmpty()
         sessionConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
+    }
+
+    /**
+     * MCP 工具清单的取消安全兜底。这里不能用 runCatching：它会吞掉 CancellationException，
+     * 击穿外层的超时与取消语义（"卡思考中"一族 bug 的标准成因）；取消必须原样重抛。
+     */
+    private suspend fun activeMcpToolsOrEmpty(): List<top.wkbin.taixu.core.model.McpToolInfo> = try {
+        mcpManager.getActiveMcpTools()
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (throwable: Throwable) {
+        emptyList()
     }
 
     /**
@@ -928,14 +941,14 @@ class ProviderClient @Inject constructor(
             messages.sumOf { message ->
                 ContextWindowPolicy.estimateTokens(message.content.orEmpty()) +
                     ContextWindowPolicy.estimateTokens(message.reasoning_content.orEmpty()) +
-                    // 图片按 base64 体积计（与 ContextWindowPolicy.tokensOf 的 1000 token/图
+                    // 图片按 base64 体积计（与 ContextWindowPolicy.ESTIMATED_IMAGE_TOKENS
                     // 同量级）：多图请求的上传 + prefill 在慢速移动网络下可能远超 90s，
                     // 不计入会让首字看门狗误杀超时，且大请求网络重试上限仅 1 次。
                     message.imageUrls.sumOf { url ->
                         if (url.startsWith("data:image/", ignoreCase = true)) {
-                            (url.length / 3).coerceAtLeast(1_000)
+                            (url.length / 3).coerceAtLeast(ContextWindowPolicy.ESTIMATED_IMAGE_TOKENS)
                         } else {
-                            1_000
+                            ContextWindowPolicy.ESTIMATED_IMAGE_TOKENS
                         }
                     } +
                     (message.tool_calls?.sumOf { call ->

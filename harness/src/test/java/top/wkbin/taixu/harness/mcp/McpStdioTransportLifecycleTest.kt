@@ -1,9 +1,17 @@
 package top.wkbin.taixu.harness.mcp
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -104,6 +112,53 @@ class McpStdioTransportLifecycleTest {
     }
 
     @Test
+    fun `request timeout surfaces as a plain failure instead of pseudo cancellation`() = runBlocking {
+        val channel = FakeMcpChannel(aliveAfterOpen = true)
+        val transport = newTransport(FakeChannelFactory(channel))
+        transport.injectConnection(echoServer, channel)
+        transport.requestTimeoutOverrideMs = 150L
+        val failure = withTimeoutOrNull<Throwable?>(5_000L) {
+            runCatching { transport.discover(echoServer) }.exceptionOrNull()
+        }
+        assertNotNull("request must fail instead of hanging", failure)
+        // 超时绝不能以 TimeoutCancellationException（CancellationException 的子类）暴露：
+        // 否则沿 McpManager/ToolExecutor 的取消透传链会被当成"用户取消"，整个回合静默中止
+        assertFalse(
+            "timeout must not look like cancellation, got: " + failure!!::class.simpleName,
+            failure is kotlinx.coroutines.CancellationException,
+        )
+        assertTrue(
+            "timeout message must name the request, got: " + failure.message,
+            failure.message.orEmpty().contains("超时"),
+        )
+        assertEquals(
+            "timed-out connection must be kept (late response is dropped by id, like the HTTP path)",
+            setOf(echoServer.id),
+            transport.test_connectionKeys(),
+        )
+    }
+
+    @Test
+    fun `outer caller cancellation still propagates while waiting for a response`() = runBlocking {
+        val channel = FakeMcpChannel(aliveAfterOpen = true)
+        val transport = newTransport(FakeChannelFactory(channel))
+        transport.injectConnection(echoServer, channel)
+        var caught: Throwable? = null
+        try {
+            kotlinx.coroutines.withTimeout(McpStdioTransport.STARTUP_TIMEOUT_MS * 2) {
+                transport.discover(echoServer)
+            }
+        } catch (t: Throwable) {
+            caught = t
+        }
+        // 真实的外层取消（如 McpManager 发现 8s 总超时）必须原样透传，不得被转换成普通异常
+        assertTrue(
+            "caller cancellation must propagate as cancellation, got: " + caught?.let { it::class.simpleName },
+            caught is kotlinx.coroutines.CancellationException,
+        )
+    }
+
+    @Test
     fun `cooldown is cleared when a subsequent startup succeeds`() = runBlocking {
         val factory = ConditionalFactory(
             first = HangingFactory(),
@@ -118,6 +173,108 @@ class McpStdioTransportLifecycleTest {
         }
         val third = runCatching { transport.discover(echoServer) }
         assertTrue("discover should reuse the successful connection, got: " + third.exceptionOrNull()?.message, third.isSuccess)
+    }
+
+    @Test
+    fun `discovery is not blocked by an in-flight tools call on the same connection`() = runBlocking {
+        val channel = GatedMcpChannel()
+        val transport = newTransport(FakeChannelFactory(channel))
+        transport.injectConnection(echoServer, channel)
+        transport.requestTimeoutOverrideMs = 30_000L
+
+        val call = async(Dispatchers.IO) { transport.execute(echoServer, "slow_tool", JsonObject(emptyMap())) }
+        channel.callRequested.await() // 在途调用已注册等待者并写出请求
+        val discovered = withTimeoutOrNull(5_000L) { transport.discover(echoServer) }
+        assertNotNull("发现必须在在途 tools/call 期间完成（多路复用；旧实现在此阻塞）", discovered)
+        assertTrue(discovered!!.isEmpty())
+
+        channel.callGate.complete(Unit)
+        val callResult = withTimeoutOrNull(10_000L) { call.await() }
+        assertNotNull("放行后在途调用应正常完成", callResult)
+        assertTrue(callResult!!.first)
+    }
+
+    @Test
+    fun `late response after a timeout does not poison the connection`() = runBlocking {
+        val channel = DelayedRespondingMcpChannel()
+        val transport = newTransport(FakeChannelFactory(channel))
+        transport.injectConnection(echoServer, channel)
+        transport.requestTimeoutOverrideMs = 150L
+
+        val first = runCatching { transport.discover(echoServer) }
+        assertTrue("首次发现应因超时失败", first.isFailure)
+
+        transport.requestTimeoutOverrideMs = null
+        val second = withTimeoutOrNull(5_000L) { runCatching { transport.discover(echoServer) } }
+        assertTrue("迟到响应须被按 id 丢弃而非毒化连接，下一次发现应成功", second?.isSuccess == true)
+    }
+
+    /** tools/call 响应被门禁扣住的多路复用测试通道：其余请求即时回应。 */
+    private class GatedMcpChannel : McpStdioChannel {
+        override val incoming: Channel<String> = Channel(Channel.UNLIMITED)
+        @Volatile private var alive = true
+        override val isAlive: Boolean get() = alive
+        private val fakeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        /** tools/call 请求已写出（等待者已注册）。 */
+        val callRequested = CompletableDeferred<Unit>()
+        /** 放行 tools/call 的迟响应。 */
+        val callGate = CompletableDeferred<Unit>()
+
+        override suspend fun writeLine(line: String) {
+            val id = Regex("\\\"id\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").find(line)?.groupValues?.get(1) ?: return
+            val result = when {
+                "\"method\":\"initialize\"" in line -> "{\"protocolVersion\":\"$MCP_PROTOCOL_VERSION\"}"
+                "\"method\":\"tools/list\"" in line -> "{\"tools\":[]}"
+                "\"method\":\"tools/call\"" in line -> {
+                    callRequested.complete(Unit)
+                    fakeScope.launch {
+                        callGate.await()
+                        incoming.send("{\"jsonrpc\":\"2.0\",\"id\":\"$id\",\"result\":{\"isError\":false,\"content\":[]}}")
+                    }
+                    return
+                }
+                else -> return
+            }
+            incoming.send("{\"jsonrpc\":\"2.0\",\"id\":\"$id\",\"result\":$result}")
+        }
+
+        override suspend fun close() {
+            alive = false
+            incoming.close()
+        }
+    }
+
+    /** 首次 initialize 异步迟响应（请求方必先超时），之后所有请求即时回应。 */
+    private class DelayedRespondingMcpChannel : McpStdioChannel {
+        override val incoming: Channel<String> = Channel(Channel.UNLIMITED)
+        @Volatile private var alive = true
+        override val isAlive: Boolean get() = alive
+        private var initializeCount = 0
+        private val fakeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        override suspend fun writeLine(line: String) {
+            val id = Regex("\\\"id\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").find(line)?.groupValues?.get(1) ?: return
+            val isInitialize = "\"method\":\"initialize\"" in line
+            val result = when {
+                isInitialize -> "{\"protocolVersion\":\"$MCP_PROTOCOL_VERSION\"}"
+                "\"method\":\"tools/list\"" in line -> "{\"tools\":[]}"
+                else -> return
+            }
+            if (isInitialize && initializeCount++ == 0) {
+                fakeScope.launch {
+                    delay(400)
+                    incoming.send("{\"jsonrpc\":\"2.0\",\"id\":\"$id\",\"result\":$result}")
+                }
+            } else {
+                incoming.send("{\"jsonrpc\":\"2.0\",\"id\":\"$id\",\"result\":$result}")
+            }
+        }
+
+        override suspend fun close() {
+            alive = false
+            incoming.close()
+        }
     }
 
     private class FakeMcpChannel(
@@ -221,9 +378,11 @@ internal fun McpStdioTransport.test_markConnectionActive(serverId: String) {
 internal fun McpStdioTransport.test_markConnectionInFlight(serverId: String, inFlight: Boolean) {
     val connections = reflectedConnections()
     val connection = connections[serverId] ?: error("no connection for $serverId")
-    val field = connection.javaClass.getDeclaredField("mutex").apply { isAccessible = true }
-    val mutex = field.get(connection) as kotlinx.coroutines.sync.Mutex
-    if (inFlight) runBlocking { mutex.lock() } else mutex.unlock()
+    // 多路复用后 inFlight = 等待表非空（旧实现为 mutex.isLocked）
+    val field = connection.javaClass.getDeclaredField("pending").apply { isAccessible = true }
+    @Suppress("UNCHECKED_CAST")
+    val pending = field.get(connection) as java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<JsonRpcResponse>>
+    if (inFlight) pending.putIfAbsent("test-in-flight", kotlinx.coroutines.CompletableDeferred()) else pending.clear()
 }
 
 private fun McpStdioTransport.reflectedConnections(): java.util.concurrent.ConcurrentHashMap<String, Any> {
