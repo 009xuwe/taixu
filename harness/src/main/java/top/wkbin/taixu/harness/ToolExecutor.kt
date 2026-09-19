@@ -67,6 +67,7 @@ class ToolExecutor @Inject constructor(
     private val dualAgentCoordinator: top.wkbin.taixu.harness.dual.DualAgentCoordinator? = null,
     private val embeddedAdbManager: EmbeddedAdbManager? = null,
     private val workflowSignals: top.wkbin.taixu.harness.workflow.WorkflowSignalBus? = null,
+    private val sessionApprovalGrants: top.wkbin.taixu.harness.approval.SessionApprovalGrants? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -87,7 +88,17 @@ class ToolExecutor @Inject constructor(
                 val sessionMode = sessionDao?.findById(sessionId)?.approvalMode?.let(ApprovalMode::fromId)
                 val mode = sessionMode ?: repository?.currentMode() ?: ApprovalMode.FULL_ACCESS
                 val decision = approvalPolicyEngine.decide(mode, toolCall.tool, toolCall.args, workspace, toolCall.rawToolName)
-                if (decision.required) {
+                // 「本会话内记住」授权表豁免：用户此前对该操作类别批准过并勾选了记住，
+                // 同类后续操作免审批直接执行。表只存内存、随会话销毁，无永久授权；
+                // 只豁免本条 required 判定，策略引擎的其余约束不受影响。
+                val grantedBySession = decision.required &&
+                    sessionApprovalGrants != null &&
+                    sessionApprovalGrants.isGranted(
+                        sessionId = sessionId,
+                        toolName = toolCall.rawToolName ?: toolCall.tool.name.lowercase(),
+                        argumentsJson = toolCall.args.toString(),
+                    )
+                if (decision.required && !grantedBySession) {
                     if (!allowApprovalRequest) {
                         // 后台 Lane 没有可暂停的审批 UI，只能结构化交接：标记 approvalDeferred，
                         // 由 Lane 收集成待办上交父智能体。若只回一句失败文字，模型下一轮会输出

@@ -42,10 +42,13 @@ import top.wkbin.taixu.harness.WorkspaceFileAccess
 import top.wkbin.taixu.core.tools.ToolRegistry
 import top.wkbin.taixu.core.tools.ToolRepository
 import top.wkbin.taixu.harness.compaction.CompactionManager
+import top.wkbin.taixu.harness.mcp.ActiveMcpToolCatalog
+import top.wkbin.taixu.harness.prompt.MemoryRecallSelector
 import top.wkbin.taixu.harness.prompt.PrivilegeSectionRenderer
 import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 import top.wkbin.taixu.harness.prompt.PromptRouter
 import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
+import top.wkbin.taixu.core.model.McpToolInfo
 
 /**
  * API 上下文组装器全栈集成测试：真实 Room（会话树 + 压缩树）+ 真实 DataStore 偏好 +
@@ -60,6 +63,7 @@ class ApiContextAssemblerTest {
     private lateinit var store: top.wkbin.taixu.harness.session.SessionTreeStore
     private lateinit var assembler: ApiContextAssembler
     private lateinit var compactionManager: CompactionManager
+    private lateinit var agentContextRepository: RoomAgentContextRepository
     private val tempDir = File(System.getProperty("java.io.tmpdir"), "taixu-assembler-${System.nanoTime()}")
 
     @Before
@@ -75,6 +79,7 @@ class ApiContextAssemblerTest {
 
         store = top.wkbin.taixu.harness.session.SessionTreeStore(runtimeRepo, json, logger)
         compactionManager = CompactionManager(runtimeRepo, json, store)
+        agentContextRepository = RoomAgentContextRepository(database.agentContextDao())
 
         val promptAssets = PromptAssetLoader(context)
         val builder = SystemPromptBuilder(
@@ -82,7 +87,7 @@ class ApiContextAssemblerTest {
             settingsDataStore = agentPrefs,
             skillRepository = AgentSkillRepository(database.agentSkillDao()),
             toolRepository = ToolRepository(database.toolDao(), ToolRegistry(context, OkHttpClient(), logger)),
-            agentContextDao = RoomAgentContextRepository(database.agentContextDao()),
+            agentContextDao = agentContextRepository,
             subagentRepository = AgentSubagentRepository(
                 database.agentSubagentDao(),
                 AgencyAgentCatalogLoader(context, json),
@@ -93,7 +98,16 @@ class ApiContextAssemblerTest {
             privilegeRenderer = PrivilegeSectionRenderer { "" },
             promptRouter = PromptRouter(promptAssets),
         )
-        assembler = ApiContextAssembler(compactionManager, agentPrefs, builder)
+        assembler = ApiContextAssembler(
+            compactionManager = compactionManager,
+            settingsDataStore = agentPrefs,
+            systemPromptBuilder = builder,
+            sessionStore = store,
+            memoryRecallSelector = MemoryRecallSelector(agentContextRepository),
+            mcpCatalog = object : ActiveMcpToolCatalog {
+                override suspend fun getActiveMcpTools(): List<McpToolInfo> = emptyList()
+            },
+        )
     }
 
     @After
@@ -316,5 +330,98 @@ class ApiContextAssemblerTest {
         val apiCall = assistantMsg.tool_calls?.single()
         assertEquals("call-mcp", apiCall?.id)
         assertEquals("mcp__mcp_websearch__search", apiCall?.function?.name)
+    }
+
+    // ---------- 用户轮记忆召回后缀（prefix cache 稳定性） ----------
+
+    private suspend fun saveProjectMemory(sessionId: String, keyword: String) {
+        agentContextRepository.saveMemory(
+            top.wkbin.taixu.core.database.AgentMemoryEntity(
+                id = "mem-$sessionId-$keyword",
+                scope = "project",
+                ownerId = "/ws",
+                kind = "fact",
+                key = "topic.$keyword",
+                value = "关于 $keyword 的事实内容：使用 suspend 函数与 Flow 组合。",
+            ),
+        )
+    }
+
+    @Test
+    fun `recall suffix is persisted once and attached to user turn never system prompt`() = runBlocking {
+        saveProjectMemory("s-recall", "coroutines")
+        push("s-recall", UserMessage("u1", 1L, "讲讲 coroutines 的用法"), AssistantText("a1", 2L, "好的"))
+
+        val first = assembler.assemble("s-recall", nativeModel(), "/ws")
+        val systemPrompt = first.first { it.role == "system" }.content.orEmpty()
+        // 召回后缀随 user 轮注入，且不进入 system prompt
+        val userMsg = first.last { it.role == "user" }
+        assertTrue(userMsg.content!!.contains("<recalled_memory>"))
+        assertTrue(userMsg.content!!.contains("coroutines"))
+        assertFalse(systemPrompt.contains("<recalled_memory>"))
+        // 持久化：project() 能读出该轮的召回块
+        assertTrue(compactionManager.project("s-recall").recallBlocks.containsKey("u1"))
+
+        // 同一轮的第二次组装（多轮工具循环的重入）字节级一致——前缀缓存的前提
+        val second = assembler.assemble("s-recall", nativeModel(), "/ws")
+        assertEquals(first, second)
+    }
+
+    @Test
+    fun `historical recall suffix stays frozen when new memories arrive later`() = runBlocking {
+        saveProjectMemory("s-frozen", "coroutines")
+        push("s-frozen", UserMessage("u1", 1L, "讲讲 coroutines"), AssistantText("a1", 2L, "好的"))
+        val first = assembler.assemble("s-frozen", nativeModel(), "/ws")
+
+        // 之后新增另一条记忆，并推进到下一轮
+        saveProjectMemory("s-frozen", "room 迁移")
+        push("s-frozen", UserMessage("u2", 3L, "讲讲 room 迁移"), AssistantText("a2", 4L, "好的"))
+        val second = assembler.assemble("s-frozen", nativeModel(), "/ws")
+
+        val users = second.filter { it.role == "user" }
+        assertEquals(2, users.size)
+        // 历史轮的后缀与首次组装时完全一致（从会话树读取，不重算）
+        val firstUserOld = first.last { it.role == "user" }.content
+        assertEquals(firstUserOld, users[0].content)
+        // 新一轮命中新记忆
+        assertTrue(users[1].content!!.contains("room 迁移"))
+    }
+
+    @Test
+    fun `routed rule blocks accumulate across the session instead of following latest message`() = runBlocking {
+        val promptAssets = PromptAssetLoader(ApplicationProvider.getApplicationContext())
+        val workflowBlock = promptAssets.read("prompts/system/workflow.md")
+        push(
+            "s-routed",
+            UserMessage("u1", 1L, "请帮我实现一个功能"),
+            AssistantText("a1", 2L, "好的"),
+            UserMessage("u2", 3L, "继续"),
+        )
+        val out = assembler.assemble("s-routed", nativeModel(), "")
+        val systemPrompt = out.first { it.role == "system" }.content.orEmpty()
+        // 信号出现在历史轮（u1），最新轮（u2）无信号——规则块仍应常驻（累计语义）
+        assertTrue(systemPrompt.contains(workflowBlock.trim().take(40)))
+    }
+
+    @Test
+    fun `skill mentioned once stays injected for the session`() = runBlocking {
+        // 累计提及语义：u1 提及技能，u2 未提及——技能章节仍应常驻本会话 system prompt
+        database.agentSkillDao().upsert(
+            top.wkbin.taixu.core.database.AgentSkillEntity(
+                id = "skill-reviewer", name = "reviewer", description = "审查",
+                systemPrompt = "REVIEWER_MARKER_PROMPT 专项审查规则", triggerCommand = "/reviewer",
+                iconName = "", isEnabled = true, isBuiltin = false, isImmutable = false,
+                category = "review", resourcePath = null,
+            ),
+        )
+        push(
+            "s-skill",
+            UserMessage("u1", 1L, "@reviewer 帮我审一下"),
+            AssistantText("a1", 2L, "好的"),
+            UserMessage("u2", 3L, "继续"),
+        )
+        val out = assembler.assemble("s-skill", nativeModel(), "")
+        val systemPrompt = out.first { it.role == "system" }.content.orEmpty()
+        assertTrue(systemPrompt.contains("REVIEWER_MARKER_PROMPT"))
     }
 }

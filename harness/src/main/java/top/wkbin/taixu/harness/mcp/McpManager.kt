@@ -42,7 +42,7 @@ class McpManager @Inject constructor(
     private val linuxRuntime: LinuxRuntime,
     private val logger: AppLogger,
     private val agentEventLogger: AgentEventLogger,
-) {
+) : ActiveMcpToolCatalog {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private data class CachedTools(val fingerprint: String, val tools: List<McpToolInfo>)
     private val cache = ConcurrentHashMap<String, CachedTools>()
@@ -112,7 +112,7 @@ class McpManager @Inject constructor(
         }
     }
 
-    suspend fun getActiveMcpTools(): List<McpToolInfo> = withContext(Dispatchers.IO) {
+    override suspend fun getActiveMcpTools(): List<McpToolInfo> = withContext(Dispatchers.IO) {
         val servers = repository.servers.first()
         servers.filterNot { it.isEnabled }.forEach { server ->
             cache.remove(server.id)

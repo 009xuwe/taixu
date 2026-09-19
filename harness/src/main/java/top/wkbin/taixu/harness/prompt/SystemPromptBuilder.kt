@@ -7,7 +7,6 @@ import javax.inject.Singleton
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AgentContextRepository
-import top.wkbin.taixu.core.database.AgentMemoryEntity
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.AgentSubagentRepository
 import top.wkbin.taixu.core.database.McpServerRepository
@@ -51,14 +50,21 @@ class SystemPromptBuilder @Inject constructor(
     )
 
     private val workspacePartsCache = ConcurrentHashMap<String, WorkspacePromptParts>()
-    /** 组装完整系统提示词（分层结构）；各分节缺失时自然留空并由 joinToString 过滤。 */
+    /**
+     * 组装完整系统提示词（分层结构）；各分节缺失时自然留空并由 joinToString 过滤。
+     *
+     * Prefix cache 契约：本方法产出的 system prompt 不含逐轮变化的内容——
+     * 相关记忆召回已外移为用户轮后缀（[MemoryRecallSelector]，每轮持久化）；
+     * 技能（按全会话累计的 mentionedNames）与路由规则块（全会话累计命中）只增不减，
+     * 相邻两轮 system prompt 字节级一致，除非发生用户显式事件或压缩（既定的缓存重置点）。
+     */
     suspend fun build(
         workspacePath: String,
         toolCallMode: ToolCallMode = ToolCallMode.NATIVE,
         mentionedNames: Set<String> = emptySet(),
         sessionId: String = "",
         projectTypeOverride: String = "",
-        latestUserMessage: String = "",
+        userMessageTexts: List<String> = emptyList(),
         mcpTools: List<McpToolInfo> = emptyList(),
     ): String {
         val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
@@ -93,58 +99,18 @@ class SystemPromptBuilder @Inject constructor(
         // 未授权时引导 LLM 提示用户开启，授权开启后常驻本会话随时可调用。
         val mcpCapabilitySection = buildMcpCapabilitySection(mcpTools, toolCallMode)
 
-        val memories = runCatching {
-            agentContextDao.getMemoriesForContext(
-                projectOwnerId = workspacePath.trim().trimEnd('/'),
-                sessionId = sessionId,
-                limit = MAX_PROMPT_MEMORIES,
-            )
-        }
-            .getOrDefault(emptyList())
         // pinned 与 relevant 正交分层：
         // - pinned 常驻稳定前缀（最高权威，注入格式与官方长期指令记忆一致）
-        // - relevant recall 由当轮用户消息驱动检索、内容逐轮可变，注入在 system prompt 末尾
-        //   （低权威摘要，且排除 pinned 避免重复）。放在尾部是刻意的：provider 的 prefix cache
-        //   按前缀块匹配，可变分节越靠后，击穿的缓存块越少；系统提示超预算时 fitSystemPrompt
-        //   也优先丢弃尾部，与其低权威定位一致。
-        val now = System.currentTimeMillis()
+        // - relevant recall 已外移：由 MemoryRecallSelector 按用户轮计算并持久化为
+        //   轮后缀，不再进入 system prompt（逐轮变化会击穿其后全部对话的 prefix cache）。
         val projectOwner = workspacePath.trim().trimEnd('/')
         val pinnedMemories = runCatching { agentContextDao.getPinnedMemories(projectOwner, sessionId) }
             .getOrDefault(emptyList())
         val pinnedSection = if (pinnedMemories.isNotEmpty()) {
             "\n\n## 长期指令记忆（pinned，始终遵循）\n" +
                 pinnedMemories.joinToString("\n") {
-                    "- [${it.scope}/${it.kind}] ${it.key.take(MAX_PROMPT_MEMORY_KEY_CHARS)}: " +
-                        it.value.take(MAX_PROMPT_MEMORY_VALUE_CHARS)
-                }
-        } else ""
-
-        fun isFreshOrUndated(expiresAt: Long?, now: Long): Boolean {
-            val expires = expiresAt
-            return expires == null || expires > now
-        }
-
-        val pinnedIds = pinnedMemories.mapTo(mutableSetOf()) { it.id }
-        val recallMemories = runCatching {
-            fun fresh(x: AgentMemoryEntity) = x.id !in pinnedIds && isFreshOrUndated(x.expiresAt, now)
-            val freshCache = memories.filter(::fresh)
-            if (latestUserMessage.isNotBlank()) {
-                val hits = agentContextDao.searchMemories(
-                    query = latestUserMessage.take(MAX_PROMPT_RECALL_QUERY_CHARS),
-                    projectOwnerId = projectOwner,
-                    sessionId = sessionId,
-                    limit = MAX_PROMPT_MEMORIES,
-                ).filter(::fresh)
-                if (hits.isNotEmpty()) hits else freshCache.take(MAX_PROMPT_MEMORIES)
-            } else {
-                freshCache.take(MAX_PROMPT_MEMORIES)
-            }
-        }.getOrDefault(emptyList())
-        val recallSection = if (recallMemories.isNotEmpty()) {
-            "\n\n## 长期事实与偏好记忆（relevant recall，低权威：仅在与当前请求相关时参考，可被当前对话覆盖）\n" +
-                recallMemories.joinToString("\n") {
-                    "- [${it.scope}/${it.kind}] ${it.key.take(MAX_PROMPT_MEMORY_KEY_CHARS)}: " +
-                        it.value.take(MAX_PROMPT_MEMORY_VALUE_CHARS)
+                    "- [${it.scope}/${it.kind}] ${it.key.take(MemoryRecallSelector.MAX_PROMPT_MEMORY_KEY_CHARS)}: " +
+                        it.value.take(MemoryRecallSelector.MAX_PROMPT_MEMORY_VALUE_CHARS)
                 }
         } else ""
 
@@ -221,13 +187,14 @@ class SystemPromptBuilder @Inject constructor(
         } else ""
         val prootSection = promptAssets.read("prompts/system/environment-proot.md")
 
-        // L2 任务规则：由 PromptRouter 按当前任务上下文选择注入；未覆盖时模型可用 load_rule 自取。
-        val routedBlocks = promptRouter.route(
-            latestUserMessage = latestUserMessage,
-            projectType = projectType,
-            hasWorkspace = hasWorkspace,
-            activePlanExists = activePlanExists,
-        ).joinToString("\n\n") { block -> promptAssets.read(block.assetPath) }
+        // L2 任务规则：由 PromptRouter 按任务上下文选择注入；未覆盖时模型可用 load_rule 自取。
+        // 命中按全会话用户消息**累计**（一旦命中，规则常驻本会话）：逐轮按最新消息重算会让
+        // 规则块随措辞进出，击穿 system prompt 前缀缓存。规则块全集有限（枚举上限），
+        // 累计值有界。
+        val routedBlocks = userMessageTexts
+            .flatMap { text -> promptRouter.route(text, projectType, hasWorkspace, activePlanExists) }
+            .distinct()
+            .joinToString("\n\n") { block -> promptAssets.read(block.assetPath) }
 
         return listOf(
             basePrompt,
@@ -244,7 +211,6 @@ class SystemPromptBuilder @Inject constructor(
             workspaceGuidance,
             workspaceParts?.projectContext.orEmpty(),
             thinkingLanguageSection,
-            recallSection,
         ).filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
     }
 
@@ -458,10 +424,6 @@ class SystemPromptBuilder @Inject constructor(
 
     companion object {
         // Key/value memory is a compact RAG layer, not another copy of conversation history.
-        private const val MAX_PROMPT_MEMORIES = 32
-        private const val MAX_PROMPT_MEMORY_KEY_CHARS = 128
-        private const val MAX_PROMPT_MEMORY_VALUE_CHARS = 512
-        private const val MAX_PROMPT_RECALL_QUERY_CHARS = 256
         private const val MAX_WORKSPACE_CACHE_ENTRIES = 16
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
 

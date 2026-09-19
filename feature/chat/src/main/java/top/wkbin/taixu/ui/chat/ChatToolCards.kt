@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
+import top.wkbin.taixu.ui.components.RuntimeCheckbox as Checkbox
 import androidx.compose.material3.MaterialTheme
 import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.Surface
@@ -235,7 +236,7 @@ internal fun ToolCard(
 @Composable
 internal fun ApprovalRequestCard(
     request: top.wkbin.taixu.core.database.AgentApprovalRequestEntity,
-    onApprove: () -> Unit,
+    onApprove: (rememberForSession: Boolean) -> Unit,
     onReject: () -> Unit,
 ) {
     val riskColor = when (request.riskLevel) {
@@ -291,6 +292,27 @@ internal fun ApprovalRequestCard(
                 )
             }
 
+            // 「本会话内记住」：critical 风险不提供该选项（host 侧同样拒绝写入授权表）。
+            var rememberForSession by remember { mutableStateOf(false) }
+            if (!request.riskLevel.equals("critical", ignoreCase = true)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { rememberForSession = !rememberForSession },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = rememberForSession,
+                        onCheckedChange = { rememberForSession = it },
+                    )
+                    Text(
+                        stringResource(R.string.chat_approval_remember_session),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             // 审批处理期间禁用按钮，防止重复提交
             var resolving by remember { mutableStateOf(false) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -305,7 +327,7 @@ internal fun ApprovalRequestCard(
                 Button(
                     onClick = {
                         resolving = true
-                        onApprove()
+                        onApprove(rememberForSession)
                     },
                     enabled = !resolving,
                     modifier = Modifier.weight(1f),

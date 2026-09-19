@@ -937,7 +937,7 @@ private fun ChatPaneContent(
     workflowSuggestions: List<ProactiveWorkflowSuggestion> = emptyList(),
     onLaunchWorkflowSuggestion: (ProactiveWorkflowSuggestion) -> Unit = {},
     onDismissWorkflowSuggestion: (String) -> Unit = {},
-    onResolveApproval: (String, Boolean) -> Unit = { _, _ -> },
+    onResolveApproval: (String, Boolean, Boolean) -> Unit = { _, _, _ -> },
     contextUsage: ContextUsage = ContextUsage(),
     quickPhrases: List<QuickPhrase> = emptyList(),
     onSelectPhrase: (QuickPhrase) -> Unit = {},

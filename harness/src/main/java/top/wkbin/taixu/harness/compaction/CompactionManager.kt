@@ -32,27 +32,45 @@ class CompactionManager @Inject constructor(
         // The latest compaction is still fetched separately to recover its retained snapshot.
         val latestCompaction = repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
         val entries = repository.branch(sessionId, lane.leafId)
+        val recallBlocks = recallBlocksWithin(entries)
         if (latestCompaction == null) {
             return CompactedContext(
                 messages = entries.mapNotNull(::decodeMessage),
                 branchSummaries = branchSummariesWithin(entries, afterSequence = null),
+                recallBlocks = recallBlocks,
+                sourceMaxSequence = entries.maxOfOrNull { it.sequence } ?: 0L,
             )
         }
 
         val payload = json.decodeFromString(CompactionPayload.serializer(), latestCompaction.payloadJson)
         val retained = json.decodeFromString(ListSerializer(HarnessMessage.serializer()), payload.retainedMessagesJson)
-        // 自愈：重读快照之后、压缩 entry 落库之前被并发直写落库的消息（acceptRun 不经
-        // laneLock），不在 retainedMessagesJson 里、又因 sequence 更小被 afterMessages
-        // 过滤——按水位线补回，否则从 provider 投影中永久丢失。
-        val healed = payload.sourceWatermarkSequence
+        // 自愈：重读快照之后、压缩 entry 落库之前被并发直写落库的 entry（acceptRun 不经
+        // laneLock），不在 retainedMessagesJson 里、又因 sequence 更小被 afterMessages /
+        // afterSequence 过滤——按水位线补回，否则从 provider 投影中永久丢失。
+        // 水位线必须取自与快照同一次 branch() 读（sourceMaxSequence）：分开二次读会抬高
+        // 水位线，把两次读之间落库的消息排除出自愈区间。
+        val healedEntries = payload.sourceWatermarkSequence
             ?.takeIf { it < latestCompaction.sequence }
             ?.let { watermark ->
                 entries.asSequence()
-                    .filter { it.entryType == "message" && it.sequence > watermark && it.sequence < latestCompaction.sequence }
-                    .mapNotNull(::decodeMessage)
+                    .filter { it.sequence > watermark && it.sequence < latestCompaction.sequence }
                     .toList()
             }
             .orEmpty()
+        val healed = healedEntries.asSequence()
+            .filter { it.entryType == "message" }
+            .mapNotNull(::decodeMessage)
+            .toList()
+        // 分支摘要落在同一窗口同样被排除，一并补回注入
+        val healedBranchSummaries = healedEntries.asSequence()
+            .filter { it.entryType == BRANCH_SUMMARY_ENTRY_TYPE }
+            .mapNotNull { entry ->
+                runCatching {
+                    json.decodeFromString(BranchSummaryPayload.serializer(), entry.payloadJson).summary
+                }.getOrNull()
+            }
+            .filter { it.isNotBlank() }
+            .toList()
         val afterMessages = entries.asSequence()
             .filter { it.sequence > latestCompaction.sequence }
             .mapNotNull(::decodeMessage)
@@ -61,7 +79,9 @@ class CompactionManager @Inject constructor(
         return CompactedContext(
             summary = payload.summary,
             messages = retained + healed + afterMessages,
-            branchSummaries = branchSummariesWithin(entries, afterSequence = latestCompaction.sequence),
+            branchSummaries = healedBranchSummaries + branchSummariesWithin(entries, afterSequence = latestCompaction.sequence),
+            recallBlocks = recallBlocks,
+            sourceMaxSequence = entries.maxOfOrNull { it.sequence } ?: 0L,
         )
     }
 
@@ -91,6 +111,7 @@ class CompactionManager @Inject constructor(
         keepFromIndex: Int,
         laneName: String = SessionTreeStore.MAIN_LANE,
         model: ModelConfig? = null,
+        summaryContext: SummaryRequestContext? = null,
     ): CompactedContext {
         require(keepFromIndex in 1..context.messages.size) { "Compaction must remove at least one message" }
         // 摘要在锁外生成：前缀对账通过时锁内重读的折叠段与调用方快照完全一致，摘要输入不变；
@@ -104,7 +125,7 @@ class CompactionManager @Inject constructor(
         }
         val llmSummary = if (model != null && summarizer != null && collapsedForSummary.isNotEmpty()) {
             try {
-                summarizer.generateSummary(model, collapsedForSummary, previousSummaries)
+                summarizer.generateSummary(model, collapsedForSummary, previousSummaries, summaryContext)
             } catch (cancellation: kotlinx.coroutines.CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
@@ -130,7 +151,6 @@ class CompactionManager @Inject constructor(
         // 否则已压缩过的会话前缀对不上，增量压缩会被误判为分支漂移而跳过。
         return sessionStore.withLaneLock(sessionId, laneName) {
             val fresh = project(sessionId, laneName)
-            val rawEntries = repository.branch(sessionId, repository.ensureLane(sessionId, laneName).leafId)
             val prefixConsistent = fresh.messages.size >= context.messages.size &&
                 fresh.messages.subList(0, context.messages.size)
                     .zip(context.messages)
@@ -159,7 +179,7 @@ class CompactionManager @Inject constructor(
                 retainedMessageCount = retained.size,
                 estimatedTokensBefore = fresh.messages.sumOf(::messageTokens),
                 createdAt = now,
-                sourceWatermarkSequence = rawEntries.maxOfOrNull { it.sequence },
+                sourceWatermarkSequence = fresh.sourceMaxSequence,
             )
             val entry = HarnessEntryEntity(
                 id = UUID.randomUUID().toString(),
@@ -180,7 +200,8 @@ class CompactionManager @Inject constructor(
                     "折叠分支摘要 ${context.branchSummaries.size} 份，" +
                     "压缩前估算 ${payload.estimatedTokensBefore} tokens",
             )
-            CompactedContext(summary, retained)
+            // recallBlocks 从锁内重投影透传：保留窗口里的历史用户轮仍携带各自的召回后缀
+            CompactedContext(summary, retained, recallBlocks = fresh.recallBlocks)
         }
     }
 
@@ -188,6 +209,16 @@ class CompactionManager @Inject constructor(
         entry.takeIf { it.entryType == "message" }?.let {
             runCatching { json.decodeFromString(HarnessMessage.serializer(), it.payloadJson) }.getOrNull()
         }
+
+    /** 收集活跃分支上的召回后缀（userMessageId → 块文本）；entry 不在消息流内，仅此处读出。 */
+    private fun recallBlocksWithin(entries: List<HarnessEntryEntity>): Map<String, String> =
+        entries.asSequence()
+            .filter { it.entryType == SessionTreeStore.RECALL_ENTRY_TYPE }
+            .mapNotNull { entry ->
+                val userMessageId = entry.customType?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                userMessageId to entry.payloadJson
+            }
+            .toMap()
 
     /** 收集活跃分支上（指定 sequence 之后）的分支摘要文本，按树序排列。 */
     private fun branchSummariesWithin(

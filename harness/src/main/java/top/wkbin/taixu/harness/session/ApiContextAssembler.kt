@@ -1,40 +1,46 @@
 package top.wkbin.taixu.harness.session
 
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.datastore.AgentPreferences
-import top.wkbin.taixu.harness.AssistantText
-import top.wkbin.taixu.harness.CapabilityEvent
+import top.wkbin.taixu.core.model.McpToolInfo
+import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.HarnessApiMapper
+import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ModelConfig
-import top.wkbin.taixu.harness.ModelSwitchEvent
-import top.wkbin.taixu.harness.ProviderClient
+import top.wkbin.taixu.harness.MentionExtractor
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolCallMode
-import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
-import top.wkbin.taixu.harness.ApiFunctionCall
-import top.wkbin.taixu.harness.ApiMessage
-import top.wkbin.taixu.harness.ApiToolCall
-import top.wkbin.taixu.harness.MentionExtractor
-import top.wkbin.taixu.harness.TextToolCallCodec
 import top.wkbin.taixu.harness.compaction.CompactionManager
+import top.wkbin.taixu.harness.compaction.SummaryRequestContext
+import top.wkbin.taixu.harness.mcp.ActiveMcpToolCatalog
+import top.wkbin.taixu.harness.prompt.MemoryRecallSelector
 import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
 
 /**
  * API 请求上下文组装器：把会话实时消息投影成提供商协议消息列表。
  *
  * 从原 HarnessLoop.apiMessages 迁移而来，负责：
- * - 系统提示词注入（非纯净聊天模式）
+ * - 系统提示词注入（非纯净聊天模式；逐轮可变内容已全部外移，见下）
+ * - 用户轮记忆召回后缀的持久化（recall_context entry，每轮只算一次）
  * - 上下文压缩摘要的头部注入（预算驱动的滑动窗口折叠）
- * - NATIVE / JSON_TEXT 两种工具调用协议的消息形态转换
+ * - NATIVE / JSON_TEXT 两种工具调用协议的消息形态转换（经 [ApiMessageProjector]）
  * - 视觉能力关闭时剥离图片输入
+ *
+ * Prefix cache 稳定性契约：system prompt 内不再含逐轮变化的内容（recall 已移到
+ * user 轮后缀、路由规则块与技能按全会话累计），相邻两轮请求的 system 消息字节级一致；
+ * 变化只出现在本轮新增的消息上（本就未进入缓存）。
  */
 class ApiContextAssembler @Inject constructor(
     private val compactionManager: CompactionManager,
     private val settingsDataStore: AgentPreferences,
     private val systemPromptBuilder: SystemPromptBuilder,
+    private val sessionStore: SessionTreeStore,
+    private val memoryRecallSelector: MemoryRecallSelector,
+    private val mcpCatalog: ActiveMcpToolCatalog,
 ) {
     suspend fun assemble(
         sessId: String,
@@ -57,8 +63,39 @@ class ApiContextAssembler @Inject constructor(
 
         var compactedContext = compactionManager.project(sessId)
         var msgs = compactedContext.messages
-        val latestUserText = msgs.filterIsInstance<UserMessage>().lastOrNull()?.text.orEmpty()
-        val mentionedNames = MentionExtractor.parse(latestUserText)
+
+        // 用户轮记忆召回后缀（低权威背景资料）：只对最新用户轮计算一次并持久化到
+        // 会话树（appendRecallBlock 幂等），此后该轮的投影永远携带同一段字节。
+        // 这取代了旧的「system prompt 尾部注入」——那种逐轮重算会击穿整个前缀缓存。
+        // 持久化失败时放弃挂载：未持久化的字节进投影会导致下一轮组装漂移。
+        if (!model.pureChatMode) {
+            val latestUser = msgs.filterIsInstance<UserMessage>().lastOrNull()
+            if (latestUser != null && latestUser.id !in compactedContext.recallBlocks) {
+                val block = try {
+                    memoryRecallSelector.recallBlock(
+                        projectOwnerId = workspacePath.trim().trimEnd('/'),
+                        sessionId = sessId,
+                        userMessage = latestUser.text,
+                    )
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (throwable: Throwable) {
+                    ""
+                }
+                if (block.isNotBlank() && sessionStore.appendRecallBlock(sessId, latestUser.id, block)) {
+                    compactedContext = compactedContext.copy(
+                        recallBlocks = compactedContext.recallBlocks + (latestUser.id to block),
+                    )
+                }
+            }
+        }
+
+        // 技能 @提及按全会话累计（一旦提及，规则常驻本会话）：避免「下一轮未提及→章节
+        // 撤出」造成的 system prompt 漂移。MCP @ 裁剪（工具面）仍按当轮最新消息，见
+        // HarnessProviderRunner.resolveEffectiveModel——那条路影响的是 tools 数组而非提示词。
+        val mentionedNames = msgs.filterIsInstance<UserMessage>()
+            .flatMapTo(mutableSetOf()) { MentionExtractor.parse(it.text) }
+        val userMessageTexts = msgs.filterIsInstance<UserMessage>().map { it.text }
 
         val rawSystemPrompt = if (!model.pureChatMode) {
             systemPromptBuilder.build(
@@ -67,20 +104,20 @@ class ApiContextAssembler @Inject constructor(
                 mentionedNames,
                 sessId,
                 projectTypeOverride,
-                latestUserText,
-                mcpTools = model.dynamicMcpTools,
+                userMessageTexts,
+                mcpTools = promptMcpTools(model),
             )
         } else {
             ""
         }
         val systemPrompt = ContextWindowPolicy.fitSystemPrompt(rawSystemPrompt, budgetTokens)
+
+        // 召回后缀的 token 计入预算占用：它们会随 user 消息进入 provider 请求
+        val recallTokens = ContextWindowPolicy.estimateTokens(compactedContext.recallBlocks.values.joinToString("\n"))
+
         return buildList {
             if (systemPrompt.isNotEmpty()) {
                 add(ApiMessage(role = "system", content = systemPrompt))
-            }
-            val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
-            val toolCallDetails = msgs.filterIsInstance<ToolCall>().associate {
-                it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
             }
 
             // 老轮次工具结果截断（先于压缩判定）：预算线未越过时，历史轮的大输出（浏览器快照、
@@ -90,7 +127,7 @@ class ApiContextAssembler @Inject constructor(
             // 顺序必须在压缩判定之前：只需截断即可回到预算线内的会话，不应再触发整段压缩
             // （一次额外 LLM 调用 + 历史永久降级为摘要）。
             if (compactionEnabled) {
-                msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetails)
+                msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetailsOf(msgs))
             }
 
             // 预算驱动的滑动窗口：从最近一轮往回累加 token，超出预算则更早的历史进入压缩态。
@@ -101,7 +138,8 @@ class ApiContextAssembler @Inject constructor(
                     msgs,
                     budgetTokens,
                     ContextWindowPolicy.estimateTokens(systemPrompt) +
-                        ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer),
+                        ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer) +
+                        recallTokens,
                     keepRecentTokens = model.compactionKeepRecentTokens ?: 0,
                     reserveTokens = model.compactionReserveTokens,
                     foldingRatioPercent = foldingRatioPercent,
@@ -110,18 +148,29 @@ class ApiContextAssembler @Inject constructor(
                 0
             }
             if (computedKeepFromIndex > 0) {
-                // LLM 结构化压缩摘要（pi 式）：当前模型生成，失败回退机械摘要
+                // LLM 结构化压缩摘要（pi 式）：当前模型生成，失败回退机械摘要。
+                // summaryContext 让摘要请求重放主对话的 system + 摘要层 + 原始消息前缀，
+                // 命中 provider KV 缓存（cache-replay 形状，对齐 Reasonix）。
                 compactedContext = compactionManager.compact(
                     sessId,
                     compactedContext,
                     computedKeepFromIndex,
                     model = model,
+                    summaryContext = SummaryRequestContext(
+                        systemPrompt = systemPrompt,
+                        summaryLayer = compactedContext.summaryLayer,
+                        toolCallMode = toolCallMode,
+                        visionEnabled = model.visionEnabled,
+                        recallBlocks = compactedContext.recallBlocks,
+                        // 被折叠区域的 provider 可见形态：截断已发生过，与主对话实际发送的字节一致
+                        replayPrefix = msgs.take(computedKeepFromIndex),
+                    ),
                 )
                 msgs = compactedContext.messages
                 // compact 返回的保留窗口来自原始 transcript（未截断），重放一次截断，
                 // 保证与压缩判定时同一口径。
                 if (compactionEnabled) {
-                    msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetails)
+                    msgs = ContextWindowPolicy.truncateStaleToolResults(msgs, toolCallDetailsOf(msgs))
                 }
             }
             if (compactionEnabled) {
@@ -135,7 +184,8 @@ class ApiContextAssembler @Inject constructor(
                         budget = budgetTokens,
                         ratioPercent = foldingRatioPercent,
                         systemTokens = ContextWindowPolicy.estimateTokens(systemPrompt) +
-                            ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer),
+                            ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer) +
+                            recallTokens,
                         reserveTokens = model.compactionReserveTokens,
                     ),
                 )
@@ -149,121 +199,37 @@ class ApiContextAssembler @Inject constructor(
                     ),
                 )
             }
-
-            // JSON 文本模式：工具调用以文本表达，tool 消息需转成 user 文本（API 不认识 tool 角色）
-            val toolNames = toolCallDetails.mapValuesTo(mutableMapOf()) { it.value.first }
-
-            var i = 0
-            fun apiToolCall(tc: ToolCall) = ApiToolCall(
-                id = tc.id,
-                function = ApiFunctionCall(
-                    name = tc.rawToolName ?: HarnessApiMapper.apiName(tc.tool),
-                    arguments = tc.args.toString(),
+            addAll(
+                ApiMessageProjector.project(
+                    msgs = msgs,
+                    toolCallMode = toolCallMode,
+                    visionEnabled = model.visionEnabled,
+                    recallSuffixes = compactedContext.recallBlocks,
                 ),
             )
-            while (i < msgs.size) {
-                val message = msgs[i]
-                if (message is CapabilityEvent || message is ModelSwitchEvent) {
-                    i++
-                    continue
-                }
-                if (toolCallMode == ToolCallMode.JSON_TEXT) {
-                    when (message) {
-                        is ToolCall -> {
-                            toolNames[message.id] = message.rawToolName ?: HarnessApiMapper.apiName(message.tool)
-                            // 回放调用意图：落库的 assistant 文本已剥离工具标记，跳过会让模型
-                            // 看不到自己上一轮调用了什么参数，结果无法与调用关联，易重复调用。
-                            // 与 NATIVE 分支同口径：无结果的悬空调用不回放。
-                            if (message.id in answeredIds) {
-                                add(
-                                    ApiMessage(
-                                        role = "assistant",
-                                        content = TextToolCallCodec.encodeCall(
-                                            message.rawToolName ?: HarnessApiMapper.apiName(message.tool),
-                                            message.args.toString(),
-                                        ),
-                                    ),
-                                )
-                            }
-                            i++
-                        }
-                        is ToolResult -> {
-                            val name = toolNames[message.toolCallId] ?: "工具"
-                            val status = if (message.success) "成功" else "失败"
-                            val content = "【工具 $name 执行结果·$status】\n${message.output}"
-                            add(ApiMessage(role = "user", content = content))
-                            i++
-                        }
-                        else -> {
-                            val mapped = when (message) {
-                                is AssistantText ->
-                                    HarnessApiMapper.toApiMessage(message).copy(
-                                        content = ContextWindowPolicy.assistantTextForContext(
-                                            ProviderClient.stripThinkTags(message.text) ?: message.text,
-                                        ),
-                                        reasoning_content = null,
-                                    )
-                                else -> HarnessApiMapper.toApiMessage(message)
-                            }
-                            add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
-                            i++
-                        }
-                    }
-                    continue
-                }
-                if (message is AssistantText || message is ToolCall) {
-                    if (message is ToolCall && message.id !in answeredIds) {
-                        i++
-                        continue
-                    }
-                    val text = (message as? AssistantText)?.text?.let {
-                        ContextWindowPolicy.assistantTextForContext(ProviderClient.stripThinkTags(it) ?: it)
-                    }
-                    val toolCalls = mutableListOf<ApiToolCall>()
-                    if (message is ToolCall) toolCalls.add(apiToolCall(message))
-                    var j = i + 1
-                    while (j < msgs.size && msgs[j] is ToolCall) {
-                        val tc = msgs[j] as ToolCall
-                        if (tc.id in answeredIds) toolCalls.add(apiToolCall(tc))
-                        j++
-                    }
-                    // DeepSeek 思考模式（V3.2+/V4）：两个 user 消息之间若有工具调用，
-                    // 中间 assistant 消息的 reasoning_content 必须原样传回，否则
-                    // 400 "The reasoning_content in the thinking mode must be passed back to the API"。
-                    // 纯文本 assistant 轮仍不回传（DeepSeek-R1 规则，防推理循环）。
-                    val reasoning = if (toolCalls.isNotEmpty()) {
-                        (message as? AssistantText)?.reasoning
-                            ?: (message as? ToolCall)?.reasoning
-                            ?: msgs.subList(i, j).filterIsInstance<ToolCall>().firstNotNullOfOrNull { it.reasoning }
-                    } else {
-                        null
-                    }
-                    add(
-                        ApiMessage(
-                            role = "assistant",
-                            content = text,
-                            reasoning_content = reasoning,
-                            tool_calls = toolCalls.takeIf { it.isNotEmpty() },
-                        ),
-                    )
-                    i = j
-                } else if (message is ToolResult) {
-                    val content = message.output
-                    add(
-                        ApiMessage(
-                            role = "tool",
-                            content = content,
-                            tool_call_id = message.toolCallId,
-                        ),
-                    )
-                    i++
-                } else {
-                    val mapped = HarnessApiMapper.toApiMessage(message)
-                    add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
-                    i++
-                }
-            }
         }
     }
 
+    /**
+     * System prompt 的 MCP 能力章节使用**全量**活跃工具清单，而非 @ 裁剪后的
+     * model.dynamicMcpTools：@ 裁剪只应收窄本轮 tools 数组，不应让提示词章节随
+     * 提及漂移（那会击穿前缀缓存）。与 ProviderClient 请求路径同源（缓存命中，无额外发现成本）。
+     */
+    private suspend fun promptMcpTools(model: ModelConfig): List<McpToolInfo> =
+        if (model.pureChatMode) {
+            emptyList()
+        } else {
+            try {
+                mcpCatalog.getActiveMcpTools()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                model.dynamicMcpTools
+            }
+        }
+
+    private fun toolCallDetailsOf(msgs: List<HarnessMessage>) =
+        msgs.filterIsInstance<ToolCall>().associate {
+            it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
+        }
 }

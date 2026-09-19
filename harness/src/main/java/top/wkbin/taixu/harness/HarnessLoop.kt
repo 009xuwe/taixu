@@ -83,6 +83,7 @@ class HarnessLoop @Inject constructor(
     private val messageProjector: SessionMessageProjector,
     private val agentEventLogger: AgentEventLogger,
     private val resumePolicy: top.wkbin.taixu.harness.approval.ApprovalResumePolicy,
+    private val sessionApprovalGrants: top.wkbin.taixu.harness.approval.SessionApprovalGrants,
     private val agentTaskStateMachine: AgentStateMachine,
     private val turnRunner: TurnRunner,
     private val rewindController: top.wkbin.taixu.harness.checkpoint.RewindController,
@@ -416,6 +417,7 @@ class HarnessLoop @Inject constructor(
 
         messageStore.deleteSession(id)
         approvalRepository.deleteForSession(id)
+        sessionApprovalGrants.revokeSession(id)
         agentTaskStateMachine.deleteForSession(id)
         sessionDao.deleteSession(id)
         rewindController.dropSession(id)
@@ -1271,8 +1273,8 @@ class HarnessLoop @Inject constructor(
     private fun now(): Long = System.currentTimeMillis()
 
     /** Approve or reject a frozen tool call, then resume the same Agent session. */
-    fun resolveApproval(requestId: String, approved: Boolean) {
-        logger.i("resolveApproval called: requestId=$requestId approved=$approved")
+    fun resolveApproval(requestId: String, approved: Boolean, rememberForSession: Boolean = false) {
+        logger.i("resolveApproval called: requestId=$requestId approved=$approved remember=$rememberForSession")
         loopScope.launch {
             val request = approvalRepository.find(requestId)
             if (request == null) {
@@ -1311,6 +1313,11 @@ class HarnessLoop @Inject constructor(
                             output = resumePolicy.invalidationResultMessage(verdict.invalidationReason.orEmpty()),
                         )
                     } else if (approved) {
+                        // 「本会话内记住」：用户显式勾选时把该操作的规范化类别写入会话授权表。
+                        // critical 风险永不记忆；表纯内存、随会话删除/进程退出销毁（无永久授权）。
+                        if (rememberForSession && !request.riskLevel.equals("critical", ignoreCase = true)) {
+                            sessionApprovalGrants.grant(request.sessionId, request.toolName, request.argumentsJson)
+                        }
                         val args = json.parseToJsonElement(request.argumentsJson) as? JsonObject
                             ?: error("审批参数不是 JSON 对象")
                         val tool = HarnessApiMapper.toolByName(request.toolName)

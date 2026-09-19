@@ -356,8 +356,8 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun resolveApproval(requestId: String, approved: Boolean) {
-        harnessLoop.resolveApproval(requestId, approved)
+    fun resolveApproval(requestId: String, approved: Boolean, rememberForSession: Boolean = false) {
+        harnessLoop.resolveApproval(requestId, approved, rememberForSession)
     }
 
     val sessions: StateFlow<List<HarnessSessionEntity>> = sessionDao.observeAll()

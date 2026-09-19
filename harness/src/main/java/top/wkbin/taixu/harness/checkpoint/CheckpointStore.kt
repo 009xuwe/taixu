@@ -102,7 +102,9 @@ class CheckpointStore @Inject constructor() {
     fun dropSession(sessionId: String) {
         sessions.remove(sessionId)
         restoredSessions.remove(sessionId)
-        persistence?.delete(sessionId)
+        // 删除走同一单线程执行器排队：先于它的待写任务先落盘、随后被整体删除——
+        // 消除"异步写在 dropSession 之后执行、write() 的 mkdirs 复活已删目录"的竞态
+        persistence?.let { disk -> diskWriteExecutor.execute { runCatching { disk.delete(sessionId) } } }
     }
 
     @Synchronized
@@ -200,7 +202,11 @@ class CheckpointStore @Inject constructor() {
  * 默认文件系统持久化：`<root>/<sessionId>/<turn>.index.json` + `<root>/<sessionId>/<turn>/<seq>.snap`。
  * 根目录由宿主指定（应用私有目录，不经 SAF；不会出现在 PRoot 工作区中，模型不可见）。
  */
-class FileCheckpointPersistence(private val root: File) : CheckpointStore.Persistence {
+class FileCheckpointPersistence(
+    private val root: File,
+    /** 单会话快照总量预算；默认值见 [DEFAULT_MAX_SESSION_BYTES]，测试可注入更小预算。 */
+    private val maxSessionBytes: Long = DEFAULT_MAX_SESSION_BYTES,
+) : CheckpointStore.Persistence {
 
     @Serializable
     private data class IndexEntry(
@@ -258,6 +264,32 @@ class FileCheckpointPersistence(private val root: File) : CheckpointStore.Persis
                     if (turn < keptFloor) index.delete()
                 }
             }
+        enforceByteBudget(sessionDir, checkpoint.turn, keptFloor)
+    }
+
+    /**
+     * 字节预算（对齐 Reasonix 的 blob quota）：MAX_KEPT 只限轮数，快照是整文件 pre-image，
+     * 长会话反复编辑大文件时总量可能轻松破百 MB——移动端私有目录必须加总量护栏。
+     * 超预算按轮号从最旧开始整轮删除（索引 + 内容目录），永不触碰当前轮；
+     * 内存态未同步裁剪：本轮内 rewind 仍可用内存快照，重启后按磁盘实况恢复。
+     */
+    private fun enforceByteBudget(sessionDir: File, currentTurn: Int, keptFloor: Int) {
+        var totalBytes = sessionDir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+        if (totalBytes <= maxSessionBytes) return
+        val candidateTurns = sessionDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.mapNotNull { it.name.toIntOrNull() }
+            ?.filter { it >= keptFloor && it != currentTurn }
+            ?.sorted()
+            .orEmpty()
+        for (turn in candidateTurns) {
+            if (totalBytes <= maxSessionBytes) break
+            val turnDir = File(sessionDir, turn.toString())
+            val index = File(sessionDir, "$turn.index.json")
+            val freed = turnDir.walkBottomUp().filter { it.isFile }.sumOf { it.length() } + index.length()
+            if (turnDir.deleteRecursively()) index.delete()
+            totalBytes -= freed
+        }
     }
 
     override fun readAll(sessionId: String): List<Checkpoint> {
@@ -294,5 +326,10 @@ class FileCheckpointPersistence(private val root: File) : CheckpointStore.Persis
 
     override fun delete(sessionId: String) {
         File(root, sessionId).deleteRecursively()
+    }
+
+    private companion object {
+        /** 单会话快照总量预算：超过即按最旧整轮淘汰（当前轮与 MAX_KEPT 窗口保护见 [enforceByteBudget]）。 */
+        const val DEFAULT_MAX_SESSION_BYTES = 64L * 1024 * 1024
     }
 }
