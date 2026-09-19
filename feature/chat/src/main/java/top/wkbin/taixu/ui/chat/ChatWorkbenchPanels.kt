@@ -252,45 +252,56 @@ internal fun BranchBrowserSheet(
     onSwitch: (ConversationBranch) -> Unit,
     onOpenSubagent: (ConversationBranch) -> Unit,
 ) {
+    val conversation = remember(branches) {
+        branches.filter { it.kind != ConversationBranchKind.SUBAGENT }
+    }
+    val subagents = remember(branches) { stableSubagentBranches(branches) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState()),
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                stringResource(R.string.chat_branches_title),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                stringResource(R.string.chat_branches_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
-            )
+            item(key = "branch_sheet_title") {
+                Text(
+                    stringResource(R.string.chat_branches_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            item(key = "branch_sheet_description") {
+                Text(
+                    stringResource(R.string.chat_branches_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
+                )
+            }
             if (branches.isEmpty()) {
-                RuntimeCard {
-                    Text(
-                        stringResource(R.string.chat_no_branches),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                item(key = "branch_sheet_empty") {
+                    RuntimeCard {
+                        Text(
+                            stringResource(R.string.chat_no_branches),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             } else {
-                val conversation = branches.filter { it.kind != ConversationBranchKind.SUBAGENT }
-                val subagents = branches.filter { it.kind == ConversationBranchKind.SUBAGENT }
-                SectionLabel(stringResource(R.string.chat_conversation_paths), conversation.size)
-                conversation.forEach { branch ->
+                item(key = "branch_sheet_conversation_header") {
+                    SectionLabel(stringResource(R.string.chat_conversation_paths), conversation.size)
+                }
+                items(conversation, key = ::branchUiKey) { branch ->
                     BranchCard(branch, enabled = !running && !branch.isBusy, onClick = { onSwitch(branch) })
                 }
                 if (subagents.isNotEmpty()) {
-                    SectionLabel(stringResource(R.string.chat_subagent_lanes), subagents.size)
-                    subagents.forEach { branch ->
+                    item(key = "branch_sheet_subagent_header") {
+                        SectionLabel(stringResource(R.string.chat_subagent_lanes), subagents.size)
+                    }
+                    items(subagents, key = ::branchUiKey) { branch ->
                         BranchCard(
                             branch = branch,
                             enabled = branch.laneName != null,
@@ -299,10 +310,21 @@ internal fun BranchBrowserSheet(
                     }
                 }
             }
-            Spacer(Modifier.height(32.dp))
+            item(key = "branch_sheet_bottom_spacer") {
+                Spacer(Modifier.height(32.dp))
+            }
         }
     }
 }
+
+internal fun branchUiKey(branch: ConversationBranch): String =
+    if (branch.kind == ConversationBranchKind.SUBAGENT) branch.laneName ?: branch.id else branch.id
+
+internal fun stableSubagentBranches(branches: List<ConversationBranch>): List<ConversationBranch> =
+    branches.asSequence()
+        .filter { it.kind == ConversationBranchKind.SUBAGENT }
+        .sortedBy(::branchUiKey)
+        .toList()
 
 @Composable
 private fun SectionLabel(title: String, count: Int) {
@@ -383,7 +405,7 @@ internal fun SubagentResultSheet(
     val toolResults = remember(state.messages) {
         state.messages.filterIsInstance<ToolResult>().associateBy { it.toolCallId }
     }
-    var processExpanded by rememberSaveable(branch.id) { mutableStateOf(false) }
+    var processExpanded by rememberSaveable(branchUiKey(branch)) { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
