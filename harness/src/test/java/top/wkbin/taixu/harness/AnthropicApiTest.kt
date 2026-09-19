@@ -147,6 +147,15 @@ class AnthropicApiTest {
     }
 
     @Test
+    fun `non-positive max tokens is normalized and thinking stays below output budget`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(model().copy(maxTokens = 0, reasoningMode = ReasoningMode.ENABLED), listOf(ApiMessage(role = "user", content = "hi")))
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertTrue(body.getValue("max_tokens").jsonPrimitive.content.toInt() > 0)
+        assertTrue(body.getValue("thinking").jsonObject.getValue("budget_tokens").jsonPrimitive.content.toInt() < body.getValue("max_tokens").jsonPrimitive.content.toInt())
+    }
+
+    @Test
     fun `max tokens is required and defaults when unset`() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
         api.chat(model(), listOf(ApiMessage(role = "user", content = "hi")))

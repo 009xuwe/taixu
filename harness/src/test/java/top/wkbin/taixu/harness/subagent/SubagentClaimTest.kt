@@ -55,12 +55,30 @@ class SubagentClaimTest {
     }
 
     @Test
-    fun `last valid block wins and unknown criterion types are dropped`() {
+    fun `last valid block retains unknown criterion types as unendorsed`() {
         val text = "```json\n{\"status\": \"failed\"}\n```\n中段\n```json\n{\"status\": \"Completed\", \"acceptance_criteria\": [{\"type\": \"unknown\"}, {\"type\": \"manual\", \"claim\": \"x\"}]}\n```"
         val claim = parseSubagentClaim(text)
         assertNotNull(claim)
         assertEquals("complete", claim!!.status)
-        assertEquals(1, claim.criteria.size)
+        assertEquals(2, claim.criteria.size)
+        assertEquals("unknown", claim.criteria[0].type)
+    }
+
+    @Test
+    fun `complete with empty criteria is downgraded`() {
+        val claim = parseSubagentClaim("```json\n{\"status\": \"complete\", \"summary\": \"done\"}\n```")!!
+        val adjudication = adjudicateSubagentClaim(claim, SubagentHostReceipts(emptyList(), emptyList()))
+        assertEquals("partial", adjudication.adjudicatedStatus)
+        assertTrue(adjudication.downgraded)
+    }
+
+    @Test
+    fun `unknown criterion is explicitly unendorsed`() {
+        val claim = parseSubagentClaim("```json\n{\"status\": \"complete\", \"acceptance_criteria\": [{\"type\": \"mystery\", \"claim\": \"x\"}]}\n```")!!
+        val adjudication = adjudicateSubagentClaim(claim, SubagentHostReceipts(emptyList(), emptyList()))
+        assertFalse(adjudication.verdicts.single().backed)
+        assertTrue(adjudication.verdicts.single().reason.contains("未知"))
+        assertEquals("partial", adjudication.adjudicatedStatus)
     }
 
     // ---------- 凭据提取 ----------

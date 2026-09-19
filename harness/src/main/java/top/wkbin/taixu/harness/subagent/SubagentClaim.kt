@@ -54,6 +54,7 @@ internal data class SubagentClaim(
 )
 
 internal data class SubagentClaimCriterion(
+    /** Unknown types are retained so they become an explicit unendorsed criterion. */
     val type: String,
     val claim: String,
     val command: String,
@@ -107,9 +108,10 @@ internal fun parseSubagentClaim(finalText: String): SubagentClaim? {
             ?: continue
         if (dto.status.isBlank()) continue
         val status = STATUS_ALIASES[dto.status.trim().lowercase()] ?: continue
-        val criteria = dto.acceptanceCriteria.mapNotNull { criterion ->
-            val type = criterion.type.trim().lowercase()
-            if (type !in listOf("verification", "files", "manual")) return@mapNotNull null
+        val criteria = dto.acceptanceCriteria.map { criterion ->
+            // Keep unknown criterion types: silently dropping them would turn an
+            // unendorsed claim into an apparently backed complete result.
+            val type = criterion.type.trim().lowercase().ifBlank { "unknown" }
             SubagentClaimCriterion(
                 type = type,
                 claim = (criterion.claim.ifBlank { criterion.acceptance.orEmpty() }).trim(),
@@ -194,14 +196,20 @@ internal fun adjudicateSubagentClaim(
                     }
                 }
             }
-            else -> SubagentCriterionVerdict(
+            "manual" -> SubagentCriterionVerdict(
                 criterion, false, "manual 条目无法由 host 凭据背书，只能由用户验证",
+            )
+            else -> SubagentCriterionVerdict(
+                criterion, false, "未知验收标准类型「${criterion.type}」，host 不予背书",
             )
         }
     }
-    val anyUnbacked = verdicts.any { !it.backed }
+    // A complete claim with no criteria is not a host-backed completion: there is
+    // nothing the host can independently endorse. Unknown criteria are retained
+    // above and arrive here as explicitly unbacked rather than disappearing.
+    val criteriaUnbacked = claim.criteria.isEmpty() || verdicts.any { !it.backed }
     val adjudicated = when {
-        claim.status == "complete" && anyUnbacked -> "partial"
+        claim.status == "complete" && criteriaUnbacked -> "partial"
         else -> claim.status
     }
     return SubagentClaimAdjudication(

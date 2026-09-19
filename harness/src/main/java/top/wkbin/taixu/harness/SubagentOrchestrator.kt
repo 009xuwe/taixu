@@ -15,6 +15,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.coroutineScope
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -118,18 +119,27 @@ class SubagentOrchestrator @Inject constructor(
                 "waveSizes=${waves.joinToString(prefix = "[", postfix = "]") { it.size.toString() }}",
         )
         for ((waveIndex, wave) in waves.withIndex()) {
+            val waveStartedAt = System.nanoTime()
             logger.logAgent(
                 parentSessionId,
                 "SubagentWave",
-                "start=${waveIndex + 1}/${waves.size}, tasks=${wave.joinToString { it.taskName }}",
+                "start=${waveIndex + 1}/${waves.size}, tasks=${wave.joinToString { it.taskName }}; " +
+                    "lease wave=${waveLeaseDescription(wave)}; tasks in this wave may run concurrently, later waves wait",
             )
-            results += wave.map { spec ->
+            val waveResults = wave.map { spec ->
                 async {
                     globalParallelism.withPermit {
-                        runSubagent(spec, parentSessionId, parentLeaf, workspace, modelId, modelVariant, profileIndex)
+                        runSubagentSafely(spec, parentSessionId, parentLeaf, workspace, modelId, modelVariant, profileIndex)
                     }
                 }
             }.awaitAll()
+            results += waveResults
+            logger.logAgent(
+                parentSessionId,
+                "SubagentWave",
+                "complete=${waveIndex + 1}/${waves.size}, elapsedMs=${(System.nanoTime() - waveStartedAt) / 1_000_000}, " +
+                    "results=${waveResults.joinToString { "${it.spec.taskName}:${it.termination}" }}",
+            )
         }
 
         // Completion order and lease waves must not change the user-requested presentation order.
@@ -142,7 +152,8 @@ class SubagentOrchestrator @Inject constructor(
                 "task=${outcome.spec.taskName}, success=${outcome.isSuccess}, termination=${outcome.termination}, " +
                     "toolCalls=${outcome.toolCallCount}, pendingApprovals=${outcome.pendingApprovals.size}, " +
                     "blockedWrites=${outcome.blockedWrites.size}, " +
-                    "readOnlyWriteIntent=${outcome.readOnlyWriteIntent}"
+                    "readOnlyWriteIntent=${outcome.readOnlyWriteIntent}, " +
+                    "suspectedShellWrites=${outcome.suspectedShellWrites.joinToString("|")}"
             },
         )
         // 整批工具结果只有在每个子任务都确认完成时才算成功。用 anySuccess 会让"1 成功 5 失败"
@@ -150,6 +161,30 @@ class SubagentOrchestrator @Inject constructor(
         val allSucceeded = orderedResults.all { it.isSuccess }
         allSucceeded to summaryMarkdown
         }
+    }
+
+    private suspend fun runSubagentSafely(
+        spec: SubagentTaskSpec,
+        parentSessionId: String,
+        parentLeaf: String?,
+        workspace: String,
+        modelId: String?,
+        modelVariant: String?,
+        profileIndex: List<AgentSubagentIndexEntry>,
+    ): SubagentExecutionOutcome = try {
+        runSubagent(spec, parentSessionId, parentLeaf, workspace, modelId, modelVariant, profileIndex)
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: Throwable) {
+        SubagentExecutionOutcome(
+            spec = spec,
+            subSessionId = spec.taskId.orEmpty(),
+            isSuccess = false,
+            summary = "子任务执行异常（${failure::class.simpleName ?: "Throwable"}）：" +
+                (failure.message ?: "无错误消息"),
+            toolCallCount = 0,
+            termination = SubagentTermination.FAILED,
+        )
     }
 
     private suspend fun runSubagent(
@@ -176,6 +211,7 @@ class SubagentOrchestrator @Inject constructor(
                     summary = "task_id=$resumeLaneName 不存在或不是本会话的子任务 Lane，无法续跑。" +
                         "请从最近一次 invoke_subagent 汇总中原样复制 task_id；Lane 已删除时改为派发全新任务。",
                     toolCallCount = 0,
+                    termination = SubagentTermination.INCOMPLETE,
                 )
             }
             val resumedProfile = subagentRepository.findEnabledProfile(
@@ -188,6 +224,7 @@ class SubagentOrchestrator @Inject constructor(
                     isSuccess = false,
                     summary = "续跑 Lane 的角色已禁用或删除，无法续跑；请改为派发全新任务。",
                     toolCallCount = 0,
+                    termination = SubagentTermination.FAILED,
                 )
             }
             profile = resumedProfile
@@ -201,6 +238,7 @@ class SubagentOrchestrator @Inject constructor(
                     isSuccess = false,
                     summary = routingFailure(spec),
                     toolCallCount = 0,
+                    termination = SubagentTermination.FAILED,
                 )
             }
             profile = resolved
@@ -235,6 +273,7 @@ class SubagentOrchestrator @Inject constructor(
                 toolCallCount = 0,
                 resolvedProfileId = profile.id,
                 resolvedProfileName = profile.name,
+                termination = SubagentTermination.FAILED,
             )
         }
         val laneLockKey = "$parentSessionId::$laneName"
@@ -304,12 +343,13 @@ class SubagentOrchestrator @Inject constructor(
                 val strippedSummary = stripSubagentClaimBlock(laneResult.summary, claim)
                     .ifBlank { claim.summaryText.ifBlank { laneResult.summary } }
                 outcome = outcome.copy(
-                    // 凭据不背书 → complete 降级 partial，isSuccess 随之转负（父汇总 ⚠️）。
-                    isSuccess = !adjudication.downgraded,
-                    termination = if (adjudication.downgraded) {
-                        SubagentTermination.CLAIM_DOWNGRADED
-                    } else {
-                        outcome.termination
+                    // 只有 host 最终裁定 complete 才算成功；partial/failed 不得升格。
+                    isSuccess = adjudication.adjudicatedStatus == "complete",
+                    termination = when {
+                        adjudication.downgraded -> SubagentTermination.CLAIM_DOWNGRADED
+                        adjudication.adjudicatedStatus == "partial" -> SubagentTermination.INCOMPLETE
+                        adjudication.adjudicatedStatus == "failed" -> SubagentTermination.FAILED
+                        else -> outcome.termination
                     },
                     // 原始 claim JSON 不进父上下文：正文剔除协议块，裁定结论进状态头。
                     summary = strippedSummary,
@@ -609,6 +649,12 @@ internal fun normalizeWritePath(path: String): String {
 
 private enum class SubagentWaveKind { READ_ONLY, SCOPED_WRITE, WHOLE_WORKSPACE }
 
+private fun waveLeaseDescription(wave: List<SubagentTaskSpec>): String = when {
+    wave.all { it.writePaths.isEmpty() } -> "read-only"
+    wave.any { it.writePaths.any(::isWholeWorkspaceWritePath) } -> "whole-workspace exclusive"
+    else -> "scoped disjoint write paths"
+}
+
 /**
  * 是否为整工作区租约。`*` 与 `.` 都表示整个工作区；`.` 归一化后为空串，
  * 空串同样是"工作区根"，不能当成未声明。
@@ -717,6 +763,11 @@ private fun subagentOutcomeHeader(
     }
     if (outcome.readOnlyWriteIntent) {
         append("- **写租约缺失**：任务要求落盘但未声明 write_paths，本次按只读执行；产物在正文中，未写入文件\n")
+    }
+    if (outcome.suspectedShellWrites.isNotEmpty()) {
+        append("- **疑似 shell 写入（仅提示，未自动判定越界）**：")
+        append(outcome.suspectedShellWrites.joinToString("；"))
+        append("；请由主智能体复核实际产物与写租约范围。\n")
     }
 }
 

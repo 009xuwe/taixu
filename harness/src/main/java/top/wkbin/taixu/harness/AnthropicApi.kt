@@ -329,7 +329,12 @@ internal class AnthropicApi(
         val requestBody = buildJsonObject {
             put("model", model.model)
             // Anthropic 必填；未配置时用安全默认值
-            val effectiveMaxTokens = model.maxTokens ?: DEFAULT_MAX_TOKENS
+            val effectiveMaxTokens = ContextWindowPolicy.outputBudget(
+                model.maxTokens,
+                DEFAULT_MAX_TOKENS,
+                messages,
+                model.contextTokens,
+            )
             put("max_tokens", effectiveMaxTokens)
             // 推理开关/强度：thinking enabled 时 Anthropic 强制要求 temperature=1（省略即默认），
             // 且此时不再发送 temperature/top_p 以免 400。

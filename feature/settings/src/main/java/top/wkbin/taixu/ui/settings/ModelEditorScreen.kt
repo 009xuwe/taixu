@@ -298,6 +298,14 @@ private fun ModelEditorContent(
     var temperature by rememberSaveable(modelId) { mutableFloatStateOf(existing?.temperature ?: 0.7f) }
     var maxTokensText by rememberSaveable(modelId) { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
     var contextTokensText by rememberSaveable(modelId) { mutableStateOf(existing?.contextTokens?.toString().orEmpty()) }
+    val parsedMaxTokens = maxTokensText.trim().toIntOrNull()
+    val parsedContextTokens = contextTokensText.trim().toIntOrNull()
+    val maxTokensInvalid = maxTokensText.isNotBlank() && (parsedMaxTokens == null || parsedMaxTokens <= 0)
+    val contextTokensInvalid = contextTokensText.isNotBlank() &&
+        (parsedContextTokens == null || parsedContextTokens <= 0)
+    val tokenWindowInvalid = parsedMaxTokens != null && parsedContextTokens != null &&
+        parsedMaxTokens > parsedContextTokens
+    val tokenFieldsValid = !maxTokensInvalid && !contextTokensInvalid && !tokenWindowInvalid
     var compactionKeepRecentText by rememberSaveable(modelId) {
         mutableStateOf(existing?.compactionKeepRecentTokens?.toString().orEmpty())
     }
@@ -985,6 +993,12 @@ private fun ModelEditorContent(
                                     label = { Text("Max Tokens") },
                                     placeholder = { Text("8000") },
                                     singleLine = true,
+                                    isError = maxTokensInvalid || tokenWindowInvalid,
+                                    supportingText = if (maxTokensInvalid) {
+                                        { Text("请输入大于 0 的整数，或留空使用默认值") }
+                                    } else if (tokenWindowInvalid) {
+                                        { Text("不能大于上下文上限") }
+                                    } else null,
                                     shape = compactFieldShape,
                                     colors = fieldColors,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -996,6 +1010,12 @@ private fun ModelEditorContent(
                                     label = { Text("上下文上限") },
                                     placeholder = { Text("128000") },
                                     singleLine = true,
+                                    isError = contextTokensInvalid || tokenWindowInvalid,
+                                    supportingText = if (contextTokensInvalid) {
+                                        { Text("请输入大于 0 的整数，或留空使用默认值") }
+                                    } else if (tokenWindowInvalid) {
+                                        { Text("必须不小于 Max Tokens") }
+                                    } else null,
                                     shape = compactFieldShape,
                                     colors = fieldColors,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -1294,8 +1314,6 @@ private fun ModelEditorContent(
                 val customList = customModelInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 (selectedModels + customList).filter { it.isNotBlank() }.distinct()
             }
-            val parsedMaxTokens = maxTokensText.trim().toIntOrNull()
-            val parsedContextTokens = contextTokensText.trim().toIntOrNull()
             val parsedCompactionKeepRecent = compactionKeepRecentText.trim().toIntOrNull()?.takeIf { it > 0 }
             val parsedCompactionReserve = compactionReserveText.trim().toIntOrNull()?.takeIf { it > 0 }
             val parsedRpmLimit = rpmLimitText.trim().toIntOrNull() ?: 0
@@ -1333,7 +1351,7 @@ private fun ModelEditorContent(
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(12.dp),
-                enabled = effectiveModels.isNotEmpty() && urlValid,
+                enabled = effectiveModels.isNotEmpty() && urlValid && tokenFieldsValid,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RuntimeIcon(RuntimeIconName.Check, Modifier.size(18.dp), MaterialTheme.colorScheme.onPrimary)

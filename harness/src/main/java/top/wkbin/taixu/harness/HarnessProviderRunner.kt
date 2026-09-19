@@ -65,6 +65,8 @@ class HarnessProviderRunner @Inject constructor(
         val streamText = StreamBuffer()
         val streamReasoning = StreamBuffer(maxChars = ProviderClient.MAX_STREAM_REASONING_CHARS)
         var streamed: ChatResult? = null
+        var requestModel = model
+        var outputBudgetReduced = false
         var netRetry = 0
         suspend fun assembleFor(requestModel: ModelConfig) = contextAssembler.assemble(
             sessId = sessId,
@@ -109,7 +111,7 @@ class HarnessProviderRunner @Inject constructor(
                     maxAttempts = maxAttempts,
                 )
                 streamed = providerClient.chatStream(
-                    model,
+                    requestModel,
                     requestMessages,
                     onReasoning = { chunk ->
                         streamReasoning.append(chunk)
@@ -173,6 +175,22 @@ class HarnessProviderRunner @Inject constructor(
                     stateMirrors.setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$maxNetworkRetries）")
                     delay(1000L.milliseconds)
                 }
+            } catch (invalidOutputTokens: LlmInvalidOutputTokensException) {
+                currentCoroutineContext().ensureActive()
+                if (outputBudgetReduced) throw invalidOutputTokens
+                outputBudgetReduced = true
+                val current = ContextWindowPolicy.normalizeOutputTokens(model.maxTokens, 8_192)
+                val reduced = (current / 2).coerceAtLeast(1)
+                requestModel = model.copy(maxTokens = reduced)
+                agentEventLogger.log(
+                    sessId,
+                    "OutputBudgetReduction",
+                    "Provider 拒绝输出预算，严格降额至 $reduced 后重试",
+                    invalidOutputTokens,
+                )
+                streamText.clear()
+                streamReasoning.clear()
+                messageProjector.remove(sessId, assistantId)
             } catch (io: IOException) {
                 currentCoroutineContext().ensureActive()
                 netRetry++
@@ -206,7 +224,7 @@ class HarnessProviderRunner @Inject constructor(
                             streamText.clear()
                             streamReasoning.clear()
                             messageProjector.remove(sessId, assistantId)
-                            requestMessages = assembleFor(model)
+                            requestMessages = assembleFor(requestModel)
                             continue
                         }
                     }

@@ -235,6 +235,40 @@ object ContextWindowPolicy {
         return (cjk / 1.8f + ascii / 2.5f + punctuation / 2.8f).toInt().coerceAtLeast(1)
     }
 
+    /** Central estimate for the provider-facing ApiMessage representation. */
+    fun estimateApiMessages(messages: List<ApiMessage>): Int = messages.sumOf { message ->
+        // Keep a small per-message framing allowance; provider tokenizers count role and
+        // content-part markers too, while our fallback tokenizer cannot see them.
+        4 + estimateTokens(message.content.orEmpty()) +
+            estimateTokens(message.reasoning_content.orEmpty()) +
+            message.imageUrls.sumOf { image ->
+                if (image.startsWith("data:image/", ignoreCase = true)) {
+                    (image.length / 3).coerceAtLeast(ESTIMATED_IMAGE_TOKENS)
+                } else ESTIMATED_IMAGE_TOKENS
+            } +
+            message.tool_calls.orEmpty().sumOf { call ->
+                estimateTokens(call.function.name) + estimateTokens(call.function.arguments) + 4
+            }
+    }
+
+    /** Runtime-safe profile value: null and non-positive values mean provider default. */
+    fun normalizeOutputTokens(value: Int?, providerDefault: Int): Int =
+        (value?.takeIf { it > 0 } ?: providerDefault).coerceAtLeast(1)
+
+    /** One output budget calculation used by all provider request builders. */
+    fun outputBudget(
+        configured: Int?,
+        providerDefault: Int,
+        messages: List<ApiMessage>,
+        contextTokens: Int?,
+    ): Int {
+        val requested = normalizeOutputTokens(configured, providerDefault)
+        val context = contextTokens?.takeIf { it > 0 }?.coerceIn(1, MAX_CONTEXT_BUDGET)
+            ?: return requested
+        val available = (context - estimateApiMessages(messages)).coerceAtLeast(1)
+        return minOf(requested, available).coerceAtLeast(1)
+    }
+
     const val DEFAULT_SYSTEM_PROMPT_TOKENS = 576
     const val DEFAULT_NATIVE_TOOL_TOKENS = 3_600
     const val DEFAULT_RULES_TOKENS = 1_400

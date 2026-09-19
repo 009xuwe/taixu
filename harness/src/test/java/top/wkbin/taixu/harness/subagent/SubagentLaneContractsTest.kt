@@ -10,6 +10,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import top.wkbin.taixu.harness.ApiToolCallSpec
+import top.wkbin.taixu.harness.renderSummaryMarkdown
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.TextToolCallCodec
@@ -439,5 +440,18 @@ class SubagentLaneContractsTest {
     fun `failed commands are not counted`() {
         val transcript = baseCall("c1", "rm -rf build/", success = false)
         assertTrue(detectSuspectedShellWrites(transcript, writePaths = emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `summary exposes suspected shell writes`() {
+        val outcome = top.wkbin.taixu.harness.SubagentOrchestrator.SubagentExecutionOutcome(
+            spec = top.wkbin.taixu.core.model.SubagentTaskSpec(taskName = "审查", role = "reviewer", prompt = "检查"),
+            subSessionId = "subagent:reviewer:abc",
+            isSuccess = true,
+            summary = "完成",
+            toolCallCount = 1,
+            suspectedShellWrites = listOf("echo x > out.txt"),
+        )
+        assertTrue(renderSummaryMarkdown(listOf(outcome)).contains("echo x > out.txt"))
     }
 }

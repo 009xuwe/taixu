@@ -359,7 +359,7 @@ internal class ResponsesApi(
             model.temperature?.let { put("temperature", it) }
             model.topP?.let { put("top_p", it) }
             // Responses API 的输出上限字段名与 chat/completions 不同
-            model.maxTokens?.let { put("max_output_tokens", it) }
+            put("max_output_tokens", ContextWindowPolicy.outputBudget(model.maxTokens, 8_192, messages, model.contextTokens))
             // 推理开关/强度：Responses 专用 reasoning.effort 格式
             ReasoningAdapter.responsesFields(model).forEach { (key, value) -> put(key, value) }
             if (systemPrompt.isNotBlank()) put("instructions", systemPrompt.toString())

@@ -54,6 +54,9 @@ class TransientHttpException(
  */
 class LlmContextOverflowException(message: String) : IOException(message)
 
+/** Provider rejected the requested output-token parameter, not the input context. */
+class LlmInvalidOutputTokensException(message: String) : IOException(message)
+
 /** 可独立测试的 HTTP 层：OpenAI 兼容 chat/completions 请求与响应解析。 */
 internal class ChatApi(
     private val okHttpClient: OkHttpClient,
@@ -301,7 +304,9 @@ internal class ChatApi(
                 })
             }
             model.temperature?.let { put("temperature", kotlinx.serialization.json.JsonPrimitive(it)) }
-            model.maxTokens?.let { put("max_tokens", kotlinx.serialization.json.JsonPrimitive(it)) }
+            put("max_tokens", kotlinx.serialization.json.JsonPrimitive(
+                ContextWindowPolicy.outputBudget(model.maxTokens, 8_192, messages, model.contextTokens),
+            ))
             model.topP?.let { put("top_p", kotlinx.serialization.json.JsonPrimitive(it)) }
             // 推理开关/强度：按厂商能力翻译（reasoning_effort / thinking_config / thinking / reasoning）
             ReasoningAdapter.openAiFields(model).forEach { (key, value) -> put(key, value) }
@@ -934,24 +939,7 @@ class ProviderClient @Inject constructor(
         }
 
         internal fun estimateApiMessageTokens(messages: List<ApiMessage>): Int =
-            messages.sumOf { message ->
-                ContextWindowPolicy.estimateTokens(message.content.orEmpty()) +
-                    ContextWindowPolicy.estimateTokens(message.reasoning_content.orEmpty()) +
-                    // 图片按 base64 体积计（与 ContextWindowPolicy.ESTIMATED_IMAGE_TOKENS
-                    // 同量级）：多图请求的上传 + prefill 在慢速移动网络下可能远超 90s，
-                    // 不计入会让首字看门狗误杀超时，且大请求网络重试上限仅 1 次。
-                    message.imageUrls.sumOf { url ->
-                        if (url.startsWith("data:image/", ignoreCase = true)) {
-                            (url.length / 3).coerceAtLeast(ContextWindowPolicy.ESTIMATED_IMAGE_TOKENS)
-                        } else {
-                            ContextWindowPolicy.ESTIMATED_IMAGE_TOKENS
-                        }
-                    } +
-                    (message.tool_calls?.sumOf { call ->
-                        ContextWindowPolicy.estimateTokens(call.function.name) +
-                            ContextWindowPolicy.estimateTokens(call.function.arguments)
-                    } ?: 0)
-            }
+            ContextWindowPolicy.estimateApiMessages(messages)
 
         /**
          * 单回合推理内容的累积上限（字符）。推理是执行过程草稿，不是长期上下文；
@@ -1125,11 +1113,19 @@ class ProviderClient @Inject constructor(
          * 多一次机械压缩尝试（有界），漏报则用户直接看到失败。
          */
         internal fun contextOverflowException(code: Int, rawBody: String): Exception =
-            if (isContextOverflowMessage(rawBody)) {
-                LlmContextOverflowException(formatHttpErrorMessage(code, rawBody))
-            } else {
-                IllegalStateException(formatHttpErrorMessage(code, rawBody))
+            when {
+                isContextOverflowMessage(rawBody) -> LlmContextOverflowException(formatHttpErrorMessage(code, rawBody))
+                isInvalidOutputTokensMessage(rawBody) -> LlmInvalidOutputTokensException(formatHttpErrorMessage(code, rawBody))
+                else -> IllegalStateException(formatHttpErrorMessage(code, rawBody))
             }
+
+        internal fun isInvalidOutputTokensMessage(rawBody: String): Boolean {
+            val lower = rawBody.lowercase()
+            val names = listOf("max_tokens", "max_output_tokens", "output tokens", "output_token")
+            val invalid = listOf("invalid", "must be", "cannot", "should be", "greater than", "positive", "at least", "too large")
+            return names.any { it in lower } && invalid.any { it in lower } &&
+                !isContextOverflowMessage(rawBody)
+        }
 
         internal fun isContextOverflowMessage(rawBody: String): Boolean {
             val lower = rawBody.lowercase()

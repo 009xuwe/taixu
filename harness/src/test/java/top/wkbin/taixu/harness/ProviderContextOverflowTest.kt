@@ -45,6 +45,16 @@ class ProviderContextOverflowTest {
     }
 
     @Test
+    fun `invalid output token errors are not treated as context overflow`() {
+        val error = ProviderClient.contextOverflowException(
+            400,
+            """{"error":{"message":"Invalid max_tokens: must be greater than 0"}}""",
+        )
+        assertTrue(error is LlmInvalidOutputTokensException)
+        assertFalse(error is LlmContextOverflowException)
+    }
+
+    @Test
     fun `contextOverflowException returns recoverable type only for overflow bodies`() {
         val overflow = ProviderClient.contextOverflowException(400, """{"error":{"message":"prompt is too long"}}""")
         assertTrue("超限体应抛 LlmContextOverflowException", overflow is LlmContextOverflowException)
