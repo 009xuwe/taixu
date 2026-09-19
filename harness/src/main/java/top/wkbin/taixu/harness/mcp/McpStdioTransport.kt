@@ -60,35 +60,49 @@ class McpStdioTransport @Inject constructor(
         }
     }
 
-    override suspend fun check(server: McpServerConfig): Boolean = try {
-        connection(server, bypassCooldown = true).withInitialized { true }
-    } catch (cancellation: CancellationException) {
-        // B2: 取消（如 checkConnection 8s 超时、等待 initialize 握手锁被取消）不代表进程损坏，
-        // 不销毁连接——握手锁只挡毫秒级握手，绝不会误杀在飞的最长 600s 的 tools/call
-        throw cancellation
-    } catch (t: Throwable) {
-        // B2: 仅传输层故障（进程退出/EOF/IO）才销毁；server 返回错误响应等本次探测失败保留连接
-        if (isChannelFailure(t)) discardConnection(server.id)
-        false
-    }
-
-    override suspend fun discover(server: McpServerConfig): List<McpToolInfo> = try {
-        connection(server).withInitialized {
-            val response = request("tools/list", JsonObject(emptyMap()))
-            val result = response.result?.let {
-                json.decodeFromJsonElement(McpToolsListResponse.serializer(), it)
-            } ?: error("MCP tools/list did not return a result")
-            result.tools.map { dto -> dto.toInfo(server, json.encodeToString(JsonObject.serializer(), dto.inputSchema)) }
+    override suspend fun check(server: McpServerConfig): Boolean {
+        val conn = try {
+            connection(server, bypassCooldown = true)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (t: Throwable) {
+            // 连接建立失败：map 中无连接可丢弃，失败冷却已在 connectionLocked 内写入
+            return false
         }
-    } catch (t: Throwable) {
-        // B2: 取消（含发现总超时）与业务错误响应不销毁连接，仅传输层故障销毁
-        if (t !is CancellationException && isChannelFailure(t)) discardConnection(server.id)
-        throw t
+        return try {
+            conn.withInitialized { true }
+        } catch (cancellation: CancellationException) {
+            // B2: 取消（如 checkConnection 8s 超时、等待 initialize 握手锁被取消）不代表进程损坏，
+            // 不销毁连接——握手锁只挡毫秒级握手，绝不会误杀在飞的最长 600s 的 tools/call
+            throw cancellation
+        } catch (t: Throwable) {
+            // B2: 仅传输层故障（进程退出/EOF/IO）才销毁；server 返回错误响应等本次探测失败保留连接
+            if (isChannelFailure(t)) discardConnection(server.id, conn)
+            false
+        }
     }
 
-    override suspend fun execute(server: McpServerConfig, toolName: String, arguments: JsonObject): Pair<Boolean, String> =
-        try {
-            connection(server).withInitialized {
+    override suspend fun discover(server: McpServerConfig): List<McpToolInfo> {
+        val conn = connection(server)
+        return try {
+            conn.withInitialized {
+                val response = request("tools/list", JsonObject(emptyMap()))
+                val result = response.result?.let {
+                    json.decodeFromJsonElement(McpToolsListResponse.serializer(), it)
+                } ?: error("MCP tools/list did not return a result")
+                result.tools.map { dto -> dto.toInfo(server, json.encodeToString(JsonObject.serializer(), dto.inputSchema)) }
+            }
+        } catch (t: Throwable) {
+            // B2: 取消（含发现总超时）与业务错误响应不销毁连接，仅传输层故障销毁
+            if (t !is CancellationException && isChannelFailure(t)) discardConnection(server.id, conn)
+            throw t
+        }
+    }
+
+    override suspend fun execute(server: McpServerConfig, toolName: String, arguments: JsonObject): Pair<Boolean, String> {
+        val conn = connection(server)
+        return try {
+            conn.withInitialized {
                 val params = json.encodeToJsonElement(McpCallToolParams.serializer(), McpCallToolParams(toolName, arguments))
                 val response = request("tools/call", params)
                 val result = response.result?.let {
@@ -106,9 +120,10 @@ class McpStdioTransport @Inject constructor(
             throw cancellation
         } catch (t: Throwable) {
             // B5: 仅传输层失败（EOF/IO/进程死亡）才 discard，其余（序列化/业务异常等）透传且保留连接
-            if (isChannelFailure(t)) discardConnection(server.id)
+            if (isChannelFailure(t)) discardConnection(server.id, conn)
             throw t
         }
+    }
 
     /** 是否为传输层故障（子进程死亡 / EOF / IO 错误），只有此类失败才值得销毁重建连接 */
     private fun isChannelFailure(t: Throwable): Boolean =
@@ -119,9 +134,14 @@ class McpStdioTransport @Inject constructor(
         discardConnection(serverId)
     }
 
-    private suspend fun discardConnection(serverId: String) {
+    private suspend fun discardConnection(serverId: String, failed: Connection? = null) {
         withContext(NonCancellable + Dispatchers.IO) {
-            connections.remove(serverId)?.close()
+            // 按引用精确删除：失败连接触发 discard 前，另一线程可能已经历
+            // "A 死亡 → connectionLocked 换新 B" 的重建，单参 remove 会误杀 B 及其
+            // 挂着的并发等待者（sweep 用的同样是两参 remove）
+            val removed = failed?.takeIf { connections.remove(serverId, it) }
+                ?: connections[serverId]?.takeIf { connections.remove(serverId, it) }
+            removed?.close()
         }
     }
 
@@ -201,7 +221,14 @@ class McpStdioTransport @Inject constructor(
         /** initialize 握手串行化：只挡握手本身，绝不跨 tools/call 持有。 */
         private val initMutex = Mutex()
         private var initialized = false
-        private val ignoredFrames = java.util.concurrent.atomic.AtomicInteger()
+
+        /**
+         * 连续不可路由帧（垃圾/回显/无主响应）计数：成功路由任何响应即清零——毒化只判定
+         * "通道持续输出不可解析"。旧实现每请求重置；多路复用后由读泵统一计数，若改为连接
+         * 生命周期累计，PTY 回显与 server 进度通知随正常流量穿插也会在长会话中累积到阈值，
+         * 毒杀健康连接。仅读泵线程访问。
+         */
+        private var consecutiveIgnoredFrames = 0
 
         /** 读泵 Job：连接创建时启动，close 时取消。 */
         @Volatile
@@ -296,18 +323,18 @@ class McpStdioTransport @Inject constructor(
                 }
             val waiter = parsed.id?.let { pending.remove(it) }
             if (waiter != null) {
+                consecutiveIgnoredFrames = 0
                 waiter.complete(parsed)
                 return
             }
-            // 无等待者的响应 = 超时后的迟到响应或 id 错乱的 server：计入中毒阈值——
-            // 迟到响应每次超时至多一条，正常服务远达不到 256；持续错乱说明 server 坏了，
-            // 与旧实现（按 id 匹配失败计数）保持同等回收能力
+            // 无等待者的响应 = 超时后的迟到响应或 id 错乱的 server：计入连续不可路由帧——
+            // 迟到响应每次超时至多一条且随后必有成功路由清零；持续错乱说明 server 坏了
             countIgnored("MCP 输出了过多无主响应帧")
         }
 
         private fun countIgnored(reason: String) {
             // 输出持续不可解析说明通道已"中毒"，后续请求同样无法工作，判定为传输层故障
-            if (ignoredFrames.incrementAndGet() > MAX_IGNORED_FRAMES) {
+            if (++consecutiveIgnoredFrames > MAX_IGNORED_FRAMES) {
                 failPending(McpStdioChannelException(reason))
             }
         }

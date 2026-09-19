@@ -113,6 +113,11 @@ class SessionModelSwitcher @Inject constructor(
                 } catch (cancellation: kotlinx.coroutines.CancellationException) {
                     throw cancellation
                 } catch (throwable: Throwable) {
+                    android.util.Log.w(
+                        "ContextCompaction",
+                        "切换模型后压缩失败，降级为待压缩（下一次组装重试）：${throwable.message}",
+                        throwable,
+                    )
                     pending = true
                 }
             } else {

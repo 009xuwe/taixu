@@ -218,6 +218,27 @@ class HarnessCompactionAndQueueIntegrationTest {
         compaction.beforeCompactionWriteForTest = {
             appendMessageEntry(sessionId, "m-late-1", "重读后落库的消息 A", 200L)
             appendMessageEntry(sessionId, "m-late-2", "重读后落库的消息 B", 201L)
+            // 分支摘要落在同一窗口同样会被 afterSequence 过滤排除，须一并自愈补回
+            repository.appendToLane(
+                sessionId, "main",
+                top.wkbin.taixu.core.database.HarnessEntryEntity(
+                    id = "bs-late",
+                    sessionId = sessionId,
+                    parentId = repository.findLane(sessionId, "main")!!.leafId,
+                    createdAt = 202L,
+                    entryType = CompactionManager.BRANCH_SUMMARY_ENTRY_TYPE,
+                    customType = null,
+                    payloadJson = Json.encodeToString(
+                        BranchSummaryPayload.serializer(),
+                        BranchSummaryPayload(
+                            summary = "被放弃分支的关键结论",
+                            fromLeafId = null,
+                            summarizedMessageCount = 3,
+                            createdAt = 202L,
+                        ),
+                    ),
+                ),
+            )
         }
         try {
             compaction.compact(sessionId, context, keepFromIndex = 6)
@@ -230,6 +251,10 @@ class HarnessCompactionAndQueueIntegrationTest {
             "水位线自愈必须补回重读与落库之间被直写的消息",
             listOf("m-6", "m-7", "m-8", "m-9", "m-late-1", "m-late-2"),
             projected.messages.map { it.id },
+        )
+        assertTrue(
+            "窗口内的分支摘要须一并自愈注入",
+            projected.branchSummaries.contains("被放弃分支的关键结论"),
         )
     }
 
