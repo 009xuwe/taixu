@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 sealed interface AppNavigationTarget {
     /** 无线 ADB 与日志抓取工作台 */
     data object AdbLogcat : AppNavigationTarget
+
+    /** 打开工作流运行页（通知栏点入；executionId 为空则只进入工作流目录） */
+    data class WorkflowRun(val executionId: String? = null) : AppNavigationTarget
 }
 
 /**

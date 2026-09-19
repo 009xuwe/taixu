@@ -22,12 +22,25 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @HiltAndroidApp
-class TaiXuApplication : Application() {
+class TaiXuApplication : Application(), androidx.work.Configuration.Provider {
     @Inject lateinit var crashReporter: CrashReporter
+
+    // WorkManager 按需初始化 + HiltWorkerFactory：定时计划 Worker（@HiltWorker）靠它注入
+    // harness 单例（WorkflowRunManager / WorkflowScheduleRepository）
+    @Inject lateinit var hiltWorkerFactory: androidx.hilt.work.HiltWorkerFactory
+
+    override val workManagerConfiguration: androidx.work.Configuration
+        get() = androidx.work.Configuration.Builder()
+            .setWorkerFactory(hiltWorkerFactory)
+            .build()
 
     // 启动性能：HarnessLoop / Room 仓储的构造图很重（DAO、DataStore、Agent 引擎全家桶），
     // eager 注入会拖慢第一帧。改为 dagger.Lazy，把实际构建推迟到首个 IO 协程内。
     @Inject lateinit var harnessLoopLazy: Lazy<HarnessLoop>
+    @Inject lateinit var workflowRunManagerLazy: Lazy<top.wkbin.taixu.harness.workflow.WorkflowRunManager>
+    @Inject lateinit var workflowRunUiController: top.wkbin.taixu.workflow.WorkflowRunUiController
+    @Inject lateinit var workflowApprovalNotifier: top.wkbin.taixu.workflow.WorkflowApprovalNotifier
+    @Inject lateinit var appForegroundTracker: top.wkbin.taixu.workflow.AppForegroundTracker
     @Inject lateinit var appStatsPreferences: AppStatsPreferences
     @Inject lateinit var agentSkillRepositoryLazy: Lazy<AgentSkillRepository>
     @Inject lateinit var mcpServerRepositoryLazy: Lazy<McpServerRepository>
@@ -100,6 +113,21 @@ class TaiXuApplication : Application() {
                 }
             }.onFailure {
                 android.util.Log.w("TaiXuApp", "恢复中断会话失败", it)
+            }
+            // 工作流后台化：启动对账（把进程死亡遗留的非终态运行标为已中断）+ 通知/HUD
+            // 控制器 + FGS 联动。工作流 agent 会话由工作流体系自管，已在恢复中排除。
+            val workflowRunManager = workflowRunManagerLazy.get()
+            appForegroundTracker.register(this@TaiXuApplication)
+            workflowRunUiController.start()
+            workflowApprovalNotifier.start(this@TaiXuApplication)
+            runCatching { workflowRunManager.reconcileInterruptedRuns() }
+                .onFailure { android.util.Log.w("TaiXuApp", "工作流启动对账失败", it) }
+            launch {
+                workflowRunManager.running.collectLatest { running ->
+                    if (running) {
+                        runCatching { top.wkbin.taixu.service.WorkflowForegroundService.start(this@TaiXuApplication) }
+                    }
+                }
             }
         }
     }

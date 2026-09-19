@@ -179,6 +179,7 @@ dependencies {
     implementation(project(":feature:components"))
     implementation(project(":feature:chat"))
     implementation(project(":feature:workspace"))
+    implementation(project(":feature:workflow"))
     implementation(project(":feature:navigation"))
     implementation(project(":feature:custom_iteration"))
     implementation(project(":feature:onboarding"))
@@ -199,6 +200,10 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.hilt.navigation.compose)
+    // 工作流定时计划：WorkManager 到点触发 + @HiltWorker 注入
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

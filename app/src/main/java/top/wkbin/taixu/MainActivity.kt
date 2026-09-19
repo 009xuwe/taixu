@@ -339,6 +339,14 @@ class MainActivity : AppCompatActivity() {
         if (isAdbLogcat) {
             globalNavigationBus.navigateTo(top.wkbin.taixu.core.common.navigation.AppNavigationTarget.AdbLogcat)
         }
+        // 工作流通知点入：打开运行页并定位到对应执行
+        if (action == top.wkbin.taixu.service.WorkflowForegroundService.ACTION_OPEN_RUN) {
+            globalNavigationBus.navigateTo(
+                top.wkbin.taixu.core.common.navigation.AppNavigationTarget.WorkflowRun(
+                    intentToHandle.getStringExtra(top.wkbin.taixu.service.WorkflowForegroundService.EXTRA_EXECUTION_ID),
+                ),
+            )
+        }
     }
 
     override fun onPostResume() {

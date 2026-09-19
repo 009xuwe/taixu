@@ -96,6 +96,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
+        <!-- 工作流后台执行保活：运行期间 dataSync 前台服务，结束自动退出 -->
+        <service
+            android:name=".service.WorkflowForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"
@@ -108,6 +114,9 @@
             android:name=".service.AgentReplyReceiver"
             android:exported="false" />
         <receiver
+            android:name=".workflow.WorkflowApprovalReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".service.adb.AdbNotificationReceiver"
             android:exported="false" />
         <service
@@ -116,6 +125,18 @@
         <service
             android:name="top.wkbin.taixu.ui.workflow.hud.WorkflowHudService"
             android:exported="false" />
+        <!-- 工作流定时计划使用按需初始化的 WorkManager（Configuration.Provider + HiltWorkerFactory），
+             必须移除默认的 WorkManagerInitializer，否则自定义 WorkerFactory 不生效 -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
         <!-- GUI 手势通路：必须 exported=true，否则 Android 12+ system_server 无法绑定无障碍服务 -->
         <service
             android:name="top.wkbin.taixu.runtime.gui.TaiXuGuiAccessibilityService"

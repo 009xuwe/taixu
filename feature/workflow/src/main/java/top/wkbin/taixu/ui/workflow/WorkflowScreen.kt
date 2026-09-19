@@ -27,6 +27,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.workflow.NodeRunStatus
+import top.wkbin.taixu.core.database.WorkflowScheduleEntity
 import top.wkbin.taixu.core.model.workflow.WorkflowApprovalRequest
 import top.wkbin.taixu.core.model.workflow.WorkflowDefinition
 import top.wkbin.taixu.core.model.workflow.WorkflowRunStatus
@@ -63,20 +65,29 @@ fun WorkflowScreen(
     projectName: String = "",
     initialWorkflowId: String? = null,
     initialVariables: Map<String, String> = emptyMap(),
+    initialExecutionId: String? = null,
     onBack: () -> Unit,
     viewModel: WorkflowViewModel = hiltViewModel(),
 ) {
     val definitions by viewModel.definitions.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
     val models by viewModel.models.collectAsStateWithLifecycle()
+    val schedules by viewModel.schedules.collectAsStateWithLifecycle()
+    val backgroundRuns by viewModel.backgroundActiveRuns.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); viewModel.clearError() } }
     var pendingRun by remember { mutableStateOf<WorkflowDefinition?>(null) }
+    var scheduleEditor by remember { mutableStateOf<WorkflowScheduleEntity?>(null) }
+    var scheduleEditorIsNew by remember { mutableStateOf(false) }
     val activeState by viewModel.activeState.collectAsStateWithLifecycle()
     val approval by viewModel.approvalRequest.collectAsStateWithLifecycle()
     val editorState by viewModel.editorState.collectAsStateWithLifecycle()
     var discardRequested by rememberSaveable { mutableStateOf(false) }
+    // 通知深链：进入页面即定位到指定执行（活跃运行或历史回看）
+    LaunchedEffect(initialExecutionId) {
+        if (initialExecutionId != null) viewModel.viewRun(initialExecutionId)
+    }
     var autoStarted by rememberSaveable(initialWorkflowId) { mutableStateOf(false) }
     LaunchedEffect(initialWorkflowId, definitions, autoStarted) {
         if (!autoStarted && initialWorkflowId != null) {
@@ -140,9 +151,20 @@ fun WorkflowScreen(
                 onRun = { pendingRun = it },
                 history = history,
                 onHistory = viewModel::showHistory,
+                onRerun = viewModel::rerun,
                 onEdit = viewModel::edit,
                 onDelete = viewModel::deleteWorkflow,
                 onCreate = viewModel::createWorkflow,
+                backgroundRuns = backgroundRuns,
+                onViewBackgroundRun = viewModel::viewRun,
+                schedules = schedules,
+                onNewSchedule = {
+                    scheduleEditor = null
+                    scheduleEditorIsNew = true
+                },
+                onEditSchedule = { scheduleEditor = it },
+                onToggleSchedule = viewModel::toggleSchedule,
+                onDeleteSchedule = viewModel::deleteSchedule,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
             else -> WorkflowRunView(
@@ -182,6 +204,22 @@ fun WorkflowScreen(
             },
         )
     }
+    if (scheduleEditorIsNew || scheduleEditor != null) {
+        WorkflowScheduleEditDialog(
+            definitions = definitions,
+            models = models,
+            existing = scheduleEditor.takeIf { !scheduleEditorIsNew },
+            onDismiss = {
+                scheduleEditor = null
+                scheduleEditorIsNew = false
+            },
+            onSave = { entity ->
+                viewModel.saveSchedule(entity)
+                scheduleEditor = null
+                scheduleEditorIsNew = false
+            },
+        )
+    }
 }
 
 @Composable
@@ -191,8 +229,16 @@ private fun WorkflowCatalog(
     onEdit: (WorkflowDefinition) -> Unit,
     onDelete: (WorkflowDefinition) -> Unit,
     onCreate: () -> Unit,
-    history: List<WorkflowRuntimeState>,
+    history: List<WorkflowHistoryEntry>,
     onHistory: (WorkflowRuntimeState) -> Unit,
+    onRerun: (WorkflowHistoryEntry) -> Unit,
+    backgroundRuns: List<WorkflowRuntimeState>,
+    onViewBackgroundRun: (String) -> Unit,
+    schedules: List<WorkflowScheduleEntity> = emptyList(),
+    onNewSchedule: () -> Unit = {},
+    onEditSchedule: (WorkflowScheduleEntity) -> Unit = {},
+    onToggleSchedule: (String, Boolean) -> Unit = { _, _ -> },
+    onDeleteSchedule: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var deleteRequested by remember { mutableStateOf<WorkflowDefinition?>(null) }
@@ -213,6 +259,36 @@ private fun WorkflowCatalog(
                 RuntimeButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
                     RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp))
                     Text("新建", maxLines = 1)
+                }
+            }
+        }
+        if (backgroundRuns.isNotEmpty()) {
+            item(key = "background_banner") {
+                RuntimeCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RuntimeIcon(RuntimeIconName.Play, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (backgroundRuns.size == 1) "1 个工作流正在后台运行" else "${backgroundRuns.size} 个工作流正在后台运行",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                backgroundRuns.joinToString("、") { it.definition.name },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        RuntimeOutlinedButton(
+                            onClick = { onViewBackgroundRun(backgroundRuns.first().executionId) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Text("查看", maxLines = 1)
+                        }
+                    }
                 }
             }
         }
@@ -246,10 +322,98 @@ private fun WorkflowCatalog(
                 }
             }
         }
-        if (history.isNotEmpty()) item { Text("最近运行（最近 ${history.size} 条，只读）", style = MaterialTheme.typography.titleMedium) }
-        items(history, key = { "history:${it.executionId}" }) { run ->
-            RuntimeOutlinedButton(onClick = { onHistory(run) }, modifier = Modifier.fillMaxWidth()) {
-                Text("${run.definition.name} · ${runStatusLabel(run.status)} · ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(run.startedAt ?: 0))}", maxLines = 2, overflow = TextOverflow.Ellipsis)
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "定时计划",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                    RuntimeOutlinedButton(onClick = onNewSchedule, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp))
+                        Text("新建计划", maxLines = 1)
+                    }
+                }
+            }
+            if (schedules.isEmpty()) {
+                item {
+                    Text(
+                        "还没有定时计划。把工作流设为每天定时运行、周期巡检或一次性延时触发；到点即使应用未在运行，系统也会拉起执行。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            items(schedules, key = { "schedule:${it.id}" }) { schedule ->
+                val workflowName = definitions.firstOrNull { it.id == schedule.workflowId }?.name ?: schedule.workflowId
+                RuntimeCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(16.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(schedule.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "$workflowName · ${scheduleRepeatLabel(schedule)}" +
+                                        schedule.nextRunAt?.let { next ->
+                                            " · 下次 ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(next))}"
+                                        }.orEmpty(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(checked = schedule.enabled, onCheckedChange = { onToggleSchedule(schedule.id, it) })
+                        }
+                        schedule.lastExecutionId?.let {
+                            Text(
+                                "上次触发：${schedule.lastRunAt?.let { last -> java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(last)) } ?: "—"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RuntimeOutlinedButton(onClick = { onDeleteSchedule(schedule.id) }, contentPadding = PaddingValues(9.dp)) {
+                                RuntimeIcon(RuntimeIconName.Trash, Modifier.size(16.dp))
+                            }
+                            RuntimeOutlinedButton(onClick = { onEditSchedule(schedule) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                                RuntimeIcon(RuntimeIconName.Edit, Modifier.size(16.dp))
+                                Text("编辑", maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        if (history.isNotEmpty()) item { Text("最近运行（最近 ${history.size} 条）", style = MaterialTheme.typography.titleMedium) }
+        items(history, key = { "history:${it.state.executionId}" }) { entry ->
+            val run = entry.state
+            RuntimeCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "${run.definition.name} · ${runStatusLabel(run.status)} · ${
+                                java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(run.startedAt ?: 0))
+                            }",
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            when {
+                                entry.triggerSource == "SCHEDULE" && entry.scheduleId != null -> "定时计划触发"
+                                else -> "手动触发"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    RuntimeOutlinedButton(onClick = { onRerun(entry) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                        RuntimeIcon(RuntimeIconName.Play, Modifier.size(16.dp))
+                        Text("重跑", maxLines = 1)
+                    }
+                    RuntimeOutlinedButton(onClick = { onHistory(run) }, contentPadding = PaddingValues(9.dp)) {
+                        RuntimeIcon(RuntimeIconName.List, Modifier.size(16.dp))
+                    }
+                }
             }
         }
     }

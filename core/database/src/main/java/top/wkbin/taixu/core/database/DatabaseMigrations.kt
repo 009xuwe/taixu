@@ -283,3 +283,21 @@ val MIGRATION_47_48 = object : Migration(47, 48) {
     }
 }
 
+/**
+ * Workflow background execution: adds the schedule table (定时计划) and execution-log
+ * provenance columns (triggerSource/workflowName/scheduleId) so runs can record where
+ * they came from and survive process death as RUNNING breadcrumbs.
+ */
+val MIGRATION_48_49 = object : Migration(48, 49) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS `workflow_schedules` (`id` TEXT NOT NULL, `workflowId` TEXT NOT NULL, `name` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `repeatType` TEXT NOT NULL, `hour` INTEGER, `minute` INTEGER, `intervalMinutes` INTEGER, `onceAtEpochMillis` INTEGER, `variablesJson` TEXT NOT NULL, `workspacePath` TEXT NOT NULL, `modelId` TEXT, `modelVariant` TEXT, `lastExecutionId` TEXT, `lastRunAt` INTEGER, `nextRunAt` INTEGER, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`workflowId`) REFERENCES `workflows`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )""",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workflow_schedules_workflowId` ON `workflow_schedules` (`workflowId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workflow_schedules_nextRunAt` ON `workflow_schedules` (`nextRunAt`)")
+        db.execSQL("ALTER TABLE `workflow_execution_logs` ADD COLUMN `triggerSource` TEXT NOT NULL DEFAULT 'MANUAL'")
+        db.execSQL("ALTER TABLE `workflow_execution_logs` ADD COLUMN `workflowName` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `workflow_execution_logs` ADD COLUMN `scheduleId` TEXT")
+    }
+}
+

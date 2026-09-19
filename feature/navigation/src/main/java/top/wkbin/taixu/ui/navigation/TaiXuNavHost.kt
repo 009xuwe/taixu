@@ -104,6 +104,8 @@ sealed interface AppDestination : NavKey
     val projectName: String = "",
     val workflowId: String? = null,
     val initialVariables: Map<String, String> = emptyMap(),
+    // 通知栏深链：进入工作流页后直接定位到该执行的运行视图
+    val executionId: String? = null,
 ) : AppDestination
 
 /**
@@ -176,6 +178,14 @@ fun TaiXuNavHost(
                             settingsStack.pushRaw(AdbLogcatDestination)
                         }
                     }
+                    globalNavigationBus.clearLatest(target)
+                }
+                is top.wkbin.taixu.core.common.navigation.AppNavigationTarget.WorkflowRun -> {
+                    // 工作流通知点入：切到智枢栈并打开运行页
+                    selectedMain = MainDestination.Agent
+                    agentStack.pushRaw(
+                        WorkflowDestination(executionId = target.executionId),
+                    )
                     globalNavigationBus.clearLatest(target)
                 }
             }
@@ -300,6 +310,7 @@ fun TaiXuNavHost(
                         projectName = destination.projectName,
                         initialWorkflowId = destination.workflowId,
                         initialVariables = destination.initialVariables,
+                        initialExecutionId = destination.executionId,
                         onBack = ::popBack,
                     )
                 }

@@ -17,6 +17,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // 迁移测试（MigrationTestHelper）从测试资产读取导出的 schema JSON
+    sourceSets {
+        named("test") {
+            assets.srcDir("$projectDir/schemas")
+        }
+    }
 }
 
 kotlin {

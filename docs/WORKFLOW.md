@@ -29,7 +29,7 @@
 - 并行审批按到达顺序展示；关闭/取消后释放对应请求，不覆盖或丢失另一节点的审批。
 - 定义保存前执行结构校验，包括重复 ID、悬空边、非法超时和环检测。
 - 每次运行的完整状态历史写入 Room；数据库版本为 47。
-- 编辑定义、重新播种内置流程不会删除历史；历史携带当时的定义快照，保存旧运行不会覆盖新编辑。目录底部可打开最近 5 次记录，只读查看，不会重新执行副作用。
+- 编辑定义、重新播种内置流程不会删除历史；历史携带当时的定义快照，保存旧运行不会覆盖新编辑。目录底部可打开最近 5 次记录回看，也可一键「重跑」（沿用当时的定义、变量与工作区，显式用户动作才发起）。
 
 ## 手机与宽屏运行界面
 
@@ -89,7 +89,16 @@
 
 智能体节点通过每次运行、每个节点独立的持久化 Harness 会话与 Lane 执行，不切换智枢当前会话。`prompt` 支持 `${WORKSPACE_PATH}`、`${变量名}`、`${节点ID.output}` 与 `${previous.output}`；后者只合并实际激活的直接前驱，按连线顺序输出，不受无关并行节点影响。子智能体节点可配置 `role`，或同时配置 `department` 与 `agentQuery`，写权限范围由逗号分隔的 `writePaths` 声明。
 
-主动推荐目前接入构建失败、APK 产出两类领域事件，仅推荐、不自动执行。Git 脏状态与 FileWatch 仍是扩展点，没有启用后台监听。工作流执行由页面 ViewModel 生命周期管理；退出运行页会取消，不支持进程被系统杀死后的自动恢复执行。修复流程拒绝后续审批不会自动回滚已有修改。
+主动推荐目前接入构建失败、APK 产出两类领域事件，仅推荐、不自动执行。Git 脏状态与 FileWatch 仍是扩展点，没有启用后台监听。
+
+## 后台运行与定时计划（2026-09）
+
+- **运行与 UI 解耦**：执行由进程级单例 `WorkflowRunManager`（harness）持有，运行页退出/销毁 ViewModel 不再取消工作流；引擎层支持多运行并发，页面通过 `viewRun(executionId)` 切换关注的运行。目录页对仍在推进的运行显示「后台运行中」横幅，可一键查看。
+- **持久化**：启动即写 RUNNING 行，运行中按约 3 秒节流 upsert 面包屑，终态写最终快照；历史行记录 `triggerSource`（MANUAL/SCHEDULE）与 `scheduleId`。进程被杀后启动对账（`reconcileInterruptedRuns`）把非终态行标为 CANCELLED（"进程曾被系统终止"），节点状态与日志保留，可在目录页手动重新运行。断点续跑不做。
+- **前台保活**：有运行时 Application 联动拉起 `WorkflowForegroundService`（dataSync + WakeLock/WifiLock），逐运行展示进度通知；结束发终态通知后自动退出。Android 15+ dataSync 6h 硬超时后服务按 DETACH 退出前台，运行继续。
+- **审批**：后台出现待审批节点时发 IMPORTANCE_HIGH 通知，可直接「批准/拒绝」（`WorkflowApprovalReceiver`），点正文深链打开运行页（`AppNavigationTarget.WorkflowRun`）。
+- **定时计划**：`workflow_schedules` 表 + WorkManager（UniqueWork，tag=计划 id）。重复方式：每天 HH:mm（24h 周期 + initialDelay）、每 N 分钟（下限 15）、一次性延时（触发后自动停用）。WorkManager 按需初始化（`Configuration.Provider` + HiltWorkerFactory），进程被杀/设备重启后到点自动拉起执行。到点 Worker 走 `WorkflowRunManager.start(trigger=SCHEDULE)`；沙箱未就绪先等待（约 2 分钟），未安装 RootFS 不自动下载，直接落 FAILED 历史。DAILY/INTERVAL 在 Doze 下可能有分钟级顺延。
+- **会话恢复边界**：`workflow:<executionId>:<nodeId>` 前缀的 Harness 会话不参与 `recoverAllInterruptedSessions` 自动续跑，避免死运行的副作用重放。修复流程拒绝后续审批不会自动回滚已有修改。
 
 ## 验证范围
 

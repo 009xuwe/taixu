@@ -267,6 +267,10 @@ class HarnessLoop @Inject constructor(
         val sessions = withContext(Dispatchers.IO) { sessionDao.listAll() }
         var recovered = 0
         for (session in sessions) {
+            // workflow:<executionId>:<nodeId> 会话由工作流体系自管：所属运行已随进程死亡
+            // 终止（启动时由 WorkflowRunManager.reconcileInterruptedRuns 对账），不能被
+            // 当作普通中断会话自动续跑，避免副作用重放。
+            if (session.id.startsWith(WORKFLOW_SESSION_PREFIX)) continue
             val hasActiveOperation = withContext(Dispatchers.IO) {
                 operationCoordinator.active(session.id) != null
             }
@@ -1392,5 +1396,7 @@ class HarnessLoop @Inject constructor(
         const val MAX_ROUNDS = 200
         val KNOWN_TOOL_NAMES: Set<String> = HarnessToolRoundRunner.KNOWN_TOOL_NAMES
 
+        /** 工作流节点专属 Harness 会话的 id 前缀（workflow:<executionId>:<nodeId>）。 */
+        const val WORKFLOW_SESSION_PREFIX = "workflow:"
     }
 }
