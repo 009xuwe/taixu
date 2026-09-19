@@ -27,7 +27,13 @@ data class McpOAuthCredentialEntity(
 )
 
 /** Short-lived browser authorization transaction. Secret fields are encrypted. */
-@Entity(tableName = "mcp_oauth_transactions")
+@Entity(
+    tableName = "mcp_oauth_transactions",
+    indices = [
+        androidx.room.Index(value = ["serverId"]),
+        androidx.room.Index(value = ["expiresAt"]),
+    ],
+)
 data class McpOAuthTransactionEntity(
     @androidx.room.PrimaryKey val state: String,
     val serverId: String,

@@ -196,6 +196,29 @@ class SubagentLaneContractsTest {
     }
 
     @Test
+    fun `mcp call and mutating build script actions require a lease`() {
+        val mcpCall = buildJsonObject { put("action", "call") }
+        val create = buildJsonObject { put("action", "create") }
+        val update = buildJsonObject { put("action", "update") }
+        val bind = buildJsonObject { put("action", "bind") }
+
+        assertNotNull(subagentWriteScopeRejection(HarnessTool.MCP, mcpCall, emptyList()))
+        assertNull(subagentWriteScopeRejection(HarnessTool.MCP, mcpCall, listOf("scripts")))
+        assertNotNull(subagentWriteScopeRejection(HarnessTool.BUILD_SCRIPT, create, emptyList()))
+        assertNotNull(subagentWriteScopeRejection(HarnessTool.BUILD_SCRIPT, update, emptyList()))
+        assertNotNull(subagentWriteScopeRejection(HarnessTool.BUILD_SCRIPT, bind, emptyList()))
+        assertNull(subagentWriteScopeRejection(HarnessTool.BUILD_SCRIPT, create, listOf("scripts")))
+    }
+
+    @Test
+    fun `mcp metadata and build script reads stay available in read only lanes`() {
+        assertNull(subagentWriteScopeRejection(HarnessTool.MCP, buildJsonObject { put("action", "list") }, emptyList()))
+        assertNull(subagentWriteScopeRejection(HarnessTool.MCP, buildJsonObject { put("action", "inspect") }, emptyList()))
+        assertNull(subagentWriteScopeRejection(HarnessTool.BUILD_SCRIPT, buildJsonObject { put("action", "list") }, emptyList()))
+        assertNull(subagentWriteScopeRejection(HarnessTool.BUILD_SCRIPT, buildJsonObject { put("action", "get") }, emptyList()))
+    }
+
+    @Test
     fun `read tools are never gated by the write lease`() {
         val args = buildJsonObject { put("path", "server/src/Main.kt") }
 

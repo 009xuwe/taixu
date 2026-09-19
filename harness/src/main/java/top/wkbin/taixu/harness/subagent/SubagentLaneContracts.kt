@@ -186,6 +186,17 @@ internal fun subagentWriteScopeRejection(
     args: JsonObject,
     writePaths: List<String>,
 ): String? {
+    val action = args.stringOrNull("action")?.lowercase()
+    if (tool == HarnessTool.MCP && args.stringOrNull("action")?.lowercase() == "call") {
+        return if (writePaths.isEmpty()) {
+            "本子任务未声明 write_paths，按只读任务执行，禁止调用可能改变外部状态的 MCP 能力。请改为只读能力，或让主智能体在重新派发时声明具体写租约。"
+        } else null
+    }
+    if (tool == HarnessTool.BUILD_SCRIPT && action in setOf("create", "update", "delete", "bind", "unbind")) {
+        return if (writePaths.isEmpty()) {
+            "本子任务未声明 write_paths，按只读任务执行，禁止执行 build_script 的 $action 落盘/绑定动作。请改为 list/get，或重新派发并声明写租约。"
+        } else null
+    }
     val pathKey = when (tool) {
         HarnessTool.WRITE, HarnessTool.EDIT -> "path"
         HarnessTool.DOWNLOAD -> "destination"

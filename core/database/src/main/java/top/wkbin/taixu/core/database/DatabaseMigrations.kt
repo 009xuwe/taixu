@@ -316,3 +316,11 @@ val MIGRATION_49_50 = object : Migration(49, 50) {
     }
 }
 
+/** Index OAuth transactions by server and expiry for callback cleanup and per-server lookup. */
+val MIGRATION_50_51 = object : Migration(50, 51) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_mcp_oauth_transactions_serverId` ON `mcp_oauth_transactions` (`serverId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_mcp_oauth_transactions_expiresAt` ON `mcp_oauth_transactions` (`expiresAt`)")
+    }
+}
+

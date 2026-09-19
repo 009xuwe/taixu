@@ -4,6 +4,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -72,6 +73,8 @@ class BuiltinToolContractTest {
         assertEquals("6", subagents["maxItems"].toString())
         assertTrue(tool.function.description.contains("本地索引"))
         assertTrue(tool.function.description.contains("同一次调用"))
+        assertFalse("schema must not promise background completion injection", properties.containsKey("background"))
+        assertFalse("description must not promise background completion injection", tool.function.description.contains("background=true"))
     }
 
     @Test

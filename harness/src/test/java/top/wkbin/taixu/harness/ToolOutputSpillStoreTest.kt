@@ -107,4 +107,16 @@ class ToolOutputSpillStoreTest {
         // 超过内部产物 16 MiB 配额才静默降级，不允许无限吃磁盘
         assertNull(ToolOutputSpillStore.spill(access, "grep", "x".repeat(17 * 1024 * 1024)))
     }
+
+    @Test
+    fun `cleanup removes abandoned temporary artifacts`() = runBlocking {
+        val root = tmp.newFolder("ws")
+        val access = WorkspaceFileAccess(root)
+        val dir = File(root, ToolOutputSpillStore.DIR).also { it.mkdirs() }
+        val temporary = File(dir, ".tool-output.txt.tmp-123").also { it.writeText("partial") }
+
+        ToolOutputSpillStore.cleanup(access, now())
+
+        assertFalse(temporary.exists())
+    }
 }

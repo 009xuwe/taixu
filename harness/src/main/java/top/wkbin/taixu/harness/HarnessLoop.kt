@@ -1336,7 +1336,12 @@ class HarnessLoop @Inject constructor(
                         // 「本会话内记住」：用户显式勾选时把该操作的规范化类别写入会话授权表。
                         // critical 风险永不记忆；表纯内存、随会话删除/进程退出销毁（无永久授权）。
                         if (rememberForSession && !request.riskLevel.equals("critical", ignoreCase = true)) {
-                            sessionApprovalGrants.grant(request.sessionId, request.toolName, request.argumentsJson)
+                            sessionApprovalGrants.grant(
+                                request.sessionId,
+                                request.toolName,
+                                request.argumentsJson,
+                                request.riskLevel,
+                            )
                         }
                         val args = json.parseToJsonElement(request.argumentsJson) as? JsonObject
                             ?: error("审批参数不是 JSON 对象")
@@ -1434,21 +1439,23 @@ class HarnessLoop @Inject constructor(
             }
             sessionJobs[sessId]?.takeIf { it.isActive }?.join()
             val verdict = resumePolicy.evaluate(request, approved = true)
-            if (verdict.isInvalid) {
-                if (approvalRepository.claimPending(request.id, verdict.claimStatus)) {
-                    approvalRepository.mark(request.id, verdict.claimStatus)
-                    messageProjector.append(
-                        sessId,
-                        ToolResult(
-                            id = newId(), createdAt = now(), toolCallId = request.toolCallId,
-                            success = false,
-                            output = resumePolicy.invalidationResultMessage(verdict.invalidationReason.orEmpty()),
-                        ),
-                    )
-                }
+            if (!approvalRepository.claimPending(request.id, verdict.claimStatus)) {
                 return@launch
             }
-            if (!approvalRepository.claimPending(request.id, verdict.claimStatus)) {
+            if (verdict.isInvalid) {
+                val durableTaskId = agentTaskStateMachine.activeForSession(sessId)
+                    ?.takeIf { it.status == top.wkbin.taixu.core.database.task.AgentTaskStatus.WAITING_APPROVAL }
+                    ?.id
+                startClaimedSessionRun(sessId, durableTaskId) {
+                    val result = ToolResult(
+                        id = newId(), createdAt = now(), toolCallId = request.toolCallId,
+                        success = false,
+                        output = resumePolicy.invalidationResultMessage(verdict.invalidationReason.orEmpty()),
+                    )
+                    messageProjector.append(sessId, result)
+                    approvalRepository.mark(request.id, verdict.claimStatus)
+                    runLoopInternal(sessId, startedAt = now(), taskId = durableTaskId)
+                }
                 return@launch
             }
             val durableTaskId = agentTaskStateMachine.activeForSession(sessId)

@@ -132,10 +132,9 @@ class McpStdioTransportLifecycleTest {
             "timeout message must name the request, got: " + failure.message,
             failure.message.orEmpty().contains("超时"),
         )
-        assertEquals(
-            "timed-out connection must be kept (late response is dropped by id, like the HTTP path)",
-            setOf(echoServer.id),
-            transport.test_connectionKeys(),
+        assertTrue(
+            "timed-out connection must be discarded so a possibly side-effecting call is never replayed",
+            transport.test_connectionKeys().isEmpty(),
         )
     }
 
@@ -196,7 +195,7 @@ class McpStdioTransportLifecycleTest {
     }
 
     @Test
-    fun `late response after a timeout does not poison the connection`() = runBlocking {
+    fun `late response after a timeout discards the connection`() = runBlocking {
         val channel = DelayedRespondingMcpChannel()
         val transport = newTransport(FakeChannelFactory(channel))
         transport.injectConnection(echoServer, channel)
@@ -204,10 +203,10 @@ class McpStdioTransportLifecycleTest {
 
         val first = runCatching { transport.discover(echoServer) }
         assertTrue("首次发现应因超时失败", first.isFailure)
-
-        transport.requestTimeoutOverrideMs = null
-        val second = withTimeoutOrNull(5_000L) { runCatching { transport.discover(echoServer) } }
-        assertTrue("迟到响应须被按 id 丢弃而非毒化连接，下一次发现应成功", second?.isSuccess == true)
+        assertTrue(
+            "迟到响应所在连接必须被丢弃，避免后续调用复用可能已产生副作用的会话",
+            transport.test_connectionKeys().isEmpty(),
+        )
     }
 
     /** tools/call 响应被门禁扣住的多路复用测试通道：其余请求即时回应。 */

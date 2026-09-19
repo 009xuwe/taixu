@@ -14,7 +14,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -96,14 +96,14 @@ class SubagentOrchestrator @Inject constructor(
         specs: List<SubagentTaskSpec>,
         parentSessionId: String,
     ): Pair<Boolean, String> {
-        return coroutineScope {
+        return supervisorScope {
         val parentSession = sessionDao.findById(parentSessionId)
         val workspace = parentSession?.workspace.orEmpty()
         val modelId = parentSession?.modelId
         val modelVariant = parentSession?.modelVariant
         val profileIndex = subagentRepository.enabledIndex()
         if (profileIndex.isEmpty()) {
-            return@coroutineScope false to "当前没有启用的子智能体角色，请先在 Agent 设置中添加或启用角色"
+            return@supervisorScope false to "当前没有启用的子智能体角色，请先在 Agent 设置中添加或启用角色"
         }
         val parentLeaf = laneManager.get(parentSessionId, "main")?.leafId
 

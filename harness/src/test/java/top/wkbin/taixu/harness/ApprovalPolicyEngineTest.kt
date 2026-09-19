@@ -143,7 +143,7 @@ class ApprovalPolicyEngineTest {
     @Test
     fun `assisted mode auto allows host GUI observe and touch primitives`() {
         assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_observe"), workspace).required)
-        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_capture", "path" to "/tmp/a.png"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_capture", "path" to "/tmp/a.png"), workspace).required)
         assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_click", "x" to "1", "y" to "2"), workspace).required)
         assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_swipe", "x1" to "1", "y1" to "2", "x2" to "3", "y2" to "4"), workspace).required)
         assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.HOST, args("action" to "screen_input_text", "text" to "hi"), workspace).required)

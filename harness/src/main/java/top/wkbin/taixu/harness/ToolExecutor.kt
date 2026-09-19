@@ -92,6 +92,16 @@ class ToolExecutor @Inject constructor(
         // 直接作为工具结果落库并续跑，无需重执行。bypassApproval（批准路径误重放）时
         // 返回中性结果，避免重复建问题请求。
         if (toolCall.tool == HarnessTool.ASK_USER) {
+            if (!allowApprovalRequest) {
+                return ToolResult(
+                    id = UUID.randomUUID().toString(),
+                    createdAt = now,
+                    toolCallId = toolCall.id,
+                    success = false,
+                    output = "该工具需要用户回答，但当前子智能体 Lane 不支持暂停等待用户输入，本次没有创建问题请求。请将问题交接给主智能体，由主会话重新发起 ask_user。",
+                    approvalDeferred = true,
+                )
+            }
             return executeAskUser(toolCall, sessionId, workspace, operationId, now)
         }
         val outcome = try {
@@ -109,6 +119,7 @@ class ToolExecutor @Inject constructor(
                         sessionId = sessionId,
                         toolName = toolCall.rawToolName ?: toolCall.tool.name.lowercase(),
                         argumentsJson = toolCall.args.toString(),
+                        riskLevel = decision.riskLevel,
                     )
                 if (decision.required && !grantedBySession) {
                     if (!allowApprovalRequest) {
@@ -266,7 +277,11 @@ class ToolExecutor @Inject constructor(
             HarnessTool.BASE -> executeBase(args, workspace)
             HarnessTool.PROCESS -> executeProcess(args, workspace)
             HarnessTool.HOST -> executeHost(args, operationId, sessionId)
-            HarnessTool.DOWNLOAD -> executeDownload(args, activeFileAccess, progressReporter)
+            HarnessTool.DOWNLOAD -> {
+                val destinationPath = args.stringArg("destination")
+                if (destinationPath != null) captureBeforeWrite(sessionId, activeFileAccess, destinationPath)
+                executeDownload(args, activeFileAccess, progressReporter)
+            }
             HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, workspace) ?: (false to "未初始化记忆执行器")
             HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
             HarnessTool.SCRATCHPAD -> contextExecutor?.executeScratchpad(args, sessionId) ?: (false to "未初始化草稿执行器")
@@ -734,6 +749,14 @@ class ToolExecutor @Inject constructor(
     }
 
     private suspend fun executeCompress(args: JsonObject, sessionId: String): Pair<Boolean, String> {
+        val compressionEnabled = if (::settingsDataStore.isInitialized) {
+            runCatching { settingsDataStore.commandOutputCompressionEnabled.first() }.getOrDefault(true)
+        } else {
+            true
+        }
+        if (!compressionEnabled) {
+            return false to "手动 compress 已被设置中的‘命令输出压缩’开关关闭；未修改会话历史。请先开启该开关后重试。"
+        }
         val manager = compactionManager ?: return false to "未初始化压缩管理器"
         val mode = args.stringArg("mode").orEmpty().trim().lowercase()
         val anchor = args.stringArg("anchor").orEmpty()
@@ -1181,7 +1204,18 @@ class ToolExecutor @Inject constructor(
         // 且 commit 恢复走 write（同样受 1MiB 上限约束），快照了也恢复不回去。
         // 注意不能返回 null 充当"文件不存在"快照——那会让 rewind 误删该文件。
         val size = activeFileAccess.fileSizeOrNull(normalized)
-        if (size != null && size > CheckpointStore.SNAPSHOT_MAX_BYTES) return
+        if (size != null && size > CheckpointStore.SNAPSHOT_MAX_BYTES) {
+            eventBus?.emit(
+                top.wkbin.taixu.harness.events.HarnessEvent.RecoveryApplied(
+                    sessionId = sessionId,
+                    timestamp = System.currentTimeMillis(),
+                    operationId = null,
+                    outcome = "checkpoint_incomplete",
+                    detail = "文件 $normalized 超过 ${CheckpointStore.SNAPSHOT_MAX_BYTES} bytes，无法完整捕获轮前快照；本轮 rewind 不能保证恢复该文件。",
+                ),
+            )
+            return
+        }
         checkpointStore?.capture(sessionId, normalized, activeFileAccess.previewOrNull(normalized))
     }
 

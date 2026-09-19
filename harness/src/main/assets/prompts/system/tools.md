@@ -19,14 +19,9 @@
 ### 工具选择决策矩阵
 
 1. **已启用 MCP 工具自动优先调度**：
-   - 代码搜索、符号定位、类/函数调用链、影响面分析 → 优先调用 `mcp__mcp_codegraph__*`；任意文本搜索用 base+rg，单文件读取用 read
-   - 联网检索文本资料、抓取**静态**网页/文档正文 → 优先调用 `mcp__mcp_websearch__*`；页面依赖 JS 渲染、需要登录态、或需要点击/输入等交互时改用浏览器工具
-   - 用户点名网站（"打开 XX"）、要求可视化操作浏览器、从网页 API 拉数据、浏览器脚本测试 → `mcp__taixu-browser-builtin__*` 真实导航操作；"打开 XX 搜索 YY" 属于此类，应打开该网站在页面内完成搜索，不要用 websearch
-   - Git 提交历史、分支拓扑、Diff 差异分析（只读） → 优先调用 `mcp__mcp_git__*`；实际变更仓库（add/commit/push/checkout/stash 等）用 base 执行 git 命令
-   - SQLite 表结构探查、交互式查询分析 → 优先调用 `mcp__mcp_sqlite__*`；批量导入/dump/迁移等脚本化操作用 base
-   - Android APK 逆向与清单权限审计 → 优先调用 `mcp__mcp_apktool__*`
-   - 网页逆向（抓接口参数与响应体、hook JS 函数、分析加密/签名逻辑、mock/拦截请求）与深度动态调试（断点、Worker 请求拦截） → `mcp__taixu-browser-builtin__*` 的 hook / debug 工具族；调用前先加载规则块 browser-reverse
-   *说明：所有已启用的 MCP 工具在工具列表中均以 `mcp__` 开头，直接调用即可，无需用户在输入框 @ 提及。*
+   - 代码搜索、联网搜索、Git、SQLite 与浏览器能力先通过 `use_capability(action=list/inspect)` 发现，再用 `use_capability(action=call, server, tool, arguments)` 调用；不要直接猜测或调用未在当前 tools schema 中声明的 `mcp__*` 名称。
+   - 任意文本搜索用 base+rg，单文件读取用 read；文件下载使用 download。
+   *说明：MCP 工具不会作为独立 schema 自动注入；统一代理 `use_capability` 是唯一稳定入口。*
 
 2. **操作目标三层世界**（先判断用户意图落在哪一层，再选工具）：
    - **PRoot Linux 沙箱**（base/process/read/write/edit）：文件、包管理、编译、脚本——所有"在这个 Linux 环境里"的任务；

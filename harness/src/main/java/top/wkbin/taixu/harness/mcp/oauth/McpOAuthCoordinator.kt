@@ -4,8 +4,14 @@ import android.net.Uri
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -85,6 +91,9 @@ class McpOAuthCoordinator @Inject constructor(
         }
         val token = try {
             exchange(transaction, code!!)
+        } catch (cancellation: CancellationException) {
+            _states.value = _states.value - transaction.serverId
+            throw cancellation
         } catch (failure: Throwable) {
             _states.value = _states.value + (
                 transaction.serverId to top.wkbin.taixu.core.model.McpAuthState.Error(
@@ -137,18 +146,28 @@ class McpOAuthCoordinator @Inject constructor(
                 .apply { current.resource?.let { add("resource", it) } }
                 .build()
             val request = Request.Builder().url(endpoint).post(body).build()
-            val token = executeTokenRequest(request, now)
-            credentials.saveCredential(
-                current.copy(
-                    accessToken = token.accessToken,
-                    refreshToken = token.refreshToken ?: refreshToken,
-                    tokenType = token.tokenType,
-                    scope = token.scope ?: current.scope,
-                    expiresAt = token.expiresAt,
-                    credentialRevision = now,
-                ),
-            )
-            token.accessToken
+            _states.value = _states.value + (serverId to top.wkbin.taixu.core.model.McpAuthState.Authorizing)
+            try {
+                val token = executeTokenRequest(request, now)
+                credentials.saveCredential(
+                    current.copy(
+                        accessToken = token.accessToken,
+                        refreshToken = token.refreshToken ?: refreshToken,
+                        tokenType = token.tokenType,
+                        scope = token.scope ?: current.scope,
+                        expiresAt = token.expiresAt,
+                        credentialRevision = now,
+                    ),
+                )
+                _states.value = _states.value - serverId
+                token.accessToken
+            } catch (cancellation: CancellationException) {
+                _states.value = _states.value - serverId
+                throw cancellation
+            } catch (failure: Throwable) {
+                _states.value = _states.value + (serverId to top.wkbin.taixu.core.model.McpAuthState.Error(failure.message ?: "OAuth token refresh failed"))
+                throw failure
+            }
         }
     }
 
@@ -158,7 +177,7 @@ class McpOAuthCoordinator @Inject constructor(
         _states.value = _states.value - serverId
     }
 
-    private fun exchange(transaction: McpOAuthTransaction, code: String): TokenResponse {
+    private suspend fun exchange(transaction: McpOAuthTransaction, code: String): TokenResponse {
         val body = FormBody.Builder()
             .add("grant_type", "authorization_code")
             .add("code", code)
@@ -172,23 +191,44 @@ class McpOAuthCoordinator @Inject constructor(
         return executeTokenRequest(request, System.currentTimeMillis())
     }
 
-    private fun executeTokenRequest(request: Request, now: Long): TokenResponse =
-        client.newCall(request).execute().use { response ->
-            val text = response.body.string()
-            check(response.isSuccessful) { "OAuth token request failed (HTTP ${response.code})" }
-            val json = org.json.JSONObject(text)
-            val access = json.optString("access_token").takeIf { it.isNotBlank() }
-                ?: error("OAuth token response missing access_token")
-            val expires = json.optLong("expires_in", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
-                ?.let { now + it * 1000L }
-            TokenResponse(
-                accessToken = access,
-                refreshToken = json.optString("refresh_token").takeIf { it.isNotBlank() },
-                tokenType = json.optString("token_type", "Bearer"),
-                scope = json.optString("scope").takeIf { it.isNotBlank() },
-                expiresAt = expires,
-            )
+    private suspend fun executeTokenRequest(request: Request, now: Long): TokenResponse = withContext(Dispatchers.IO) {
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    if (!continuation.isActive) {
+                        response.close()
+                        return
+                    }
+                    try {
+                        response.use {
+                            val text = it.body.string()
+                            check(it.isSuccessful) { "OAuth token request failed (HTTP ${it.code})" }
+                            val json = org.json.JSONObject(text)
+                            val access = json.optString("access_token").takeIf { value -> value.isNotBlank() }
+                                ?: error("OAuth token response missing access_token")
+                            val expires = json.optLong("expires_in", Long.MIN_VALUE).takeIf { value -> value != Long.MIN_VALUE }
+                                ?.let { value -> now + value * 1000L }
+                            continuation.resume(TokenResponse(
+                                accessToken = access,
+                                refreshToken = json.optString("refresh_token").takeIf { value -> value.isNotBlank() },
+                                tokenType = json.optString("token_type", "Bearer"),
+                                scope = json.optString("scope").takeIf { value -> value.isNotBlank() },
+                                expiresAt = expires,
+                            ))
+                        }
+                    } catch (failure: Throwable) {
+                        if (continuation.isActive) continuation.resumeWithException(failure)
+                    }
+                }
+            })
         }
+    }
 
     private data class TokenResponse(
         val accessToken: String,

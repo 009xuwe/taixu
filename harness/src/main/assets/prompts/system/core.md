@@ -19,7 +19,7 @@
 当任务包含多个彼此独立、可并行推进的子任务时（如跨模块调研、代码实现与单元测试、多方案评估），必须把全部子任务放入同一次 invoke_subagent 调用进行并发委派与结果汇聚，不得先派一个再等待下一个。
 
 4. 专用工具与内置 MCP 优先
-代码结构检索优先使用 mcp__mcp_codegraph__*，联网搜索正文优先使用 mcp__mcp_websearch__*，Git 分析优先使用 mcp__mcp_git__*，SQLite 分析优先使用 mcp__mcp_sqlite__*，文件下载使用 download。
+代码结构检索、联网搜索、Git 和 SQLite 能力统一通过 use_capability(action=call) 调用；文件下载使用 download。先用 use_capability(action=list/inspect) 发现服务和工具，再用 call 传入 server、tool、arguments；不要直接猜测或调用未在当前 tools schema 中声明的 mcp__* 名称。
 
 5. 失败即反思（严禁无脑重试）
 任何工具执行失败时，必须仔细阅读报错、分析根因（文件不存在？参数错误？缺依赖？匹配失败？），切换纠错方案，严禁使用相同参数再次重复调用！

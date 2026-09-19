@@ -23,7 +23,7 @@ import kotlinx.serialization.json.contentOrNull
  * 键类别：
  * - `cmd:` base/process/host 等带 command 参数的操作 → 命令前缀（剥环境变量后取前两个 token）；
  * - `dir:` write/edit/download 等带 path/destination 的操作 → 目标的父目录；
- * - `mcp:` mcp__server__tool → server 段；
+ * - `mcp:` mcp__server__tool / use_capability(call) → server + tool；
  * - `exact:` 其余操作 → argumentsJson 的 SHA-256。
  */
 @Singleton
@@ -32,8 +32,8 @@ class SessionApprovalGrants @Inject constructor() {
     private val grants = java.util.concurrent.ConcurrentHashMap<String, LinkedHashMap<String, Long>>()
 
     /** @return 本会话内是否已有能覆盖该操作类别的授权。 */
-    fun isGranted(sessionId: String, toolName: String, argumentsJson: String): Boolean {
-        if (sessionId.isBlank()) return false
+    fun isGranted(sessionId: String, toolName: String, argumentsJson: String, riskLevel: String = "normal"): Boolean {
+        if (sessionId.isBlank() || !isRememberableRisk(riskLevel)) return false
         val requestKey = grantKey(toolName, argumentsJson) ?: return false
         val sessionGrants = grants[sessionId] ?: return false
         return synchronized(sessionGrants) {
@@ -42,8 +42,8 @@ class SessionApprovalGrants @Inject constructor() {
     }
 
     /** 记录一条会话内授权；同类键刷新时间戳，超上限淘汰最旧。 */
-    fun grant(sessionId: String, toolName: String, argumentsJson: String) {
-        if (sessionId.isBlank()) return
+    fun grant(sessionId: String, toolName: String, argumentsJson: String, riskLevel: String = "normal") {
+        if (sessionId.isBlank() || !isRememberableRisk(riskLevel)) return
         val key = grantKey(toolName, argumentsJson) ?: return
         val sessionGrants = grants.getOrPut(sessionId) { LinkedHashMap() }
         synchronized(sessionGrants) {
@@ -64,6 +64,9 @@ class SessionApprovalGrants @Inject constructor() {
     companion object {
         private const val MAX_GRANTS_PER_SESSION = 64
 
+        private fun isRememberableRisk(riskLevel: String): Boolean =
+            riskLevel.trim().lowercase() !in setOf("high", "critical")
+
         /**
          * 规范化类别键；无法归类（参数不可解析、无命令/路径/MCP 特征）返回 null——
          * 归不了类的操作一律走逐次审批，不做模糊放行。
@@ -73,14 +76,16 @@ class SessionApprovalGrants @Inject constructor() {
                 .getOrNull() as? JsonObject ?: return null
             val tool = toolName.lowercase()
             if (tool == "use_capability") {
-                // use_capability(call) 的会话授权按目标 server 记：args.server 即服务段
                 val server = args.stringOf("server").orEmpty().trim()
-                if (server.isNotBlank()) return "mcp:$server"
+                val innerTool = args.stringOf("tool").orEmpty().trim()
+                if (server.isNotBlank() && innerTool.isNotBlank()) return "mcp:$server:$innerTool"
             }
             if (tool.startsWith("mcp__")) {
-                val server = tool.split("__").getOrNull(1).orEmpty()
-                if (server.isBlank()) return null
-                return "mcp:$server"
+                val parts = tool.split("__")
+                val server = parts.getOrNull(1).orEmpty()
+                val innerTool = parts.getOrNull(2).orEmpty()
+                if (server.isBlank() || innerTool.isBlank()) return null
+                return "mcp:$server:$innerTool"
             }
             args.stringOf("command")?.takeIf { it.isNotBlank() }?.let { command ->
                 val prefix = commandPrefix(command) ?: return@let

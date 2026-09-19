@@ -312,7 +312,10 @@ fun McpSettingsScreen(
             onAuthorize = {
                 screenScope.launch {
                     runCatching { viewModel.beginMcpAuthorization(server) }
-                        .onSuccess { screenContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
+                        .onSuccess {
+                            runCatching { screenContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
+                                .onFailure { error -> Toast.makeText(screenContext, "授权启动失败：${error.message}", Toast.LENGTH_SHORT).show() }
+                        }
                         .onFailure { Toast.makeText(screenContext, "授权启动失败：${it.message}", Toast.LENGTH_SHORT).show() }
                 }
             },

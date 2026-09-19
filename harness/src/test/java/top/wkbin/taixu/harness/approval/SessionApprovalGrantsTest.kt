@@ -53,11 +53,12 @@ class SessionApprovalGrantsTest {
     }
 
     @Test
-    fun `mcp tools grant per server not per tool`() {
-        assertEquals("mcp:browser", SessionApprovalGrants.grantKey("mcp__browser__navigate", """{"url": "https://a.com"}"""))
+    fun `mcp tools grant per server and tool`() {
+        assertEquals("mcp:browser:navigate", SessionApprovalGrants.grantKey("mcp__browser__navigate", """{"url": "https://a.com"}"""))
         val grants = SessionApprovalGrants()
         grants.grant("s1", "mcp__browser__navigate", """{"url": "https://a.com"}""")
-        assertTrue(grants.isGranted("s1", "mcp__browser__click", """{"x": 1}"""))
+        assertTrue(grants.isGranted("s1", "mcp__browser__navigate", """{"url": "https://b.com"}"""))
+        assertFalse(grants.isGranted("s1", "mcp__browser__click", """{"x": 1}"""))
         assertFalse(grants.isGranted("s1", "mcp__websearch__search", """{"q": "x"}"""))
     }
 

@@ -73,6 +73,7 @@ class ApprovalPolicyEngine @Inject constructor(
                     "package_disable", "package_enable", "app_freeze", "app_unfreeze" -> "操作将改变真实 Android 应用的启用状态。"
                     "app_grant_permission" -> "操作将为真实 Android 应用授予权限。"
                     "package_uninstall_user" -> "操作将为指定 Android 用户卸载应用；系统应用通常可用 install-existing 恢复，但其数据可能丢失。"
+                    "screen_capture" -> "操作会把真实 Android 屏幕内容写入指定文件。"
                     "screen_click", "screen_swipe", "screen_input_text", "screen_key", "app_launch" ->
                         "操作将操控真实 Android 屏幕或启动应用。"
                     else -> "命令将通过 Shizuku 或 Root 修改真实 Android 宿主，可能改变系统设置、停用或卸载应用。"
@@ -183,7 +184,6 @@ class ApprovalPolicyEngine @Inject constructor(
             "logcat",
             "device_status",
             "screen_observe",
-            "screen_capture",
         )
         /** ASSISTED 下自动放行的 GUI 原语（仍受 REQUEST / 危险动作策略约束）。 */
         private val HOST_GUI_ASSISTED_ACTIONS = setOf(

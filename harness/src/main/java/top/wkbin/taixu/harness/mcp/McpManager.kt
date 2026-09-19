@@ -296,9 +296,19 @@ class McpManager @Inject constructor(
         workspace: String = "",
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         if (!fullToolName.startsWith("mcp__")) return@withContext false to "无效的 MCP 工具名称：$fullToolName"
-        val tool = getActiveMcpTools().firstOrNull { McpToolApiName.matches(it, fullToolName) }
+        val servers = repository.servers.first().filter { it.isEnabled }
+        val parsedServerId = fullToolName.removePrefix("mcp__").substringBefore("__")
+        val candidateServers = servers.filter { server ->
+            server.id == parsedServerId || McpToolApiName.isServerPrefix(fullToolName, server.id)
+        }
+        val tools = if (candidateServers.size == 1) {
+            discoverServerIfNeeded(candidateServers.single())
+        } else {
+            candidateServers.flatMap { discoverServerIfNeeded(it) }
+        }
+        val tool = tools.firstOrNull { McpToolApiName.matches(it, fullToolName) }
             ?: return@withContext false to "未找到 MCP 工具：$fullToolName"
-        val server = repository.servers.first().firstOrNull { it.id == tool.serverId && it.isEnabled }
+        val server = servers.firstOrNull { it.id == tool.serverId }
             ?: return@withContext false to "未找到 MCP 服务：${tool.serverId}"
         val bound = commandBuilder.bindWorkspaceRepository(server, workspace)
         // B1: 记录本次 workspace，使后续 discover/check 路径使用同一绑定配置，

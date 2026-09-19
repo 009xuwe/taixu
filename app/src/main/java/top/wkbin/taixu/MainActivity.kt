@@ -70,6 +70,7 @@ import javax.inject.Inject
 import top.wkbin.taixu.core.common.navigation.AppNavigationTarget
 import top.wkbin.taixu.core.common.navigation.GlobalNavigationBus
 import top.wkbin.taixu.harness.mcp.oauth.McpOAuthCoordinator
+import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.service.adb.AdbNotificationManager
 
 @AndroidEntryPoint
@@ -91,6 +92,9 @@ class MainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var mcpOAuthCoordinator: McpOAuthCoordinator
+
+    @Inject
+    lateinit var mcpManager: McpManager
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -343,6 +347,11 @@ class MainActivity : AppCompatActivity() {
         ) {
             lifecycleScope.launch {
                 runCatching { mcpOAuthCoordinator.callback(oauthUri) }
+                    .onSuccess { result ->
+                        if (result is McpOAuthCoordinator.CallbackResult.Authorized) {
+                            lifecycleScope.launch { mcpManager.invalidateServer(result.serverId) }
+                        }
+                    }
                     .onFailure { /* UI observes server auth state; never log callback code/token. */ }
             }
             return

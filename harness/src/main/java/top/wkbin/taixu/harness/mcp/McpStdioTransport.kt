@@ -199,7 +199,7 @@ class McpStdioTransport @Inject constructor(
             throw t
         }
         downUntil.remove(server.id)
-        return Connection(channel, commandBuilder.fingerprint(server)).also { connection ->
+        return Connection(server.id, channel, commandBuilder.fingerprint(server)).also { connection ->
             connections[server.id] = connection
             startReaderLoop(connection)
         }
@@ -213,6 +213,7 @@ class McpStdioTransport @Inject constructor(
      * [initMutex] 串行化（毫秒级，绝不跨长调用持有）。
      */
     private inner class Connection(
+        val serverId: String,
         val channel: McpStdioChannel,
         val fingerprint: String,
     ) {
@@ -290,15 +291,20 @@ class McpStdioTransport @Inject constructor(
                 pending.remove(id)
                 throw McpStdioChannelException("MCP 请求 " + method + " 写入失败：" + (t.message ?: t::class.simpleName))
             }
-            // 超时必须以普通异常而非 TimeoutCancellationException 暴露：TCE 会沿 McpManager /
-            // ToolExecutor 的取消透传链被当作"用户取消"，整个 Agent 回合静默中止且模型拿不到
-            // ToolResult（与 HTTP 路径的 withTimeoutOrNull 同语义）。超时不判连接损坏：迟到的
-            // 响应由路由层按"无等待者"丢弃，保留有状态 server 的上下文。
+            // 超时必须以普通异常而非 TimeoutCancellationException 暴露，且销毁连接：
+            // tools/call 可能已产生副作用，不能重放；下次调用必须从干净连接重建。
             val response = try {
                 withTimeoutOrNull((requestTimeoutOverrideMs ?: timeoutMs).milliseconds) { waiter.await() }
             } finally {
                 pending.remove(id)
-            } ?: throw IllegalStateException("MCP 请求 $method 响应超时（${timeoutMs / 1000}s）")
+            } ?: run {
+                // A timed-out request may have reached the server and produced a side effect.
+                // Drop the session rather than replaying it on the next call; the next request
+                // will establish a fresh initialized connection.
+                failPending(McpStdioChannelException("MCP 请求 $method 响应超时"))
+                scope.launch { discardConnection(serverId, this@Connection) }
+                throw McpStdioChannelException("MCP 请求 $method 响应超时（${timeoutMs / 1000}s）")
+            }
             // B5: server 的 JSON-RPC error 响应用专用异常承载，调用方将其作为结果返回而非传输故障
             response.error?.let { throw McpJsonRpcErrorException(it.code, it.message) }
             return response
@@ -312,8 +318,10 @@ class McpStdioTransport @Inject constructor(
                 return
             }
             if (element is JsonObject && element.containsKey("method")) {
-                // PTY 回显过滤兜底：server 的请求/通知不是响应，持续涌入说明通道异常
-                countIgnored("MCP 输出了过多请求回显或通知")
+                // Valid server notifications have no id and are allowed by JSON-RPC; they must
+                // not poison a healthy stream. A request echo with an id remains suspicious.
+                if (!element.containsKey("id")) return
+                countIgnored("MCP 输出了过多请求回显")
                 return
             }
             val parsed = runCatching { json.decodeFromJsonElement(JsonRpcResponse.serializer(), element) }.getOrNull()
@@ -377,7 +385,7 @@ class McpStdioTransport @Inject constructor(
 
 
     internal fun injectConnectionForTest(server: McpServerConfig, channel: McpStdioChannel) {
-        Connection(channel, commandBuilder.fingerprint(server)).also { connection ->
+        Connection(server.id, channel, commandBuilder.fingerprint(server)).also { connection ->
             connections[server.id] = connection
             startReaderLoop(connection)
         }

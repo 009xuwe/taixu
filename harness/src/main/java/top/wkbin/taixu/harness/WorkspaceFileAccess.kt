@@ -59,26 +59,28 @@ class WorkspaceFileAccess(
         try {
             val file = resolveRequired(path)
             check(file.isFile) { "不是文件：${display(path)}" }
-            check(file.length() <= MAX_READ_BYTES) {
-                "文件过大（${file.length()} 字节，上限 ${MAX_READ_BYTES}）。" +
+            val pagedSpillRead = isPagedSpillRead(path, offset, limit)
+            val readLimit = if (pagedSpillRead) MAX_HARNESS_ARTIFACT_BYTES.toLong() else MAX_READ_BYTES
+            check(file.length() <= readLimit) {
+                "文件过大（${file.length()} 字节，上限 ${if (pagedSpillRead) MAX_HARNESS_ARTIFACT_BYTES else MAX_READ_BYTES}）。" +
                     "请用 base 执行 grep -n 定位关键行号，再用 read(path, offset, limit) 分段精读。"
             }
-            val content = file.readText(Charsets.UTF_8)
-            val lines = content.split('\n')
-            val totalLines = if (content.endsWith("\n")) lines.size - 1 else lines.size
-            if (offset == null && limit == null && totalLines <= DEFAULT_READ_LINES) {
-                AppResult.Success(content)
+            if (pagedSpillRead) {
+                AppResult.Success(readPagedLines(file, path, offset!!, limit!!))
             } else {
-                val effectiveLimit = (limit ?: DEFAULT_READ_LINES).coerceIn(1, DEFAULT_READ_LINES)
-                val start = ((offset ?: 1) - 1).coerceIn(0, totalLines)
-                val end = minOf(start + effectiveLimit, totalLines)
-                val selected = lines.subList(start, end)
-                val header = buildString {
-                    append("[文件 ${display(path)} 共 $totalLines 行，当前显示第 ${start + 1}-$end 行")
-                    if (end < totalLines) append("；内容未完，继续读取请用 offset=${end + 1}")
-                    append("]\n")
+                val content = file.readText(Charsets.UTF_8)
+                val lines = content.split('\n')
+                val totalLines = if (content.endsWith("\n")) lines.size - 1 else lines.size
+                if (offset == null && limit == null && totalLines <= DEFAULT_READ_LINES) {
+                    AppResult.Success(content)
+                } else {
+                    val effectiveLimit = (limit ?: DEFAULT_READ_LINES).coerceIn(1, DEFAULT_READ_LINES)
+                    val start = ((offset ?: 1) - 1).coerceIn(0, totalLines)
+                    val end = minOf(start + effectiveLimit, totalLines)
+                    val selected = lines.subList(start, end)
+                    val header = rangeHeader(path, totalLines, start, end)
+                    AppResult.Success(header + selected.joinToString("\n"))
                 }
-                AppResult.Success(header + selected.joinToString("\n"))
             }
         } catch (throwable: Throwable) {
             failure(path, throwable)
@@ -224,6 +226,8 @@ class WorkspaceFileAccess(
         stamp
     }
 
+    internal fun workspaceLockKey(): String = rootCanonical.absolutePath
+
     fun withBase(workspaceBase: String): WorkspaceFileAccess {
         val clean = workspaceBase.trim().removePrefix("/workspace/").removePrefix("/workspace").removePrefix("/")
         if (clean.isBlank()) return this
@@ -255,6 +259,31 @@ class WorkspaceFileAccess(
         return canonical.takeIf { isInside(allowedRoot, it) }
     }
 
+    private fun readPagedLines(file: File, path: String, offset: Int, limit: Int): String {
+        val effectiveLimit = limit.coerceIn(1, DEFAULT_READ_LINES)
+        val requestedStart = (offset - 1).coerceAtLeast(0)
+        val selected = ArrayList<String>(effectiveLimit)
+        var totalLines = 0
+        file.bufferedReader(Charsets.UTF_8).useLines { lines ->
+            lines.forEach { line ->
+                if (totalLines >= requestedStart && selected.size < effectiveLimit) selected += line
+                totalLines++
+            }
+        }
+        val start = requestedStart.coerceAtMost(totalLines)
+        val end = start + selected.size
+        return rangeHeader(path, totalLines, start, end) + selected.joinToString("\n")
+    }
+
+    private fun rangeHeader(path: String, totalLines: Int, start: Int, end: Int): String = buildString {
+        append("[文件 ${display(path)} 共 $totalLines 行，当前显示第 ${start + 1}-$end 行")
+        if (end < totalLines) append("；内容未完，继续读取请用 offset=${end + 1}")
+        append("]\n")
+    }
+
+    private fun isPagedSpillRead(path: String, offset: Int?, limit: Int?): Boolean =
+        offset != null && limit != null && path.trim().replace('\\', '/').trimStart('/').startsWith("$DIR/")
+
     private fun isInside(root: File, candidate: File): Boolean =
         candidate.absolutePath == root.absolutePath ||
             candidate.absolutePath.startsWith(root.absolutePath + File.separator)
@@ -269,6 +298,7 @@ class WorkspaceFileAccess(
         const val MAX_READ_BYTES = 1 * 1024 * 1024L
         const val MAX_WRITE_BYTES = 1 * 1024 * 1024
         internal const val MAX_HARNESS_ARTIFACT_BYTES = 16 * 1024 * 1024
+        private const val DIR = ".taixu-outputs"
         const val MAX_EDIT_BYTES = 1 * 1024 * 1024L
         const val MAX_LIST_ENTRIES = 5_000
 

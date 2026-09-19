@@ -6,6 +6,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 超长工具输出的落盘引流（对齐 opencode tool/truncate.ts 的 spill-to-file）：
@@ -20,11 +22,18 @@ object ToolOutputSpillStore {
     /** 工作区相对目录；与子代理汇总落盘（.taixu-subagent）同级的 Harness 专用命名空间。 */
     const val DIR = ".taixu-outputs"
     const val RETENTION_MS = 7L * 24 * 60 * 60 * 1000
+    const val MAX_WORKSPACE_BYTES = 64L * 1024 * 1024
+    const val MAX_WORKSPACE_FILES = 256
 
     private val TIMESTAMP_FORMAT = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+    private val LOCKS = mutableMapOf<String, Mutex>()
+
+    private fun lockFor(fileAccess: WorkspaceFileAccess): Mutex = synchronized(LOCKS) {
+        LOCKS.getOrPut(fileAccess.workspaceLockKey()) { Mutex() }
+    }
 
     /** 生成落盘文件名 `tool-<时间戳>-<工具名>-<rand>.txt`；工具名白名单化防路径注入。 */
-    fun fileName(toolName: String?, now: Long, random: String = UUID.randomUUID().toString().take(4)): String {
+    fun fileName(toolName: String?, now: Long, random: String = UUID.randomUUID().toString()): String {
         val safe = toolName?.trim().orEmpty()
             .replace(Regex("[^A-Za-z0-9_-]"), "_")
             .trim('_')
@@ -56,11 +65,18 @@ object ToolOutputSpillStore {
     suspend fun spill(fileAccess: WorkspaceFileAccess, toolName: String?, content: String): String? {
         if (content.isEmpty()) return null
         return try {
-            val path = "$DIR/${fileName(toolName, System.currentTimeMillis())}"
-            if (!fileAccess.writeHarnessArtifact(path, content).isSuccess) return null
-            ensureGitExclude(fileAccess)
-            cleanup(fileAccess)
-            path
+            lockFor(fileAccess).withLock {
+                cleanupLocked(fileAccess)
+                val bytes = content.toByteArray(Charsets.UTF_8).size.toLong()
+                if (bytes > MAX_WORKSPACE_BYTES || bytes > WorkspaceFileAccess.MAX_HARNESS_ARTIFACT_BYTES) {
+                    return@withLock null
+                }
+                evictForBudget(fileAccess, bytes)
+                val path = "$DIR/${fileName(toolName, System.currentTimeMillis(), UUID.randomUUID().toString())}"
+                if (!fileAccess.writeHarnessArtifact(path, content).isSuccess) return@withLock null
+                ensureGitExclude(fileAccess)
+                path
+            }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (throwable: Throwable) {
@@ -85,11 +101,40 @@ object ToolOutputSpillStore {
 
     /** 清理超过保留期的旧落盘文件；列目录/删除失败静默跳过（GC 不阻塞主流程）。 */
     suspend fun cleanup(fileAccess: WorkspaceFileAccess, now: Long = System.currentTimeMillis()) {
+        lockFor(fileAccess).withLock { cleanupLocked(fileAccess, now) }
+    }
+
+    private suspend fun cleanupLocked(fileAccess: WorkspaceFileAccess, now: Long = System.currentTimeMillis()) {
         runCatching {
-            val entries = fileAccess.list(DIR).getOrNull().orEmpty()
-            entries
-                .filter { !it.isDirectory && isExpired(it.name, now) }
+            fileAccess.list(DIR).getOrNull().orEmpty()
+                .filter { !it.isDirectory && (isExpired(it.name, now) || isTemporaryArtifact(it.name)) }
                 .forEach { fileAccess.delete("$DIR/${it.name}") }
         }
+    }
+
+    private suspend fun evictForBudget(fileAccess: WorkspaceFileAccess, incomingBytes: Long) {
+        val entries = fileAccess.list(DIR).getOrNull().orEmpty()
+            .filter { !it.isDirectory && it.name.startsWith("tool-") && it.name.endsWith(".txt") }
+            .sortedBy(::embeddedTimestamp)
+            .toMutableList()
+        var total = entries.sumOf { it.sizeBytes }
+        while (entries.isNotEmpty() &&
+            (entries.size >= MAX_WORKSPACE_FILES || total > MAX_WORKSPACE_BYTES - incomingBytes)
+        ) {
+            val oldest = entries.removeAt(0)
+            if (fileAccess.delete("$DIR/${oldest.name}")) total -= oldest.sizeBytes
+        }
+    }
+
+    private fun isTemporaryArtifact(name: String): Boolean =
+        name.startsWith(".") && name.contains(".tmp-")
+
+    private fun embeddedTimestamp(entry: WorkspaceEntry): Long {
+        val body = entry.name.removePrefix("tool-")
+        val parts = body.split('-')
+        if (parts.size < 2) return Long.MIN_VALUE
+        return synchronized(TIMESTAMP_FORMAT) {
+            TIMESTAMP_FORMAT.parse("${parts[0]}-${parts[1]}", ParsePosition(0))?.time
+        } ?: Long.MIN_VALUE
     }
 }
