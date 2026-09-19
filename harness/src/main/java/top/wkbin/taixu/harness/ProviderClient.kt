@@ -1271,6 +1271,15 @@ class ProviderClient @Inject constructor(
                     ).jsonObject,
                 ),
             ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "compress",
+                    description = "把较早的会话历史压缩为结构化摘要以释放上下文空间；被折叠的原文仍可通过 history_read 按需回读。仅在用户明确要求压缩上下文/节省空间时调用，不要自行决定使用。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"mode":{"type":"string","enum":["before","after"],"description":"before=压缩锚点轮之前的全部历史，保留锚点轮及之后；after=压缩除当前进行中轮次外的全部已完成历史"},"anchor":{"type":"string","description":"某条用户消息中一段原样、唯一的文字摘录（至少 8 字符），用于定位压缩边界；匹配到多条时会被拒绝"}},"required":["mode","anchor"]}""",
+                    ).jsonObject,
+                ),
+            ),
         )
 
         /** 组装静态基础工具 + 动态 MCP 插件工具 */

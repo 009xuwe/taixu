@@ -16,7 +16,7 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 | P2 | 写租约收缩/扩张语义 | 中 | 补上 shell 写边界 | 待做（移动端语义取舍待定） |
 | P2 | 审批"本会话内记住"粒度 | 中 | 减少 REQUEST 模式重复打扰 | ✅ 已落地（2026-09-19） |
 | P2 | 记忆召回 BM25 + CJK bigram + 预算 | 中 | 召回质量（表结构已就绪） | ✅ 已落地（2026-09-19） |
-| P3 | 中散小件（见第七节） | 小 | 各自独立 | 大部分 ✅：checkpoint 字节预算、storm breaker、委托经济学、批内失败隔离（已具备）、restore 冲突检测；余：undo rewind、compress 工具 |
+| P3 | 中散小件（见第七节） | 小 | 各自独立 | 大部分 ✅：checkpoint 字节预算、storm breaker、委托经济学、批内失败隔离（已具备）、restore 冲突检测、undo rewind；余：compress 工具 |
 
 ## 落地记录（P0，2026-09-19）
 
@@ -88,6 +88,15 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 - provider 可见 tools 数组的剩余变化源只剩 MCP server 启停（既定缓存重置事件）；完整 use_capability 代理（list/inspect/call/decline + 延迟连接）仍需单独规划一轮。
 
 验证（⑨）：`:harness:testDebugUnitTest` 全绿；`:app:compileDebugKotlin` 通过。
+
+**⑩ undo rewind（P3，2026-09-19）**
+
+- commit 时记录实际被改动路径在**改动前**的磁盘状态（`RewindUndoRecord`：applied = rewind 写入的状态作冲突基线，undoSnaps = 与之下标对齐的还原目标；超快照上限的路径不进记录）。
+- `RewindController.undoLastRewind`：单层级（消费即失效），冲突基线是 rewind 实际写入的状态——rewind 后智能体再写入（capture 使记录失效）或用户外部改动都会跳过对应路径并报告 conflicts。
+- 对话侧不在 undo 范围：CONVERSATION/BOTH 的 fork 不改动原会话，切回原会话即可（原链路永不截断）。
+- UI：rewind 成功通知从 Toast 迁到 Snackbar 并附「撤销回滚」动作（Toast 无法承载动作），失败/无锚点仍走 Toast。
+
+验证（⑩）：`:harness:testDebugUnitTest` 全绿（`RewindControllerTest` +3 项：undo 还原、新写入使记录失效、外部改动跳过）；`:app:compileDebugKotlin` 通过。
 
 ## 一、太墟已对齐的能力（不要重复建设）
 

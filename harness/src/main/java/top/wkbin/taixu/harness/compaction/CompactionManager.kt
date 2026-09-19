@@ -11,7 +11,14 @@ import top.wkbin.taixu.core.database.HarnessRuntimeRepository
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ModelConfig
+import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.harness.session.SessionTreeStore
+
+/** compress 锚点解析结果。 */
+sealed interface CompressAnchorResult {
+    data class Resolved(val keepFromIndex: Int) : CompressAnchorResult
+    data class Invalid(val message: String) : CompressAnchorResult
+}
 
 /** Persists compaction as an immutable tree entry and projects provider context from it. */
 @Singleton
@@ -255,6 +262,55 @@ class CompactionManager @Inject constructor(
     }
 
     companion object {
+    /**
+     * compress 工具的锚点解析（纯函数）：[anchor] 必须原样、唯一地摘自某条用户消息。
+     * - mode=before：压缩锚点轮之前的全部历史（保留锚点轮及之后）；
+     * - mode=after：压缩除最后一条用户消息（进行中轮次）外的全部已完成历史。
+     * 校验失败返回 [CompressAnchorResult.Invalid]（带可回写给模型的说明）。
+     */
+    fun resolveCompressAnchor(
+        messages: List<HarnessMessage>,
+        mode: String,
+        anchor: String,
+    ): CompressAnchorResult {
+        val normalizedMode = mode.trim().lowercase()
+        if (normalizedMode !in setOf("before", "after")) {
+            return CompressAnchorResult.Invalid("mode 必须是 before（压缩锚点轮之前）或 after（压缩除当前轮外的全部已完成历史）")
+        }
+        val trimmedAnchor = anchor.trim()
+        if (trimmedAnchor.length < MIN_COMPRESS_ANCHOR_CHARS) {
+            return CompressAnchorResult.Invalid(
+                "anchor 必须原样摘自某条用户消息且足够独特（至少 $MIN_COMPRESS_ANCHOR_CHARS 字符），用于唯一定位压缩边界",
+            )
+        }
+        val anchorIndexes = messages.withIndex().mapNotNull { (index, message) ->
+            (message as? UserMessage)?.takeIf { it.text.contains(trimmedAnchor) }?.let { index }
+        }
+        if (anchorIndexes.isEmpty()) {
+            return CompressAnchorResult.Invalid(
+                "锚点在当前上下文中没有匹配到任何用户消息。" +
+                    "若该轮已被折叠进既有摘要则无法再以它为锚点，请改用更近的轮次；否则请原样复制消息中的一段文字重试",
+            )
+        }
+        if (anchorIndexes.size > 1) {
+            return CompressAnchorResult.Invalid(
+                "锚点匹配到 ${anchorIndexes.size} 条用户消息，请提供更长、更独特的摘录以唯一定位",
+            )
+        }
+        val keepFromIndex = when (normalizedMode) {
+            "before" -> anchorIndexes.single()
+            else -> messages.indexOfLast { it is UserMessage }
+        }
+        if (keepFromIndex < 1) {
+            return CompressAnchorResult.Invalid("锚点之前没有可压缩的内容（它已是当前上下文的第一条消息）")
+        }
+        if (keepFromIndex > messages.size) {
+            return CompressAnchorResult.Invalid("压缩边界越界，请重试")
+        }
+        return CompressAnchorResult.Resolved(keepFromIndex)
+    }
+
+    private const val MIN_COMPRESS_ANCHOR_CHARS = 8
         const val ENTRY_TYPE = "compaction"
         const val BRANCH_SUMMARY_ENTRY_TYPE = "branch_summary"
         private const val MAX_SUMMARY_CHARS = 16_000

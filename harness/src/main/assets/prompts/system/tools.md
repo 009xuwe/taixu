@@ -14,6 +14,7 @@
 - history_search(query, limit?) / history_read(message_id?|index?)：检索/读取本会话完整历史。
 - build_script(action, ...)：管理工坊构建脚本并绑定项目。
 - load_rule(rule)：按需加载详细规则块（workflow / code-navigation / security / memory / image-delivery / browser-reverse / environment-proot / tools），只读。
+- compress(mode, anchor)：把较早的会话历史折叠为摘要以释放上下文空间（原文仍可 history_read 回读）。**仅当用户明确要求压缩上下文时**才可调用；mode=before 压缩锚点轮之前、mode=after 压缩除当前轮外的全部已完成历史；anchor 必须原样摘自某条用户消息且唯一（≥8 字符）。
 
 ### 工具选择决策矩阵
 

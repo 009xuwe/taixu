@@ -13,6 +13,7 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.harness.checkpoint.CheckpointStore
+import top.wkbin.taixu.harness.compaction.CompressAnchorResult
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.privilege.BinderOutcome
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
@@ -69,6 +70,8 @@ class ToolExecutor @Inject constructor(
     private val embeddedAdbManager: EmbeddedAdbManager? = null,
     private val workflowSignals: top.wkbin.taixu.harness.workflow.WorkflowSignalBus? = null,
     private val sessionApprovalGrants: top.wkbin.taixu.harness.approval.SessionApprovalGrants? = null,
+    private val compactionManager: top.wkbin.taixu.harness.compaction.CompactionManager? = null,
+    private val providerClient: ProviderClient? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -244,6 +247,7 @@ class ToolExecutor @Inject constructor(
             HarnessTool.SCRATCHPAD -> contextExecutor?.executeScratchpad(args, sessionId) ?: (false to "未初始化草稿执行器")
             HarnessTool.HISTORY_SEARCH -> executeHistorySearch(args, sessionId)
             HarnessTool.HISTORY_READ -> executeHistoryRead(args, sessionId)
+            HarnessTool.COMPRESS -> executeCompress(args, sessionId)
             HarnessTool.BUILD_SCRIPT -> buildScriptToolExecutor?.execute(args, workspace) ?: (false to "未初始化构建脚本管理器")
             HarnessTool.SUBAGENT -> if (rawToolName.equals("invoke_dual_agent", ignoreCase = true)) {
                 dualAgentCoordinator?.executeFromTool(args, sessionId, workspace) ?: (false to "未初始化双智能体编排器")
@@ -633,6 +637,62 @@ class ToolExecutor @Inject constructor(
         }.joinToString("\n")
     }
 
+    /**
+     * compress 工具（对齐 Reasonix）：用户明确要求压缩上下文时，把指定边界之前的历史
+     * 折叠为结构化摘要。anchor 必须原样、唯一地摘自某条用户消息——多匹配/零匹配都拒绝，
+     * 让模型换更长的摘录重试，而不是猜一个边界静默压错地方。走与自动压缩相同的
+     * cache-replay 摘要路径；原文不丢，仍可 history_read 回读。
+     */
+    private suspend fun executeCompress(args: JsonObject, sessionId: String): Pair<Boolean, String> {
+        val manager = compactionManager ?: return false to "未初始化压缩管理器"
+        val mode = args.stringArg("mode").orEmpty().trim().lowercase()
+        val anchor = args.stringArg("anchor").orEmpty()
+        if (sessionId.isBlank()) return false to "当前没有活动会话，无法压缩"
+
+        val context = manager.project(sessionId)
+        val keepFromIndex = when (val resolved = top.wkbin.taixu.harness.compaction.CompactionManager.resolveCompressAnchor(
+            context.messages,
+            mode,
+            anchor,
+        )) {
+            is CompressAnchorResult.Resolved -> resolved.keepFromIndex
+            is CompressAnchorResult.Invalid -> return false to resolved.message
+        }
+
+        // 手动压缩也走 LLM 摘要：按会话绑定的模型解析；解析失败退回机械摘要路径
+        val model = runCatching {
+            sessionDao?.findById(sessionId)?.let { session ->
+                providerClient?.resolveConfigured(session.modelId, session.modelVariant)
+            }
+        }.getOrNull()
+        val summaryContext = model?.let {
+            top.wkbin.taixu.harness.compaction.SummaryRequestContext(
+                systemPrompt = "",
+                summaryLayer = context.summaryLayer,
+                toolCallMode = if (it.pureChatMode) ToolCallMode.DISABLED else it.toolCallMode,
+                visionEnabled = it.visionEnabled,
+                recallBlocks = context.recallBlocks,
+                // 手动压缩没有装配期的截断快照：直接取投影前缀（截断差异只影响缓存命中起点，不影响正确性）
+                replayPrefix = context.messages.take(keepFromIndex),
+            )
+        }
+        val compacted = manager.compact(
+            sessionId,
+            context,
+            keepFromIndex,
+            model = model,
+            summaryContext = summaryContext,
+        )
+        val foldedCount = context.messages.size - compacted.messages.size
+        return true to buildString {
+            append("已按 ")
+            append(if (mode == "before") "before" else "after")
+            append(" 模式压缩：折叠 $foldedCount 条消息为结构化摘要")
+            append("（保留后 ${compacted.messages.size} 条）。")
+            append("被折叠的原文仍在会话记录中，需要细节时可用 history_read(message_id) 按需回读。")
+        }
+    }
+
     private suspend fun executeHistoryRead(args: JsonObject, sessionId: String): Pair<Boolean, String> {
         val messageId = args["message_id"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotBlank() }
         val index = args["index"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
@@ -989,6 +1049,9 @@ class ToolExecutor @Inject constructor(
             false to (baseError + reflectionHint)
         }
     }
+
+    private fun JsonObject.stringArg(key: String): String? =
+        this[key]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
 
     private fun requireString(args: JsonObject, key: String): String {
         val value = args[key]?.jsonPrimitive?.content
