@@ -110,7 +110,7 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 **⑫ use_capability 统一代理 + MCP 延迟连接（P1，2026-09-19）**
 
 - **provider 可见面**：`mcp__*` 工具 schema 全部退出 tools 数组，只留一个固定 schema 的 `use_capability`（action=list/inspect/call/decline）——MCP 服务增删/启停/发现结果变化都不再改变 provider 可见字节；`BuiltinToolContractTest` 改写为代理时代断言（代理在场 + mcp__ 零泄漏 + 数组逐字节稳定）。
-- **延迟连接**：请求路径上的 MCP 发现全部移除（`resolveModel/resolveConfigured` 不再覆盖 dynamicMcpTools、McpManager 启动预热删除）——**服务器进程只在第一次真实 call 其工具时启动**。list/inspect 绝不启动进程：list 读设置库 + 缓存计数；inspect 只读缓存，未连接则提示直接 call。禁用服务的传输清理移入 list 路径的 sweep。
+- **延迟连接**：请求路径上的 MCP 发现全部移除（`resolveModel/resolveConfigured` 不再覆盖 dynamicMcpTools、McpManager 启动预热删除）——**服务器进程只在第一次真实 call 其工具时启动**。list 读设置库 + 缓存计数、绝不启动进程；inspect 缓存为空时按需发现一次（模型必须拿到完整清单才能构造 call，与 Reasonix 的首次发现门控连接同旨），失败经 getLastError 返回可读原因。禁用服务的传输清理移入 list 路径的 sweep。
 - **分发**：`ToolExecutor.executeCapability` 四动作路由；直接 `mcp__*` 调用保留为兼容路径（历史消息/模型习惯仍可执行）。
 - **审批适配**：list/inspect/decline 只读免审；`use_capability(call)` 从 arguments 合成 `mcp__<server>__<tool>` 复用既有浏览器风险矩阵——内置浏览器低风险工具的免审体验不回归。
 - **会话授权**：`SessionApprovalGrants` 对 use_capability(call) 按 args.server 记 `mcp:<server>` 键，"本会话内记住"继续生效。
