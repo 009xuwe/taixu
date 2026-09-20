@@ -2,6 +2,7 @@ package top.wkbin.taixu.core.datastore
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.Flow
 
 /** Narrow preference views keep consumers from depending on the complete settings schema. */
 @Singleton
