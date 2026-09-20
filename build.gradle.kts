@@ -10,6 +10,23 @@ plugins {
     alias(libs.plugins.androidx.baselineprofile) apply false
 }
 
+// Older transitive annotation-experimental lint checks report false
+// InternalSerializationApi opt-in errors for generated @Serializable code.
+// https://youtrack.jetbrains.com/issue/KTIJ-31549
+val annotationExperimentalMinVersion = libs.versions.annotationExperimental.get()
+subprojects {
+    listOf("com.android.application", "com.android.library", "com.android.test").forEach { pluginId ->
+        pluginManager.withPlugin(pluginId) {
+            dependencies.constraints.add(
+                "implementation",
+                "androidx.annotation:annotation-experimental:$annotationExperimentalMinVersion",
+            ) {
+                because("1.5.1 fixes false InternalSerializationApi opt-in reports in Android Lint")
+            }
+        }
+    }
+}
+
 tasks.register("architectureCheck") {
     group = "verification"
     description = "Checks module direction and persistence boundaries."
