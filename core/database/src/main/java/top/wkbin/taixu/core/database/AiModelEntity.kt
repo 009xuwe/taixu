@@ -50,6 +50,10 @@ data class AiModelEntity(
     val imageGenerationEnabled: Boolean = false,
     /** 是否使用 Responses API（true = /v1/responses；false = /v1/chat/completions）。 */
     val responseApiEnabled: Boolean = false,
+    /** Anthropic Prompt Caching 开关（默认开；仅对 Anthropic 协议生效）。 */
+    val promptCachingEnabled: Boolean = true,
+    /** 是否使用 1 小时缓存 TTL（true = cache_control.ttl=1h）；默认 5 分钟。 */
+    val promptCacheTtl1h: Boolean = false,
     /** 已配置的 API Key 数量（仅元数据；Key 明文始终位于加密存储）。 */
     val apiKeyCount: Int = 0,
     /** 单个 Key 每分钟最多发起的请求数；0 表示不做客户端限制。 */

@@ -515,6 +515,8 @@ data class ModelConfig(
      * Messages API 生效；由 toModelConfig 按协议自动启用，避免给不支持的代理注入字段。
      */
     val promptCachingEnabled: Boolean = false,
+    /** 是否使用 1 小时缓存 TTL（cache_control.ttl=1h + 扩展 beta 头）；默认 5 分钟。 */
+    val promptCacheTtl1h: Boolean = false,
 )
 
 internal data class RequestedModelTarget(
@@ -1039,7 +1041,8 @@ class ProviderClient(
                 pureChatMode = pureChatMode,
                 visionEnabled = visionEnabled,
                 responseApiEnabled = responseApiEnabled,
-                promptCachingEnabled = resolvedProtocol == ApiProtocol.ANTHROPIC,
+                promptCachingEnabled = promptCachingEnabled && resolvedProtocol == ApiProtocol.ANTHROPIC,
+                promptCacheTtl1h = promptCacheTtl1h,
             )
         }
 

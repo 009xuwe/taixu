@@ -107,6 +107,8 @@ class AiProfileBackupCodec(
                     visionEnabled = profile.visionEnabled,
                     imageGenerationEnabled = profile.imageGenerationEnabled,
                     responseApiEnabled = profile.responseApiEnabled,
+                    promptCachingEnabled = profile.promptCachingEnabled,
+                    promptCacheTtl1h = profile.promptCacheTtl1h,
                 ),
             )
             importedIds.add(modelId)
@@ -154,5 +156,7 @@ class AiProfileBackupCodec(
         visionEnabled = entity.visionEnabled,
         imageGenerationEnabled = entity.imageGenerationEnabled,
         responseApiEnabled = entity.responseApiEnabled,
+        promptCachingEnabled = entity.promptCachingEnabled,
+        promptCacheTtl1h = entity.promptCacheTtl1h,
     )
 }

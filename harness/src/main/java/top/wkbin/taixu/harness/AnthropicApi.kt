@@ -439,7 +439,7 @@ internal class AnthropicApi(
                                 buildJsonObject {
                                     put("type", "text")
                                     put("text", systemPrompt.toString())
-                                    put("cache_control", buildJsonObject { put("type", "ephemeral") })
+                                    put("cache_control", cacheControl(model))
                                 },
                             )
                         },
@@ -468,7 +468,7 @@ internal class AnthropicApi(
                                     put("input_schema", definition.function.parameters)
                                     // Prompt Caching 断点 2：Tools 数组最后一个工具定义
                                     if (model.promptCachingEnabled && toolIndex == dynamicTools.lastIndex) {
-                                        put("cache_control", buildJsonObject { put("type", "ephemeral") })
+                                        put("cache_control", cacheControl(model))
                                     }
                                 },
                             )
@@ -484,6 +484,9 @@ internal class AnthropicApi(
             .header("Content-Type", "application/json")
             .header("anthropic-version", ANTHROPIC_VERSION)
             .apply {
+                if (model.promptCachingEnabled && model.promptCacheTtl1h) {
+                    header("anthropic-beta", EXTENDED_CACHE_TTL_BETA)
+                }
                 model.apiKey?.let { header("x-api-key", it) }
                 ProviderClient.parseCustomHeaders(model.customHeaders).forEach { (name, value) ->
                     header(name, value)
@@ -518,6 +521,12 @@ internal class AnthropicApi(
         return merged
     }
 
+    /** cache_control 断点：默认 5 分钟 ephemeral；开启 1h TTL 时附加 ttl 字段。 */
+    private fun cacheControl(model: ModelConfig): JsonObject = buildJsonObject {
+        put("type", "ephemeral")
+        if (model.promptCacheTtl1h) put("ttl", "1h")
+    }
+
     /**
      * Prompt Caching 断点 3：给倒数第二条「真实用户」消息注入 cache_control。
      * 真实用户消息 = role=user 且 content 含 text block（排除纯 tool_result 回包）。
@@ -535,11 +544,11 @@ internal class AnthropicApi(
         }
         if (realUserIndices.size < 2) return
         messages[realUserIndices[realUserIndices.size - 2]] =
-            injectCacheControlToMessage(messages[realUserIndices[realUserIndices.size - 2]])
+            injectCacheControlToMessage(messages[realUserIndices[realUserIndices.size - 2]], model)
     }
 
     /** 给消息 content 数组的最后一个 block 追加 cache_control:{"type":"ephemeral"}。 */
-    private fun injectCacheControlToMessage(message: JsonObject): JsonObject {
+    private fun injectCacheControlToMessage(message: JsonObject, model: ModelConfig): JsonObject {
         val content = message["content"]?.jsonArray ?: return message
         if (content.isEmpty()) return message
         val cachedContent = JsonArray(
@@ -549,7 +558,7 @@ internal class AnthropicApi(
                 } else {
                     JsonObject(
                         block.jsonObject.toMutableMap().apply {
-                            this["cache_control"] = buildJsonObject { put("type", "ephemeral") }
+                            this["cache_control"] = cacheControl(model)
                         },
                     )
                 }
@@ -617,6 +626,8 @@ internal class AnthropicApi(
 
     private companion object {
         const val ANTHROPIC_VERSION = "2023-06-01"
+        /** 1 小时缓存 TTL 扩展所需的 Anthropic beta 头。 */
+        const val EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
         /** pause_turn 连续续跑上限：防止异常服务端无限暂停拖死会话。 */
         const val MAX_PAUSE_TURN_CONTINUATIONS = 8
         const val DEFAULT_MAX_TOKENS = 8192

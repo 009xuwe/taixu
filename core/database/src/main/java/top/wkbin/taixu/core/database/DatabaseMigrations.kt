@@ -324,3 +324,10 @@ val MIGRATION_50_51 = object : Migration(50, 51) {
     }
 }
 
+/** Anthropic Prompt Caching：每模型开关与 1h TTL 扩展。 */
+val MIGRATION_51_52 = object : Migration(51, 52) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `harness_models` ADD COLUMN `promptCachingEnabled` INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE `harness_models` ADD COLUMN `promptCacheTtl1h` INTEGER NOT NULL DEFAULT 0")
+    }
+}

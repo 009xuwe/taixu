@@ -157,7 +157,7 @@ fun ModelEditorScreen(
             testResult = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = { url, model, key, respApi, providerId -> viewModel.testConnection(url, model, key, respApi, providerId) },
-            save = { name, provider, modelsList, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, compactionKeepRecent, compactionReserve, customHeaders, pureChatMode, visionEnabled, imageGenerationEnabled, responseApiEnabled ->
+            save = { name, provider, modelsList, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, compactionKeepRecent, compactionReserve, customHeaders, pureChatMode, visionEnabled, imageGenerationEnabled, responseApiEnabled, promptCachingEnabled, promptCacheTtl1h ->
                 viewModel.saveModels(
                     id = modelId,
                     models = modelsList,
@@ -180,6 +180,8 @@ fun ModelEditorScreen(
                     visionEnabled = visionEnabled,
                     imageGenerationEnabled = imageGenerationEnabled,
                     responseApiEnabled = responseApiEnabled,
+                    promptCachingEnabled = promptCachingEnabled,
+                    promptCacheTtl1h = promptCacheTtl1h,
                 )
                 onSaved()
             },
@@ -223,7 +225,7 @@ private fun ModelEditorContent(
     testResult: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String, Boolean, String?) -> Unit,
-    save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, Int?, Int?, String, Boolean, Boolean, Boolean, Boolean) -> Unit,
+    save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, Int?, Int?, String, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit,
     onFillFromJson: (String) -> AiModelProfileExport?,
     showImportDialog: Boolean,
     onDismissImportDialog: () -> Unit,
@@ -343,6 +345,12 @@ private fun ModelEditorContent(
     var responseApiEnabled by rememberSaveable(modelId) {
         mutableStateOf(existing?.responseApiEnabled ?: false)
     }
+    var promptCachingEnabled by rememberSaveable(modelId) {
+        mutableStateOf(existing?.promptCachingEnabled ?: true)
+    }
+    var promptCacheTtl1h by rememberSaveable(modelId) {
+        mutableStateOf(existing?.promptCacheTtl1h ?: false)
+    }
 
     var customHeaders by rememberSaveable(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
 
@@ -382,6 +390,8 @@ private fun ModelEditorContent(
         visionEnabled = profile.visionEnabled
         imageGenerationEnabled = profile.imageGenerationEnabled
         responseApiEnabled = profile.responseApiEnabled
+        promptCachingEnabled = profile.promptCachingEnabled
+        promptCacheTtl1h = profile.promptCacheTtl1h
         if (profile.customHeaders.isNotBlank()) customHeaders = profile.customHeaders
     }
 
@@ -1216,6 +1226,20 @@ private fun ModelEditorContent(
                             )
 
                             EditorToggleRow(
+                                title = "Claude Prompt Caching",
+                                subtitle = "Anthropic 协议注入缓存断点，长会话最高省 90% 输入 Token",
+                                checked = promptCachingEnabled,
+                                onCheckedChange = { promptCachingEnabled = it },
+                            )
+
+                            EditorToggleRow(
+                                title = "Prompt Cache 1 小时 TTL",
+                                subtitle = "扩大缓存有效期（需服务端支持扩展 TTL）",
+                                checked = promptCacheTtl1h,
+                                onCheckedChange = { promptCacheTtl1h = it },
+                            )
+
+                            EditorToggleRow(
                                 title = "纯净排查模式",
                                 subtitle = "不注入系统提示词与工具定义",
                                 checked = pureChatMode,
@@ -1360,6 +1384,8 @@ private fun ModelEditorContent(
                         visionEnabled,
                         imageGenerationEnabled,
                         responseApiEnabled,
+                        promptCachingEnabled,
+                        promptCacheTtl1h,
                     )
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),

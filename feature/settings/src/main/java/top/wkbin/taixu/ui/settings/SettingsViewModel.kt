@@ -1072,10 +1072,10 @@ class SettingsViewModel(
 
     private fun deleteOwnedSkillDirectory(path: String) = deleteOwnedSkillDirectory(File(path))
 
-    /** Skill 自动发现目录：共享附件区与工作区，guestPrefix 对应 PRoot 沙箱内挂载路径。 */
-    private fun skillScanRoots() = listOf(
-        top.wkbin.taixu.core.database.SkillScanRoot(File(pathManager.attachmentsDir, "skills"), "/attachments/skills"),
-        top.wkbin.taixu.core.database.SkillScanRoot(File(pathManager.workspaceDir, "skills"), "/workspace/skills"),
+    /** Skill 自动发现目录：共享附件区、工作区及项目根 `.agents/skills`（社区规范）。 */
+    private fun skillScanRoots() = top.wkbin.taixu.core.database.AgentSkillRepository.standardScanRoots(
+        attachmentsDir = pathManager.attachmentsDir,
+        workspaceDir = pathManager.workspaceDir,
     )
 
     private companion object {
@@ -1289,6 +1289,8 @@ class SettingsViewModel(
         visionEnabled: Boolean = true,
         imageGenerationEnabled: Boolean = false,
         responseApiEnabled: Boolean = false,
+        promptCachingEnabled: Boolean = true,
+        promptCacheTtl1h: Boolean = false,
     ) {
         viewModelScope.launch {
             profileWriter.upsertProfile(
@@ -1314,6 +1316,8 @@ class SettingsViewModel(
                     visionEnabled = visionEnabled,
                     imageGenerationEnabled = imageGenerationEnabled,
                     responseApiEnabled = responseApiEnabled,
+                    promptCachingEnabled = promptCachingEnabled,
+                    promptCacheTtl1h = promptCacheTtl1h,
                 ),
             )
         }
@@ -1341,6 +1345,8 @@ class SettingsViewModel(
         visionEnabled: Boolean = true,
         imageGenerationEnabled: Boolean = false,
         responseApiEnabled: Boolean = false,
+        promptCachingEnabled: Boolean = true,
+        promptCacheTtl1h: Boolean = false,
     ) {
         viewModelScope.launch {
             val cleanModels = models.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
@@ -1370,6 +1376,8 @@ class SettingsViewModel(
                     visionEnabled = visionEnabled,
                     imageGenerationEnabled = imageGenerationEnabled,
                     responseApiEnabled = responseApiEnabled,
+                    promptCachingEnabled = promptCachingEnabled,
+                    promptCacheTtl1h = promptCacheTtl1h,
                 ),
             )
         }

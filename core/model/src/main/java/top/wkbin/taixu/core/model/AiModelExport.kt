@@ -27,6 +27,8 @@ data class AiModelProfileExport(
     val visionEnabled: Boolean = true,
     val imageGenerationEnabled: Boolean = false,
     val responseApiEnabled: Boolean = false,
+    val promptCachingEnabled: Boolean = true,
+    val promptCacheTtl1h: Boolean = false,
 )
 
 /**

@@ -14,7 +14,6 @@ import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.core.datastore.AppStatsPreferences
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
-import top.wkbin.taixu.core.database.SkillScanRoot
 import top.wkbin.taixu.service.AgentForegroundService
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import top.wkbin.taixu.harness.browser.BrowserMcpBootstrap
@@ -92,9 +91,9 @@ class TaiXuApplication : Application(), Configuration.Provider {
                         // 按 resourcePath 去重，重复扫描安全。
                         val pathManager = pathManagerLazy.value
                         val imported = skillRepository.syncFromDirectories(
-                            listOf(
-                                SkillScanRoot(File(pathManager.attachmentsDir, "skills"), "/attachments/skills"),
-                                SkillScanRoot(File(pathManager.workspaceDir, "skills"), "/workspace/skills"),
+                            AgentSkillRepository.standardScanRoots(
+                                attachmentsDir = pathManager.attachmentsDir,
+                                workspaceDir = pathManager.workspaceDir,
                             )
                         )
                         if (imported.isNotEmpty()) {

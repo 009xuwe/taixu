@@ -48,6 +48,10 @@ class AiProfileWriter(
         val visionEnabled: Boolean = true,
         val imageGenerationEnabled: Boolean = false,
         val responseApiEnabled: Boolean = false,
+        /** Anthropic Prompt Caching 开关（默认开）。 */
+        val promptCachingEnabled: Boolean = true,
+        /** 是否使用 1 小时缓存 TTL。 */
+        val promptCacheTtl1h: Boolean = false,
     )
 
     suspend fun upsertProfile(request: UpsertRequest) {
@@ -83,6 +87,8 @@ class AiProfileWriter(
                 visionEnabled = request.visionEnabled,
                 imageGenerationEnabled = request.imageGenerationEnabled,
                 responseApiEnabled = request.responseApiEnabled,
+                promptCachingEnabled = request.promptCachingEnabled,
+                promptCacheTtl1h = request.promptCacheTtl1h,
                 apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
                 requestsPerMinutePerKey = request.requestsPerMinutePerKey.coerceAtLeast(0),
             ),

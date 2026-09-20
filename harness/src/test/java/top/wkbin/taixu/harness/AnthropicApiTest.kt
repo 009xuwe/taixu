@@ -493,4 +493,33 @@ class AnthropicApiTest {
         assertTrue(contentTypes.contains("tool_result"))
         assertTrue(contentTypes.contains("image"))
     }
+
+
+    @Test
+    fun `prompt caching 1h ttl adds ttl field and beta header`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(
+            model().copy(promptCachingEnabled = true, promptCacheTtl1h = true),
+            listOf(
+                ApiMessage(role = "system", content = "sys"),
+                ApiMessage(role = "user", content = "hi"),
+            ),
+        )
+        val recorded = server.takeRequest()
+        assertEquals("extended-cache-ttl-2025-04-11", recorded.getHeader("anthropic-beta"))
+        val body = Json.parseToJsonElement(recorded.body.readUtf8()).jsonObject
+        val cacheControl = body.getValue("system").jsonArray.single().jsonObject
+            .getValue("cache_control").jsonObject
+        assertEquals("ephemeral", cacheControl.getValue("type").jsonPrimitive.content)
+        assertEquals("1h", cacheControl.getValue("ttl").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `prompt caching without 1h ttl omits ttl and beta header`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(model().copy(promptCachingEnabled = true), listOf(ApiMessage(role = "user", content = "hi")))
+        val recorded = server.takeRequest()
+        assertNull(recorded.getHeader("anthropic-beta"))
+        assertFalse(recorded.body.readUtf8().contains("\"ttl\""))
+    }
 }

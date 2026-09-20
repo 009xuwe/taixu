@@ -3,9 +3,12 @@ package top.wkbin.taixu.harness
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import top.wkbin.taixu.harness.metrics.RunMetrics
 import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.harness.compaction.CompactionManager
@@ -179,8 +182,8 @@ class HarnessProviderRunner(
                     }
                 }
             } catch (cancellation: CancellationException) {
-                agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行")
-                messageProjector.remove(sessId, assistantId)
+                persistCancelledPartial(sessId, assistantId, assistantAt, streamText, streamReasoning, startedAt, operationId, round)
+                agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行，保留已生成内容 ${streamText.length} 字符")
                 throw cancellation
             } catch (handling: StreamChunkHandlingException) {
                 // 本地流式处理异常：原样终止，严禁当作网络故障重发（否则重复文字/半截 JSON 会污染上下文）。
@@ -246,6 +249,11 @@ class HarnessProviderRunner(
                 )
                 resetStreamBaseline()
             } catch (io: IOException) {
+                // 用户取消会主动关闭 socket，通常以 IOException 形式抛出：先按取消语义保留已生成内容，再传播取消。
+                if (!currentCoroutineContext().isActive) {
+                    persistCancelledPartial(sessId, assistantId, assistantAt, streamText, streamReasoning, startedAt, operationId, round)
+                    agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行，保留已生成内容 ${streamText.length} 字符")
+                }
                 currentCoroutineContext().ensureActive()
                 netRetry++
                 // 瞬态故障（断线 / 超时 / TLS 中断 / 上游 5xx）与请求体大小、上下文规模无关，
@@ -466,6 +474,36 @@ class HarnessProviderRunner(
         messageProjector.publishPersisted(sessId, message)
     }
 
+    /** 用户主动停止时保留已流式内容；协程已取消，落库需 NonCancellable，失败退回删除半截气泡。 */
+    private suspend fun persistCancelledPartial(
+        sessId: String,
+        assistantId: String,
+        assistantAt: Long,
+        streamText: StreamBuffer,
+        streamReasoning: StreamBuffer,
+        startedAt: Long,
+        operationId: String,
+        round: Int,
+    ) {
+        val keptChars = streamText.length
+        stateMirrors.setThinkingLive(sessId, false)
+        withContext(NonCancellable) {
+            if (keptChars > 0) {
+                runCatching {
+                    persistAssistant(
+                        sessId, assistantId, assistantAt,
+                        streamText.toString(),
+                        streamReasoning.toString().ifBlank { null },
+                        totalMs = now() - startedAt,
+                        operationId = operationId,
+                        round = round,
+                    )
+                }.onFailure { messageProjector.remove(sessId, assistantId) }
+            } else {
+                messageProjector.remove(sessId, assistantId)
+            }
+        }
+    }
     private fun now(): Long = System.currentTimeMillis()
     private fun friendly(throwable: Throwable): String =
         throwable.message?.take(200) ?: throwable::class.simpleName.orEmpty()

@@ -146,6 +146,47 @@ class AgentSkillRepository(
     companion object {
         /** Skill 目录的提示词文件名（小写），供导入与扫描逻辑统一判定。 */
         val SKILL_PROMPT_FILE_NAMES = setOf("skill.md", "prompt.md")
+
+        /**
+         * 标准 Skill 发现根（开箱即用兼容开源社区 Agent Skills 规范）：
+         * - 共享附件区 `attachments/skills`（全局内置 / 手动导入）；
+         * - 工作区根 `workspace/skills`；
+         * - 工作区内项目根目录的 `.agents/skills/`（Claude Code / OpenMinis 等规范）。
+         *
+         * `.agents/skills` 最多在项目树中下探 [AGENT_SKILL_SCAN_DEPTH] 层，并跳过
+         * `.git` / `node_modules` / `build` 等重型目录，避免在大型 monorepo 上做全树遍历。
+         */
+        fun standardScanRoots(attachmentsDir: File, workspaceDir: File): List<SkillScanRoot> = buildList {
+            add(SkillScanRoot(File(attachmentsDir, "skills"), "/attachments/skills"))
+            add(SkillScanRoot(File(workspaceDir, "skills"), "/workspace/skills"))
+            findAgentSkillRoots(workspaceDir).forEach { (dir, guestPath) ->
+                add(SkillScanRoot(dir, guestPath))
+            }
+        }
+
+        private fun findAgentSkillRoots(workspaceDir: File): List<Pair<File, String>> {
+            val roots = mutableListOf<Pair<File, String>>()
+            fun visit(dir: File, depth: Int) {
+                if (depth > AGENT_SKILL_SCAN_DEPTH) return
+                val relative = dir.relativeTo(workspaceDir).invariantSeparatorsPath.takeIf { it != "." }.orEmpty()
+                val guestBase = if (relative.isEmpty()) "/workspace" else "/workspace/$relative"
+                val agentSkills = File(dir, ".agents/skills")
+                if (agentSkills.isDirectory) {
+                    roots += agentSkills to "$guestBase/.agents/skills"
+                }
+                dir.listFiles().orEmpty()
+                    .filter { it.isDirectory && !it.name.startsWith(".") && it.name !in IGNORED_SCAN_DIRS }
+                    .forEach { visit(it, depth + 1) }
+            }
+            if (workspaceDir.isDirectory) visit(workspaceDir, 1)
+            return roots
+        }
+
+        private val IGNORED_SCAN_DIRS = setOf(
+            "node_modules", "build", "dist", "out", "target", "vendor", "DerivedData",
+        )
+        private const val AGENT_SKILL_SCAN_DEPTH = 3
+
         private const val MAX_SCAN_DEPTH = 6
         private const val MAX_DESCRIPTION_CHARS = 1024
 
