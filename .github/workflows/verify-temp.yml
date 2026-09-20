@@ -1,0 +1,76 @@
+name: Verify (temp branch CI)
+
+# 临时验证用：本分支基于 upstream/main（v0.16.0），而 fork 的 unit-tests.yml
+# 只在 PR 指向 main 时触发，无法验证本分支。此 workflow 让本分支 push 即跑编译+单测，
+# 验证通过后向上游提 PR 时会移除本文件，不污染 PR 内容。
+on:
+  push:
+    branches:
+      - 'upstream/**'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Compile & Unit Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # Google 已于 2026-09-15 下架 Android SDK 的 tools 包，
+          # setup-android 默认 packages 含 tools 会 exit 1，只装 platform-tools 绕过。
+          packages: 'platform-tools'
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew
+
+      - name: 编译（Kotlin + C）
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace --continue 2>&1 | tee /tmp/unit-test.log
+
+      - name: 输出各模块测试统计（证明新测试确实执行）
+        if: always()
+        run: |
+          echo "=== 各模块 test-results 汇总 ==="
+          find . -path "*/test-results/*" -name "TEST-*.xml" 2>/dev/null | sort | while read -r f; do
+            mod=$(echo "$f" | sed -E 's|^\./([^/]+)/.*|\1|')
+            cls=$(basename "$f" | sed -E 's/^TEST-(.*)\.xml$/\1/')
+            tests=$(grep -o 'tests="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+            fails=$(grep -o 'failures="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+            printf "  [%s] %-60s tests=%s failures=%s\n" "$mod" "$cls" "${tests:-?}" "${fails:-?}"
+          done | grep -iE "skill|mention|frontmatter|\[app\]|\[harness\]|\[runtime\]|\[core" | head -60
+          echo "=== 技能相关测试专项确认 ==="
+          find . -path "*/test-results/*" -name "TEST-*Skill*.xml" -o -path "*/test-results/*" -name "TEST-*Mention*.xml" -o -path "*/test-results/*" -name "TEST-*Frontmatter*.xml" 2>/dev/null | while read -r f; do
+            echo "  ✓ $(basename "$f"): $(grep -o 'tests="[0-9]*"' "$f" | head -1)"
+          done
+
+      - name: Publish failure summary
+        if: failure()
+        run: |
+          echo "## 失败摘要"
+          {
+            echo "=== 错误（前 80 行）==="
+            grep -nE '^e: |error:|FAILED|What went wrong|> Task .* FAILED|Execution failed' /tmp/build.log /tmp/unit-test.log 2>/dev/null | head -80 || true
+            echo
+            echo "=== 全文尾部 120 行 ==="
+            tail -120 /tmp/unit-test.log 2>/dev/null || true
+          }
