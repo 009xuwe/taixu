@@ -74,10 +74,10 @@ class ToolSchemaValidatorTest {
     }
 
     @Test
-    fun `enforces anyOf field combinations for history read`() {
-        val problems = ToolSchemaValidator.problemsFor("history.read", args())
-        assertTrue(problems.any { it.contains("message_id") && it.contains("index") && it.contains("至少提供其中一组") })
-        // 提供任一组即通过
+    fun `history read schema omits anyOf and accepts either field`() {
+        // 历史契约（commit d8fef054）：为兼容不支持 anyOf 的代理，schema 不再携带组合约束；
+        // 「message_id / index 至少提供一个」由工具描述与执行层承担。
+        assertTrue(ToolSchemaValidator.problemsFor("history.read", args()).isEmpty())
         assertTrue(ToolSchemaValidator.problemsFor("history.read", args("message_id" to "m-1")).isEmpty())
         assertTrue(ToolSchemaValidator.problemsFor("history.read", args("index" to 3)).isEmpty())
     }

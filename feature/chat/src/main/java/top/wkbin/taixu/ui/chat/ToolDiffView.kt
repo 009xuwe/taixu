@@ -95,22 +95,29 @@ private fun EditToolDiff(
     // 顶部路径与在编辑器中打开/产物预览按钮
     FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile, previewContent = newText.ifEmpty { oldText })
 
-    val oldLines = remember(oldText) { if (oldText.isEmpty()) emptyList() else oldText.split('\n') }
-    val newLines = remember(newText) { if (newText.isEmpty()) emptyList() else newText.split('\n') }
+    // 优先渲染 harness 侧生成的精确 Unified Diff（反映真实命中区间与缩进重排）；
+    // 旧数据或写入失败时回退到按参数粗渲染。
+    val unifiedDiff = result?.takeIf { it.success }?.metadata?.get("diff")
+    if (!unifiedDiff.isNullOrBlank()) {
+        UnifiedDiffLines(unifiedDiff)
+    } else {
+        val oldLines = remember(oldText) { if (oldText.isEmpty()) emptyList() else oldText.split('\n') }
+        val newLines = remember(newText) { if (newText.isEmpty()) emptyList() else newText.split('\n') }
 
-    // Diff 区域：LazyColumn 虚拟化渲染，大 diff 只组合可见行，不再整块全量重组
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF06090F), RoundedCornerShape(6.dp))
-            .heightIn(max = 320.dp)
-            .padding(vertical = 4.dp),
-    ) {
-        itemsIndexed(oldLines, key = { index, _ -> "old-$index" }) { _, line ->
-            DiffLine(text = "- $line", background = DiffRemovedBg, foreground = DiffRemovedText)
-        }
-        itemsIndexed(newLines, key = { index, _ -> "new-$index" }) { _, line ->
-            DiffLine(text = "+ $line", background = DiffAddedBg, foreground = DiffAddedText)
+        // Diff 区域：LazyColumn 虚拟化渲染，大 diff 只组合可见行，不再整块全量重组
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF06090F), RoundedCornerShape(6.dp))
+                .heightIn(max = 320.dp)
+                .padding(vertical = 4.dp),
+        ) {
+            itemsIndexed(oldLines, key = { index, _ -> "old-$index" }) { _, line ->
+                DiffLine(text = "- $line", background = DiffRemovedBg, foreground = DiffRemovedText)
+            }
+            itemsIndexed(newLines, key = { index, _ -> "new-$index" }) { _, line ->
+                DiffLine(text = "+ $line", background = DiffAddedBg, foreground = DiffAddedText)
+            }
         }
     }
 
@@ -126,6 +133,30 @@ private fun EditToolDiff(
     }
 }
 
+@Composable
+private fun UnifiedDiffLines(diff: String) {
+    val lines = remember(diff) { diff.split('\n').filter { it.isNotEmpty() } }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF06090F), RoundedCornerShape(6.dp))
+            .heightIn(max = 320.dp)
+            .padding(vertical = 4.dp),
+    ) {
+        itemsIndexed(lines, key = { index, _ -> "diff-$index" }) { _, line ->
+            val (background, foreground) = when {
+                line.startsWith("+++") || line.startsWith("---") ->
+                    Color(0xFF141C29) to Color(0xFF9FB3C8)
+                line.startsWith("@@") ->
+                    Color(0xFF12202F) to Color(0xFF82AAFF)
+                line.startsWith("+") -> DiffAddedBg to DiffAddedText
+                line.startsWith("-") -> DiffRemovedBg to DiffRemovedText
+                else -> Color(0xFF06090F) to Color(0xFF9AA7B8)
+            }
+            DiffLine(text = line, background = background, foreground = foreground)
+        }
+    }
+}
 @Composable
 private fun DiffLine(text: String, background: Color, foreground: Color) {
     Text(

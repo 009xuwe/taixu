@@ -3,6 +3,8 @@ package top.wkbin.taixu.harness
 import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
+import top.wkbin.taixu.harness.text.TextReplacerEngine
+import top.wkbin.taixu.harness.text.UnifiedDiffGenerator
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
@@ -12,6 +14,13 @@ data class WorkspaceEntry(
     val name: String,
     val isDirectory: Boolean,
     val sizeBytes: Long,
+)
+
+/** edit 工具的详细结果：命中策略与文件级 Unified Diff（供前端对比视图渲染）。 */
+data class WorkspaceEditOutcome(
+    val strategy: String,
+    val replacements: Int,
+    val diff: String?,
 )
 
 /**
@@ -87,6 +96,23 @@ class WorkspaceFileAccess(
         }
     }
 
+    /**
+     * 读取图片等二进制文件的原始字节（供沙箱多模态视觉直通使用）。
+     * 与文本 [read] 分开：不做 UTF-8 解码，避免图片被当文本读出乱码或触发字符集异常。
+     */
+    suspend fun readRawBytes(path: String): AppResult<ByteArray> = withContext(Dispatchers.IO) {
+        try {
+            val file = resolveRequired(path)
+            check(file.isFile) { "不是文件：${display(path)}" }
+            check(file.length() <= MAX_IMAGE_BYTES) {
+                "图片过大（${file.length()} 字节，上限 $MAX_IMAGE_BYTES），请先压缩或改用文字/图表描述"
+            }
+            AppResult.Success(file.readBytes())
+        } catch (throwable: Throwable) {
+            failure(path, throwable)
+        }
+    }
+
     suspend fun write(path: String, content: String): AppResult<Unit> = withContext(Dispatchers.IO) {
         try {
             val contentBytes = content.toByteArray(Charsets.UTF_8).size
@@ -136,25 +162,38 @@ class WorkspaceFileAccess(
         }
     }
 
-    suspend fun edit(path: String, oldText: String, newText: String): AppResult<Unit> = withContext(Dispatchers.IO) {
-        try {
-            require(oldText.isNotEmpty()) { "oldText 不能为空" }
-            val file = resolveWritable(path)
-            check(file.isFile) { "不是文件：${display(path)}" }
-            check(file.length() <= MAX_EDIT_BYTES) {
-                "文件过大（${file.length()} 字节，上限 $MAX_EDIT_BYTES），请使用 base 的流式文本工具进行定点修改"
+    suspend fun edit(path: String, oldText: String, newText: String): AppResult<Unit> =
+        editDetailed(path, oldText, newText).map { }
+
+    /**
+     * 多级容错编辑：Exact -> LineTrimmed -> BlockAnchor，命中后写出并按真实缩进重排。
+     * 返回命中策略与文件级 Unified Diff（供 ToolResult.metadata["diff"] 前端渲染）；
+     * 模型上下文仍只收到简短文本，不含 diff 正文。
+     */
+    suspend fun editDetailed(path: String, oldText: String, newText: String): AppResult<WorkspaceEditOutcome> =
+        withContext(Dispatchers.IO) {
+            try {
+                require(oldText.isNotEmpty()) { "oldText 不能为空" }
+                val file = resolveWritable(path)
+                check(file.isFile) { "不是文件：${display(path)}" }
+                check(file.length() <= MAX_EDIT_BYTES) {
+                    "文件过大（${file.length()} 字节，上限 $MAX_EDIT_BYTES），请使用 base 的流式文本工具进行定点修改"
+                }
+                val content = file.readText(Charsets.UTF_8)
+                val result = TextReplacerEngine.replace(content, oldText, newText)
+                write(path, result.updated)
+                    .errorOrNull()?.let { throw it.cause ?: IllegalStateException(it.message) }
+                AppResult.Success(
+                    WorkspaceEditOutcome(
+                        strategy = result.strategy,
+                        replacements = result.replacements,
+                        diff = UnifiedDiffGenerator.diff(content, result.updated, path.trim().trimStart('/')),
+                    ),
+                )
+            } catch (throwable: Throwable) {
+                failure(path, throwable)
             }
-            val content = file.readText(Charsets.UTF_8)
-            val first = content.indexOf(oldText)
-            check(first >= 0) { "oldText 未找到" }
-            check(first == content.lastIndexOf(oldText)) { "oldText 匹配多处，请提供更精确的上下文" }
-            write(path, content.replaceRange(first, first + oldText.length, newText))
-                .errorOrNull()?.let { throw it.cause ?: IllegalStateException(it.message) }
-            AppResult.Success(Unit)
-        } catch (throwable: Throwable) {
-            failure(path, throwable)
         }
-    }
 
     /** 解析路径并强制其位于工作区内；目录可以不存在（用于写入）。 */
     private fun resolveWritable(path: String): File {
@@ -300,6 +339,8 @@ class WorkspaceFileAccess(
         internal const val MAX_HARNESS_ARTIFACT_BYTES = 16 * 1024 * 1024
         private const val DIR = ".taixu-outputs"
         const val MAX_EDIT_BYTES = 1 * 1024 * 1024L
+        /** 单张图片多模态直读上限：超过则提示压缩，避免把巨型 Base64 灌进请求体。 */
+        const val MAX_IMAGE_BYTES = 8 * 1024 * 1024L
         const val MAX_LIST_ENTRIES = 5_000
 
         /** 无参 read 的默认行窗口；单次 limit 也以此为上限，避免单次读取灌爆工具输出。 */

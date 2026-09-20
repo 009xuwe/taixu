@@ -89,6 +89,7 @@ object ApiMessageProjector {
                             val status = if (message.success) "成功" else "失败"
                             val content = "【工具 $name 执行结果·$status】\n${message.output}"
                             add(ApiMessage(role = "user", content = content))
+                            visionBridgeMessage(message, visionEnabled)?.let { add(it) }
                             i++
                         }
                         else -> {
@@ -154,6 +155,8 @@ object ApiMessageProjector {
                             tool_call_id = message.toolCallId,
                         ),
                     )
+                    // 沙箱图片多模态直通：紧跟 tool 结果追加一条图片 user 消息
+                    visionBridgeMessage(message, visionEnabled)?.let { add(it) }
                     i++
                 } else {
                     val mapped = HarnessApiMapper.toApiMessage(message)
@@ -163,5 +166,19 @@ object ApiMessageProjector {
                 }
             }
         }
+    }
+
+    /**
+     * 沙箱图片多模态直通：把 read 工具留下的 data URL 组装成一条 user 图片消息。
+     * 仅在模型开启视觉且工具调用成功时注入；非视觉模型直接忽略，避免请求被拒绝。
+     */
+    private fun visionBridgeMessage(message: ToolResult, visionEnabled: Boolean): ApiMessage? {
+        val payload = message.imageDataUrl ?: return null
+        if (!visionEnabled || !message.success) return null
+        return ApiMessage(
+            role = "user",
+            content = "[read 工具读取的图片，已作为多模态图像提供]",
+            imageUrls = listOf(payload),
+        )
     }
 }

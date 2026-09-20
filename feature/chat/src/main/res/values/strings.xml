@@ -99,6 +99,7 @@
     <string name="chat_reasoning_copied">思考内容已复制</string>
     <string name="chat_deep_reasoning">深度推理中…</string>
     <string name="chat_reasoning_process">推理思考过程</string>
+    <string name="chat_reasoning_duration">已深度思考 %1$s 秒</string>
     <string name="chat_call_tool">调用工具</string>
     <string name="chat_approval_required">需要你的批准</string>
     <string name="chat_reject">拒绝</string>

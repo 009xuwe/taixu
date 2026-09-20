@@ -112,6 +112,11 @@ data class AssistantText(
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
     val cachedTokens: Int? = null,
+    /**
+     * 模型思考（reasoning）流的确切耗时（毫秒，从首个 reasoning 增量到 reasoning 结束）。
+     * 用于前端展示「已深度思考 N.N 秒」；旧数据无此字段，默认 null。
+     */
+    val reasoningMs: Long? = null,
 ) : HarnessMessage
 
 @Serializable
@@ -150,4 +155,16 @@ data class ToolResult(
      * 持久化兼容：旧数据无此字段；序列化与 Room payload 默认空数组。
      */
     val imageAttachments: List<top.wkbin.taixu.core.model.ToolImageRef> = emptyList(),
+    /**
+     * 工具结果的结构化元数据（不进入模型上下文）。当前用于 edit 工具：
+     * metadata["diff"] 携带 Unified Diff，供前端 DiffView 渲染对比视图。
+     * 持久化兼容：旧数据无此字段；序列化与 Room payload 默认空表。
+     */
+    val metadata: Map<String, String> = emptyMap(),
+    /**
+     * 沙箱图片多模态直通载荷：`data:image/png;base64,...`。
+     * read 工具识别到图片后缀时写入，由 ApiMessageProjector 在 visionEnabled 时
+     * 追加为图片消息发给多模态模型；非视觉模型会被忽略。旧数据默认 null。
+     */
+    val imageDataUrl: String? = null,
 ) : HarnessMessage

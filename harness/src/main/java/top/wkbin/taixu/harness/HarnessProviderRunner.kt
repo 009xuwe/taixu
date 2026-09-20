@@ -18,6 +18,23 @@ import top.wkbin.taixu.harness.projection.SessionStateMirrors
 import top.wkbin.taixu.harness.session.ApiContextAssembler
 import kotlin.time.Duration.Companion.milliseconds
 
+/**
+ * 本地流式增量处理（消息投影 / 持久化 / UI 派生）失败。
+ *
+ * 与网络 [IOException] 严格隔离：这类异常不是网络故障，绝不能触发整轮网络重发，
+ * 否则会把半截内容、重复文字或残缺 JSON 污染到后续上下文。
+ */
+internal class StreamChunkHandlingException(message: String, cause: Throwable) : Exception(message, cause)
+
+/** 包裹流式回调：本地处理异常统一转成 [StreamChunkHandlingException]，取消原样透传。 */
+internal inline fun <T> withinStreamHandling(block: () -> T): T = try {
+    block()
+} catch (cancellation: CancellationException) {
+    throw cancellation
+} catch (throwable: Throwable) {
+    throw StreamChunkHandlingException(throwable.message ?: "流式增量处理失败", throwable)
+}
+
 /** 模型能力选择、流式请求重试及助手回复持久化；不持有会话调度状态。 */
 class HarnessProviderRunner(
     private val providerClient: ProviderClient,
@@ -64,6 +81,14 @@ class HarnessProviderRunner(
         val streamText = StreamBuffer()
         val streamReasoning = StreamBuffer(maxChars = ProviderClient.MAX_STREAM_REASONING_CHARS)
         var streamed: ChatResult? = null
+        // 干净快照基线：每次网络重发前彻底清空本轮缓冲区并删除流式气泡，
+        // 避免半截字符/残缺 JSON 拼接到下一次重试的增量之后污染上下文。
+        fun resetStreamBaseline() {
+            streamText.clear()
+            streamReasoning.clear()
+            messageProjector.remove(sessId, assistantId)
+        }
+
         var requestModel = model
         var outputBudgetReduced = false
         var netRetry = 0
@@ -113,42 +138,76 @@ class HarnessProviderRunner(
                     requestModel,
                     requestMessages,
                     onReasoning = { chunk ->
-                        streamReasoning.append(chunk)
-                        stateMirrors.setThinkingLive(sessId, true)
-                        stateMirrors.recordThinkingObserved(sessId)
-                        streamReasoning.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
-                            messageProjector.streamReasoning(sessId, assistantId, assistantAt, it)
+                        withinStreamHandling {
+                            streamReasoning.append(chunk)
+                            stateMirrors.setThinkingLive(sessId, true)
+                            stateMirrors.recordThinkingObserved(sessId)
+                            streamReasoning.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
+                                messageProjector.streamReasoning(sessId, assistantId, assistantAt, it)
+                            }
                         }
                     },
                     onToolProgress = { progress ->
-                        stateMirrors.setThinkingLive(sessId, false)
-                        stateMirrors.setStatus(
-                            sessId,
-                            if (progress.name == "write") {
-                                "正在生成 write · +${progress.addedLines}"
-                            } else {
-                                "正在生成 edit · +${progress.addedLines} -${progress.deletedLines}"
-                            },
-                        )
+                        withinStreamHandling {
+                            stateMirrors.setThinkingLive(sessId, false)
+                            stateMirrors.setStatus(
+                                sessId,
+                                if (progress.name == "write") {
+                                    "正在生成 write · +${progress.addedLines}"
+                                } else {
+                                    "正在生成 edit · +${progress.addedLines} -${progress.deletedLines}"
+                                },
+                            )
+                        }
                     },
                 ) { chunk ->
-                    stateMirrors.setStatus(sessId, "回复中")
-                    streamText.append(chunk)
-                    streamText.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
-                        messageProjector.streamText(sessId, assistantId, assistantAt, it)
+                    withinStreamHandling {
+                        stateMirrors.setStatus(sessId, "回复中")
+                        streamText.append(chunk)
+                        streamText.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
+                            messageProjector.streamText(sessId, assistantId, assistantAt, it)
+                        }
                     }
                 }
                 // 流式传输完毕，无条件刷新一次完整内容
-                if (streamReasoning.length > 0) {
-                    messageProjector.streamReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
-                }
-                if (streamText.length > 0) {
-                    messageProjector.streamText(sessId, assistantId, assistantAt, streamText.toString())
+                withinStreamHandling {
+                    if (streamReasoning.length > 0) {
+                        messageProjector.streamReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
+                    }
+                    if (streamText.length > 0) {
+                        messageProjector.streamText(sessId, assistantId, assistantAt, streamText.toString())
+                    }
                 }
             } catch (cancellation: CancellationException) {
                 agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行")
                 messageProjector.remove(sessId, assistantId)
                 throw cancellation
+            } catch (handling: StreamChunkHandlingException) {
+                // 本地流式处理异常：原样终止，严禁当作网络故障重发（否则重复文字/半截 JSON 会污染上下文）。
+                stateMirrors.setThinkingLive(sessId, false)
+                agentEventLogger.log(
+                    sessId,
+                    "StreamChunkHandling",
+                    "流式增量处理失败（本地异常，禁止网络重发）：${handling.message}",
+                    handling,
+                )
+                if (streamText.length > 0) {
+                    persistAssistant(
+                        sessId,
+                        assistantId,
+                        assistantAt,
+                        streamText.toString(),
+                        streamReasoning.toString().ifBlank { null },
+                        totalMs = now() - startedAt,
+                        operationId = operationId,
+                        round = round,
+                    )
+                } else {
+                    messageProjector.remove(sessId, assistantId)
+                }
+                return TurnProviderOutcome.Failed(
+                    "流式响应处理失败（本地异常，未自动重试）：${friendly(handling.cause ?: handling)}",
+                )
             } catch (rateLimit: LlmRateLimitException) {
                 currentCoroutineContext().ensureActive()
                 if (rateLimit.quotaExhausted) {
@@ -166,9 +225,7 @@ class HarnessProviderRunner(
                 val waitSeconds = rateLimit.retryAfterSeconds ?: (netRetry * RETRY_BACKOFF_SEC).coerceAtMost(60L)
                 stateMirrors.setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$maxNetworkRetries）")
                 agentEventLogger.log(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$maxNetworkRetries", rateLimit)
-                streamText.clear()
-                streamReasoning.clear()
-                messageProjector.remove(sessId, assistantId)
+                resetStreamBaseline()
                 for (remaining in waitSeconds downTo 1L) {
                     currentCoroutineContext().ensureActive()
                     stateMirrors.setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$maxNetworkRetries）")
@@ -187,9 +244,7 @@ class HarnessProviderRunner(
                     "Provider 拒绝输出预算，严格降额至 $reduced 后重试",
                     invalidOutputTokens,
                 )
-                streamText.clear()
-                streamReasoning.clear()
-                messageProjector.remove(sessId, assistantId)
+                resetStreamBaseline()
             } catch (io: IOException) {
                 currentCoroutineContext().ensureActive()
                 netRetry++
@@ -211,9 +266,7 @@ class HarnessProviderRunner(
                 metrics.streamRetry()
                 stateMirrors.setThinkingLive(sessId, false)
                 stateMirrors.setStatus(sessId, "网络中断，自动重发中（第 $netRetry 次失败，上限 $retryBudget）")
-                streamText.clear()
-                streamReasoning.clear()
-                messageProjector.remove(sessId, assistantId)
+                resetStreamBaseline()
                 delay(retryPolicy.delayForRetry(netRetry).milliseconds)
             } catch (throwable: Throwable) {
                 stateMirrors.setThinkingLive(sessId, false)
@@ -233,9 +286,7 @@ class HarnessProviderRunner(
                                 sessId, "ContextOverflowRecovery",
                                 "紧急压缩完成：折叠 ${recovered.first} 条，保留 ${recovered.second} 条，重新组装请求重试",
                             )
-                            streamText.clear()
-                            streamReasoning.clear()
-                            messageProjector.remove(sessId, assistantId)
+                            resetStreamBaseline()
                             requestMessages = assembleFor(requestModel)
                             continue
                         }
@@ -248,9 +299,7 @@ class HarnessProviderRunner(
                             sessId, "ContextOverflowImageStrip",
                             "紧急压缩后仍超限，剥离 $pendingImages 张图片降级重试", throwable,
                         )
-                        streamText.clear()
-                        streamReasoning.clear()
-                        messageProjector.remove(sessId, assistantId)
+                        resetStreamBaseline()
                         continue
                     }
                     messageProjector.remove(sessId, assistantId)
@@ -276,9 +325,7 @@ class HarnessProviderRunner(
                         sessId, "VisionFallback",
                         "模型不支持图片输入，已剥离 $pendingImages 张图片降级重试", throwable,
                     )
-                    streamText.clear()
-                    streamReasoning.clear()
-                    messageProjector.remove(sessId, assistantId)
+                    resetStreamBaseline()
                     continue
                 }
                 agentEventLogger.log(sessId, "ModelError", "LLM 调用失败: ${throwable.message}", throwable)
@@ -354,6 +401,7 @@ class HarnessProviderRunner(
                 displayText,
                 result.reasoningContent,
                 totalMs = if (!hasToolCalls) now() - startedAt else null,
+                reasoningMs = result.reasoningMs,
                 operationId = operationId,
                 round = round,
                 usage = result.usage,
@@ -381,6 +429,7 @@ class HarnessProviderRunner(
         text: String,
         reasoning: String? = null,
         totalMs: Long? = null,
+        reasoningMs: Long? = null,
         operationId: String? = null,
         round: Int = 0,
         usage: ChatUsage? = null,
@@ -392,6 +441,7 @@ class HarnessProviderRunner(
             text = text,
             reasoning = reasoning,
             totalMs = totalMs,
+            reasoningMs = reasoningMs,
             modelId = model?.model,
             providerId = model?.provider,
             promptTokens = usage?.inputTokens?.takeIf { it > 0 }?.toInt(),

@@ -509,6 +509,12 @@ data class ModelConfig(
     val visionEnabled: Boolean = true,
     /** 是否使用 OpenAI Responses API（true = POST /responses；false = /chat/completions）。 */
     val responseApiEnabled: Boolean = false,
+    /**
+     * Anthropic Prompt Caching：请求时注入 cache_control 断点
+     * （System 末尾 / Tools 末尾 / 倒数第二轮真实 User 消息）。仅对原生 Anthropic
+     * Messages API 生效；由 toModelConfig 按协议自动启用，避免给不支持的代理注入字段。
+     */
+    val promptCachingEnabled: Boolean = false,
 )
 
 internal data class RequestedModelTarget(
@@ -550,6 +556,11 @@ data class ChatResult(
     val reasoningContent: String? = null,
     /** Provider 报告的本轮 token 用量；未报告时全部为 0。 */
     val usage: ChatUsage = ChatUsage(),
+    /**
+     * 思考流确切耗时（毫秒）：首个 reasoning 增量到 reasoning 结束之间。
+     * 由 ProviderClient.chatStream 统一测量，非推理模型或未观测到 reasoning 时为 null。
+     */
+    val reasoningMs: Long? = null,
 ) {
     val hasToolCalls: Boolean get() = toolCalls.isNotEmpty()
 }
@@ -887,38 +898,56 @@ class ProviderClient(
             }
         }
 
-    /** 流式调用：内容增量通过 [onDelta] 实时回调，推理增量通过 [onReasoning] 实时回调。 */
+    /**
+     * 流式调用：内容增量通过 [onDelta] 实时回调，推理增量通过 [onReasoning] 实时回调。
+     *
+     * 思考耗时在此统一测量（三种协议同一口径）：首个 reasoning 增量开始计时，
+     * 首个正文增量（或流正常结束）停止计时，结果写入 [ChatResult.reasoningMs]。
+     */
     suspend fun chatStream(
         model: ModelConfig,
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit = {},
         onToolProgress: (ToolCallStreamProgress) -> Unit = {},
         onDelta: (String) -> Unit,
-    ): ChatResult = executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
-        val sanitized = sanitizeApiTranscript(messages)
-        when {
-            selected.responseApiEnabled -> ResponsesApi(streamHttpClient, json).chatStream(
-                selected,
-                sanitized,
-                onReasoning,
-                onToolProgress,
-                onDelta,
-            )
-            selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(streamHttpClient, json).chatStream(
-                selected,
-                sanitized,
-                onReasoning,
-                onToolProgress,
-                onDelta,
-            )
-            else -> ChatApi(streamHttpClient, json).chatStream(
-                selected,
-                sanitized,
-                onReasoning,
-                onToolProgress,
-                onDelta,
-            )
+    ): ChatResult {
+        val timing = ReasoningTimingTracker()
+        val timedReasoning: (String) -> Unit = { chunk ->
+            timing.onReasoningChunk()
+            onReasoning(chunk)
         }
+        val timedDelta: (String) -> Unit = { chunk ->
+            timing.onContentChunk()
+            onDelta(chunk)
+        }
+        val result = executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
+            val sanitized = sanitizeApiTranscript(messages)
+            when {
+                selected.responseApiEnabled -> ResponsesApi(streamHttpClient, json).chatStream(
+                    selected,
+                    sanitized,
+                    timedReasoning,
+                    onToolProgress,
+                    timedDelta,
+                )
+                selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(streamHttpClient, json).chatStream(
+                    selected,
+                    sanitized,
+                    timedReasoning,
+                    onToolProgress,
+                    timedDelta,
+                )
+                else -> ChatApi(streamHttpClient, json).chatStream(
+                    selected,
+                    sanitized,
+                    timedReasoning,
+                    onToolProgress,
+                    timedDelta,
+                )
+            }
+        }
+        val reasoningMs = timing.finish()
+        return if (reasoningMs != null) result.copy(reasoningMs = reasoningMs) else result
     }
 
     /**
@@ -970,6 +999,7 @@ class ProviderClient(
             providerRepository: top.wkbin.taixu.core.tools.ProviderRepository,
         ): ModelConfig {
             val baseUrl = this.baseUrl.ifBlank { DEFAULT_BASE_URL }
+            val resolvedProtocol = inferProtocol(baseUrl, provider)
             val modelKeys = providerRepository.readModelApiKeys(secretRef)
             val fallbackKey = providerRepository.readApiKey().orEmpty().ifBlank { null }
             val effectiveKeys = modelKeys.ifEmpty { listOfNotNull(fallbackKey) }
@@ -981,7 +1011,7 @@ class ProviderClient(
                 apiKey = effectiveKeys.firstOrNull(),
                 apiKeys = effectiveKeys,
                 requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
-                protocol = inferProtocol(baseUrl, provider),
+                protocol = resolvedProtocol,
                 temperature = temperature,
                 maxTokens = maxTokens,
                 topP = topP,
@@ -1009,6 +1039,7 @@ class ProviderClient(
                 pureChatMode = pureChatMode,
                 visionEnabled = visionEnabled,
                 responseApiEnabled = responseApiEnabled,
+                promptCachingEnabled = resolvedProtocol == ApiProtocol.ANTHROPIC,
             )
         }
 
@@ -1323,11 +1354,12 @@ class ProviderClient(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "load_skill",
-                    description = "按需加载技能（Skill）的完整说明。系统提示末尾的「可用技能」目录只列出名称与适用场景；" +
+                    description = "按需加载技能（Skill）的完整说明或子资源。系统提示末尾的「可用技能」目录只列出名称与适用场景；" +
                         "当用户请求与某个技能的描述匹配时，先用本工具加载其完整指导规则与资源路径，再按说明执行。" +
-                        "用户已 @提及 的技能会自动生效，无需重复加载。只读。",
+                        "传入 path 时按技能目录内相对路径读取附属文件（如 references/spec.md、scripts/run.sh）；" +
+                        "省略 path 时读取根 SKILL.md 正文（已剔除 YAML frontmatter）。用户已 @提及 的技能会自动生效，无需重复加载。只读。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"name":{"type":"string","description":"技能名称或触发命令（不含 / 前缀），须与目录中列出的一致"}},"required":["name"]}""",
+                        """{"type":"object","properties":{"name":{"type":"string","description":"技能名称或触发命令（不含 / 前缀），须与目录中列出的一致"},"path":{"type":"string","description":"可选：技能目录内相对资源路径（如 references/foo.md 或 scripts/bar.sh）；省略时读取根 SKILL.md 正文"}},"required":["name"]}""",
                     ).jsonObject,
                 ),
             ),

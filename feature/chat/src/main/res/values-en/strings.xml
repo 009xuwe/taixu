@@ -84,6 +84,7 @@
     <string name="chat_reasoning_copied">Reasoning copied</string>
     <string name="chat_deep_reasoning">Deep reasoning…</string>
     <string name="chat_reasoning_process">Reasoning process</string>
+    <string name="chat_reasoning_duration">Thought for %1$s s</string>
     <string name="chat_call_tool">Tool call</string>
     <string name="chat_approval_required">Your approval is required</string>
     <string name="chat_reject">Reject</string>

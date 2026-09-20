@@ -414,6 +414,7 @@ internal fun AssistantBubble(
                 reasoning = reasoning,
                 defaultExpanded = defaultExpanded,
                 live = live,
+                durationMs = message.reasoningMs,
             )
         }
 
@@ -727,6 +728,7 @@ internal fun ThinkingBlock(
     reasoning: String,
     defaultExpanded: Boolean,
     live: Boolean = false,
+    durationMs: Long? = null,
 ) {
     var expanded by rememberSaveable(id) { mutableStateOf(defaultExpanded) }
     val context = LocalContext.current
@@ -774,7 +776,12 @@ internal fun ThinkingBlock(
             }
 
             Text(
-                stringResource(if (live) R.string.chat_deep_reasoning else R.string.chat_reasoning_process),
+                text = when {
+                    live -> stringResource(R.string.chat_deep_reasoning)
+                    durationMs != null && durationMs > 0 ->
+                        stringResource(R.string.chat_reasoning_duration, "%.1f".format(durationMs / 1000.0))
+                    else -> stringResource(R.string.chat_reasoning_process)
+                },
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Medium,

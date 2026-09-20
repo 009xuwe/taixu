@@ -69,7 +69,12 @@ internal class AnthropicApi(
             }
         }
 
-    @OptIn(InternalCoroutinesApi::class)
+    /**
+     * 流式对话入口。在 [streamOnce] 基础上实现 Claude `pause_turn` 续流状态机：
+     * 当服务端因超长思考/服务端工具暂停本轮时，把已生成的 assistant 消息原样回放并
+     * 再次请求（严禁插入人工 "Continue" 用户消息），直到拿到终态；各段增量已在回调
+     * 中顺序上屏，Token 统计与工具调用在续跑间累加、重基。
+     */
     suspend fun chatStream(
         model: ModelConfig,
         messages: List<ApiMessage>,
@@ -77,6 +82,71 @@ internal class AnthropicApi(
         onToolProgress: (ToolCallStreamProgress) -> Unit = {},
         onDelta: (String) -> Unit,
     ): ChatResult = withContext(Dispatchers.IO) {
+        var conversation = messages
+        val mergedContent = StringBuilder()
+        val mergedReasoning = StringBuilder()
+        val mergedToolCalls = mutableListOf<ApiToolCallSpec>()
+        var mergedUsage = ChatUsage()
+        var continuations = 0
+        var finalResult = ChatResult(content = null, toolCalls = emptyList())
+        var done = false
+        while (!done) {
+            val round = streamOnce(model, conversation, onReasoning, onToolProgress, onDelta)
+            round.content?.takeIf { it.isNotEmpty() }?.let { mergedContent.append(it) }
+            round.reasoningContent?.takeIf { it.isNotEmpty() }?.let { mergedReasoning.append(it) }
+            mergedToolCalls += round.toolCalls
+            mergedUsage = ChatUsage(
+                inputTokens = mergedUsage.inputTokens + round.usage.inputTokens,
+                outputTokens = mergedUsage.outputTokens + round.usage.outputTokens,
+                reasoningTokens = mergedUsage.reasoningTokens + round.usage.reasoningTokens,
+                cacheReadTokens = mergedUsage.cacheReadTokens + round.usage.cacheReadTokens,
+                cacheWriteTokens = mergedUsage.cacheWriteTokens + round.usage.cacheWriteTokens,
+            )
+            if (round.stopReason != "pause_turn" || continuations >= MAX_PAUSE_TURN_CONTINUATIONS) {
+                finalResult = ChatResult(
+                    content = mergedContent.toString().ifEmpty { null },
+                    toolCalls = mergedToolCalls,
+                    reasoningContent = mergedReasoning.toString().ifEmpty { null },
+                    usage = mergedUsage,
+                )
+                done = true
+            } else {
+                conversation = conversation + round.toResumeMessage()
+                continuations++
+            }
+        }
+        finalResult
+    }
+
+    /** 单轮流式结果：除内容/工具/用量外，额外携带 Anthropic 的 stop_reason。 */
+    private data class StreamRound(
+        val content: String?,
+        val reasoningContent: String?,
+        val toolCalls: List<ApiToolCallSpec>,
+        val usage: ChatUsage,
+        val stopReason: String?,
+    )
+
+    /** pause_turn 续跑：把本轮 assistant 部分回复转成下轮请求的前缀消息。 */
+    private fun StreamRound.toResumeMessage(): ApiMessage = ApiMessage(
+        role = "assistant",
+        content = content,
+        tool_calls = toolCalls.map { call ->
+            ApiToolCall(
+                id = call.id,
+                function = ApiFunctionCall(name = call.name, arguments = call.argumentsJson),
+            )
+        },
+    )
+
+    @OptIn(InternalCoroutinesApi::class)
+    private suspend fun streamOnce(
+        model: ModelConfig,
+        messages: List<ApiMessage>,
+        onReasoning: (String) -> Unit,
+        onToolProgress: (ToolCallStreamProgress) -> Unit = {},
+        onDelta: (String) -> Unit,
+    ): StreamRound = withContext(Dispatchers.IO) {
         val call = okHttpClient.newCall(buildRequest(model, messages, stream = true))
         // 与 ChatApi 一致：取消时立即关闭 socket，保证"停止"秒级生效
         val cancelHandle = coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { call.cancel() }
@@ -108,6 +178,7 @@ internal class AnthropicApi(
                 // index -> 工具调用累积器（Claude 以 content block index 标识每个 tool_use）
                 val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
                 var usage = ChatUsage()
+                var stopReason: String? = null
                 while (true) {
                     val line = source.readUtf8Line() ?: break
                     if (!line.startsWith("data:")) continue
@@ -134,6 +205,9 @@ internal class AnthropicApi(
                             val messageUsage = event["usage"] as? JsonObject
                             val outputTokens = messageUsage?.get("output_tokens")?.jsonPrimitive?.longOrNull
                             if (outputTokens != null) usage = usage.copy(outputTokens = outputTokens)
+                            // pause_turn：服务端长思考/服务端工具暂停，客户端需原样回放续跑
+                            (event["delta"] as? JsonObject)?.get("stop_reason")
+                                ?.jsonPrimitive?.contentOrNull?.let { stopReason = it }
                         }
                         "content_block_start" -> {
                             val index = event["index"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
@@ -177,7 +251,7 @@ internal class AnthropicApi(
                     }
                 }
                 toolCalls.values.forEach { it.publishProgress(onToolProgress, force = true) }
-                ChatResult(
+                StreamRound(
                     content = text.toString().ifEmpty { null },
                     // 无参数的工具调用（input={}）不会下发 input_json_delta，累积结果为空串，须兜底为 "{}"
                     toolCalls = toolCalls.values.map {
@@ -185,6 +259,7 @@ internal class AnthropicApi(
                     },
                     reasoningContent = reasoningText.toString().ifEmpty { null },
                     usage = usage,
+                    stopReason = stopReason,
                 )
             }
         } catch (io: IOException) {
@@ -354,19 +429,47 @@ internal class AnthropicApi(
                 systemPrompt.append("\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n")
                     .append(ProviderClient.buildToolsTextDescription(dynamicTools))
             }
-            if (!model.pureChatMode && systemPrompt.isNotEmpty()) put("system", systemPrompt.toString())
-            put("messages", JsonArray(anthropicMessages))
+            if (!model.pureChatMode && systemPrompt.isNotEmpty()) {
+                if (model.promptCachingEnabled) {
+                    // Prompt Caching 断点 1：System 提示词末尾
+                    put(
+                        "system",
+                        buildJsonArray {
+                            add(
+                                buildJsonObject {
+                                    put("type", "text")
+                                    put("text", systemPrompt.toString())
+                                    put("cache_control", buildJsonObject { put("type", "ephemeral") })
+                                },
+                            )
+                        },
+                    )
+                } else {
+                    put("system", systemPrompt.toString())
+                }
+            }
+            // 合并相邻的 user 消息：视觉直通会在 tool_result 之后紧跟一条图片 user 消息，
+            // 而 Claude 要求 role 交替；合并后 tool_result 与 image 同处一条 user 消息。
+            val normalizedMessages = mergeConsecutiveUserMessages(anthropicMessages)
+            // Prompt Caching 断点 3：倒数第二条「真实用户」消息（不含 tool_result 回包），
+            // 该消息及之前的历史在上一轮已完全确定，可全量命中前缀缓存。
+            applyUserCacheBreakpoint(model, normalizedMessages)
+            put("messages", JsonArray(normalizedMessages))
             // 仅 NATIVE 模式注入标准 tools；纯净模式与 JSON_TEXT / DISABLED 均不注入
             if (!model.pureChatMode && model.toolCallMode == ToolCallMode.NATIVE && dynamicTools.isNotEmpty()) {
                 put(
                     "tools",
                     buildJsonArray {
-                        dynamicTools.forEach { definition ->
+                        dynamicTools.forEachIndexed { toolIndex, definition ->
                             add(
                                 buildJsonObject {
                                     put("name", definition.function.name)
                                     put("description", definition.function.description)
                                     put("input_schema", definition.function.parameters)
+                                    // Prompt Caching 断点 2：Tools 数组最后一个工具定义
+                                    if (model.promptCachingEnabled && toolIndex == dynamicTools.lastIndex) {
+                                        put("cache_control", buildJsonObject { put("type", "ephemeral") })
+                                    }
                                 },
                             )
                         }
@@ -390,6 +493,69 @@ internal class AnthropicApi(
             // 高峰时减少一份完整请求体大小的临时堆驻留。
             .post(requestBody.toString().encodeToByteArray().toRequestBody(JSON_MEDIA_TYPE))
             .build()
+    }
+
+    /**
+     * 合并相邻的 user 消息。Claude 请求要求 user/assistant 交替；视觉直通在
+     * tool_result 之后追加图片 user 消息时会产生连续 user，这里把其 content blocks
+     * 追加到前一条 user 消息，保持单条 user 内可同时容纳 tool_result 与 image。
+     */
+    private fun mergeConsecutiveUserMessages(messages: List<JsonObject>): MutableList<JsonObject> {
+        val merged = mutableListOf<JsonObject>()
+        messages.forEach { message ->
+            val role = message["role"]?.jsonPrimitive?.contentOrNull
+            val last = merged.lastOrNull()
+            if (role == "user" && last != null && last["role"]?.jsonPrimitive?.contentOrNull == "user") {
+                val existing = last["content"]?.jsonArray ?: JsonArray(emptyList())
+                val incoming = message["content"]?.jsonArray ?: JsonArray(emptyList())
+                merged[merged.lastIndex] = JsonObject(
+                    last.toMutableMap().apply { this["content"] = JsonArray(existing + incoming) },
+                )
+            } else {
+                merged.add(message)
+            }
+        }
+        return merged
+    }
+
+    /**
+     * Prompt Caching 断点 3：给倒数第二条「真实用户」消息注入 cache_control。
+     * 真实用户消息 = role=user 且 content 含 text block（排除纯 tool_result 回包）。
+     */
+    private fun applyUserCacheBreakpoint(model: ModelConfig, messages: MutableList<JsonObject>) {
+        if (!model.promptCachingEnabled) return
+        val realUserIndices = messages.indices.filter { index ->
+            val message = messages[index]
+            if (message["role"]?.jsonPrimitive?.contentOrNull != "user") return@filter false
+            val blocks = message["content"]?.jsonArray ?: return@filter false
+            // 排除纯 tool_result 回包，以及视觉直通产生的「tool_result + text + image」合并消息：
+            // 它们虽带 text block，但不是真正的用户轮，落到断点上会让缓存边界错位。
+            blocks.none { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "tool_result" } &&
+                blocks.any { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }
+        }
+        if (realUserIndices.size < 2) return
+        messages[realUserIndices[realUserIndices.size - 2]] =
+            injectCacheControlToMessage(messages[realUserIndices[realUserIndices.size - 2]])
+    }
+
+    /** 给消息 content 数组的最后一个 block 追加 cache_control:{"type":"ephemeral"}。 */
+    private fun injectCacheControlToMessage(message: JsonObject): JsonObject {
+        val content = message["content"]?.jsonArray ?: return message
+        if (content.isEmpty()) return message
+        val cachedContent = JsonArray(
+            content.mapIndexed { index, block ->
+                if (index != content.lastIndex) {
+                    block
+                } else {
+                    JsonObject(
+                        block.jsonObject.toMutableMap().apply {
+                            this["cache_control"] = buildJsonObject { put("type", "ephemeral") }
+                        },
+                    )
+                }
+            },
+        )
+        return JsonObject(message.toMutableMap().apply { this["content"] = cachedContent })
     }
 
     private fun parseFinalResponse(body: String): ChatResult {
@@ -451,6 +617,8 @@ internal class AnthropicApi(
 
     private companion object {
         const val ANTHROPIC_VERSION = "2023-06-01"
+        /** pause_turn 连续续跑上限：防止异常服务端无限暂停拖死会话。 */
+        const val MAX_PAUSE_TURN_CONTINUATIONS = 8
         const val DEFAULT_MAX_TOKENS = 8192
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }

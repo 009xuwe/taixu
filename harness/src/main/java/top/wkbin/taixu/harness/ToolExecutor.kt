@@ -3,6 +3,7 @@ package top.wkbin.taixu.harness
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.harness.session.SessionTreeStore
+import top.wkbin.taixu.harness.skill.SkillResourceReader
 import top.wkbin.taixu.core.security.SecretRedactor
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.model.ApprovalMode
@@ -13,6 +14,8 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.harness.checkpoint.CheckpointStore
+import top.wkbin.taixu.harness.effects.OutputRetention
+import top.wkbin.taixu.harness.effects.ToolOutputRetention
 import top.wkbin.taixu.harness.compaction.CompressAnchorResult
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.privilege.BinderOutcome
@@ -22,6 +25,7 @@ import top.wkbin.taixu.runtime.apps.AndroidAppManager
 import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
 import top.wkbin.taixu.core.database.AndroidAppRepository
 import top.wkbin.taixu.core.model.ExecutionMode
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.InternalCoroutinesApi
@@ -100,6 +104,7 @@ class ToolExecutor(
             }
             return executeAskUser(toolCall, sessionId, workspace, operationId, now)
         }
+        val toolMetadata = mutableMapOf<String, String>()
         val outcome = try {
             if (!bypassApproval && sessionId.isNotBlank()) {
                 val repository = approvalRepository
@@ -160,7 +165,7 @@ class ToolExecutor(
                     )
                 }
             }
-            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId, workspace, progressReporter, operationId)
+            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId, workspace, progressReporter, operationId, toolMetadata)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (throwable: Throwable) {
@@ -181,6 +186,7 @@ class ToolExecutor(
                 runCatching { prefs.environmentPrivacyMode.first() }.getOrDefault(true)
             } ?: true,
         )
+        val imagePayload = toolMetadata.remove("image_payload")
         return ToolResult(
             id = UUID.randomUUID().toString(),
             createdAt = now,
@@ -188,9 +194,11 @@ class ToolExecutor(
             success = success,
             output = truncateOutput(
                 redactedOutput,
-                toolCall.rawToolName,
+                toolCall.rawToolName ?: HarnessApiMapper.apiName(toolCall.tool),
                 if (workspace.isNotBlank()) fileAccess.withBase(workspace) else null,
             ),
+            metadata = toolMetadata.toMap(),
+            imageDataUrl = imagePayload,
         )
     }
 
@@ -207,22 +215,45 @@ class ToolExecutor(
     ): String {
         if (output.length <= MAX_OUTPUT_LENGTH) return output
         val spillPath = fileAccess?.let { ToolOutputSpillStore.spill(it, toolName, output) }
-        val kept = output.take(TRUNCATE_KEEP_LENGTH)
+        // 差异化截断：命令/构建/日志保留尾部（报错在末尾），读取/搜索保留头部。
+        val retention = ToolOutputRetention.forTool(toolName)
+        val kept = when (retention) {
+            OutputRetention.TAIL -> output.takeLast(TRUNCATE_KEEP_LENGTH)
+            OutputRetention.HEAD -> output.take(TRUNCATE_KEEP_LENGTH)
+        }
         val totalLines = output.count { it == '\n' } + 1
         val keptLines = kept.count { it == '\n' } + 1
+        val recoverHint = if (spillPath != null) {
+            "完整输出已保存至 $spillPath，可用 read 工具（offset/limit 分页）查看其余部分。"
+        } else {
+            "需要其余部分请用 grep 过滤关键字、head/tail 取首尾、或 sed -n 'N,Mp' 取指定行段，不要原样重复执行同一命令。"
+        }
         return buildString {
-            append(kept)
-            append("\n\n[输出已截断：完整输出共 ")
-            append(totalLines)
-            append(" 行 / ")
-            append(output.length)
-            append(" 字符，以上仅显示前 ")
-            append(keptLines)
-            append(" 行。")
-            if (spillPath != null) {
-                append("完整输出已保存至 $spillPath，可用 read 工具（offset/limit 分页）查看其余部分。]")
-            } else {
-                append("需要其余部分请用 grep 过滤关键字、head/tail 取首尾、或 sed -n 'N,Mp' 取指定行段，不要原样重复执行同一命令。]")
+            when (retention) {
+                OutputRetention.TAIL -> {
+                    append("[输出已截断：完整输出共 ")
+                    append(totalLines)
+                    append(" 行 / ")
+                    append(output.length)
+                    append(" 字符，以下仅显示末尾 ")
+                    append(keptLines)
+                    append(" 行（命令报错/断言通常位于末尾）。")
+                    append(recoverHint)
+                    append("]\n")
+                    append(kept)
+                }
+                OutputRetention.HEAD -> {
+                    append(kept)
+                    append("\n\n[输出已截断：完整输出共 ")
+                    append(totalLines)
+                    append(" 行 / ")
+                    append(output.length)
+                    append(" 字符，以上仅显示前 ")
+                    append(keptLines)
+                    append(" 行。")
+                    append(recoverHint)
+                    append("]")
+                }
             }
         }
     }
@@ -235,6 +266,7 @@ class ToolExecutor(
         workspace: String,
         progressReporter: (suspend (String) -> Unit)?,
         operationId: String?,
+        metadata: MutableMap<String, String>,
     ): Pair<Boolean, String> {
         // MCP 工具的参数名由远端 schema 定义，跳过单键解包/扁平键还原与内置别名，
         // 否则名为 input 的单参数或含 __ / . 的合法参数名会被错误改写。
@@ -245,9 +277,26 @@ class ToolExecutor(
         return when (tool) {
             HarnessTool.READ -> {
                 val path = requireString(args, "path")
-                val offset = args["offset"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
-                val limit = args["limit"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
-                activeFileAccess.read(path, offset, limit).toToolOutput(actionName = "read")
+                val imageMime = resolveImageMime(path)
+                if (imageMime != null) {
+                    // 沙箱图片多模态直通：不做 UTF-8 解码，转 Base64 data URL 交给
+                    // ApiMessageProjector 在 visionEnabled 时注入图片消息。
+                    when (val bytesResult = activeFileAccess.readRawBytes(path)) {
+                        is AppResult.Success -> {
+                            val base64 = java.util.Base64.getEncoder().encodeToString(bytesResult.data)
+                            metadata["image_payload"] = ImagePayloadCompressor.downscaleDataUrl(
+                                "data:$imageMime;base64,$base64",
+                            )
+                            true to "已读取图片文件 $path（${bytesResult.data.size} 字节，$imageMime）。" +
+                                "图像已作为多模态附件随本次工具结果提供；若当前模型不支持视觉，请改用文字/脚本方式描述图片内容。"
+                        }
+                        is AppResult.Failure -> bytesResult.toToolOutput(actionName = "read")
+                    }
+                } else {
+                    val offset = args["offset"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
+                    val limit = args["limit"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
+                    activeFileAccess.read(path, offset, limit).toToolOutput(actionName = "read")
+                }
             }
             HarnessTool.WRITE -> {
                 val path = requireString(args, "path")
@@ -266,11 +315,20 @@ class ToolExecutor(
                 captureBeforeWrite(sessionId, activeFileAccess, path)
                 val linesAdded = newText.lines().size
                 val linesDeleted = oldText.lines().size
-                val output = activeFileAccess.edit(path, oldText, newText)
-                    .toToolOutput("已修改 $path\nDIFF_STAT: +$linesAdded -$linesDeleted", actionName = "edit")
+                val outcome = activeFileAccess.editDetailed(path, oldText, newText)
+                val output = outcome.toToolOutput(actionName = "edit")
+                // 成功时：命中策略回给模型（简短文本），Unified Diff 只进 metadata 供前端渲染，
+                // 绝不把 diff 正文注入模型上下文，避免重复占用 Token。
+                val finalOutput = if (output.first && outcome is AppResult.Success) {
+                    outcome.data.diff?.let { metadata["diff"] = it }
+                    true to "已修改 $path（匹配策略：${outcome.data.strategy}，替换 ${outcome.data.replacements} 处）\n" +
+                        "DIFF_STAT: +$linesAdded -$linesDeleted"
+                } else {
+                    output
+                }
                 // edit 的结果内容不等于 newText：从盘上重读最终状态作改动后凭据
-                if (output.first) captureAfterWrite(sessionId, activeFileAccess, path, knownContent = null)
-                output
+                if (finalOutput.first) captureAfterWrite(sessionId, activeFileAccess, path, knownContent = null)
+                finalOutput
             }
             HarnessTool.BASE -> executeBase(args, workspace)
             HarnessTool.PROCESS -> executeProcess(args, workspace)
@@ -336,8 +394,25 @@ class ToolExecutor(
                             pool.joinToString("、") { it.name } + "。请使用完整技能名或 id 重试。"
                         else -> {
                             val matched = pool.first()
-                            true to "【技能已加载：${matched.name}】(category=${matched.category})\n" +
-                                matched.systemPrompt.trim()
+                            val subPath = args.stringArg("path")?.trim()
+                            if (subPath.isNullOrEmpty()) {
+                                true to "【技能已加载：${matched.name}】(category=${matched.category})\n" +
+                                    SkillResourceReader.stripFrontmatter(matched.systemPrompt).trim()
+                            } else {
+                                val resourceDir = matched.resourcePath?.takeIf { it.isNotBlank() }
+                                if (resourceDir == null) {
+                                    false to "技能「${matched.name}」没有可读取的资源目录（resourcePath 为空），无法读取 $subPath。" +
+                                        "请改用包含 SKILL.md 的目录形式导入该技能后再读取子资源。"
+                                } else {
+                                    val content = SkillResourceReader.readSubResource(File(resourceDir), subPath)
+                                    if (content == null) {
+                                        false to "技能资源不存在或路径越界：$subPath。" +
+                                            "路径须为技能目录内的相对路径（如 references/foo.md / scripts/bar.sh）。"
+                                    } else {
+                                        true to "【技能资源：${matched.name}/$subPath】\n$content"
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1285,6 +1360,17 @@ class ToolExecutor(
             }
             false to (baseError + reflectionHint)
         }
+    }
+
+    /** 图片后缀探针：仅光栅格式走多模态直通，SVG 仍按文本读取（更利于模型审阅源码）。 */
+    private fun resolveImageMime(path: String): String? = when (path.substringAfterLast('.', "").lowercase()) {
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "bmp" -> "image/bmp"
+        "ico" -> "image/x-icon"
+        else -> null
     }
 
     private fun JsonObject.stringArg(key: String): String? =

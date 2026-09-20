@@ -8,6 +8,7 @@ import javax.net.ssl.SSLException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.CancellationException
 import org.junit.Test
 
 /**
@@ -73,5 +74,24 @@ class HarnessTransientFailureTest {
     fun `transient never shrinks a richer configured budget`() {
         assertEquals(5, HarnessProviderRunner.effectiveRetryBudget(5, transient(500)))
         assertEquals(0, HarnessProviderRunner.effectiveRetryBudget(0, IllegalStateException("x")))
+    }
+
+    @Test
+    fun `local stream handling failures are wrapped and never treated as retryable`() {
+        val wrapped = runCatching {
+            withinStreamHandling { throw IllegalStateException("db write failed") }
+        }.exceptionOrNull()
+        assertTrue(wrapped is StreamChunkHandlingException)
+        // 即使本地处理包裹了 IO cause，也必须走本地终止分支，而不是网络重发分支
+        val ioBacked = StreamChunkHandlingException("local io", IOException("disk full"))
+        assertTrue(ioBacked.cause is IOException)
+        assertFalse(HarnessProviderRunner.isTransientFailure(ioBacked.cause!!))
+    }
+
+    @Test
+    fun `within stream handling rethrows cancellation untouched`() {
+        val cancellation = CancellationException("user stop")
+        val rethrown = runCatching { withinStreamHandling<Unit> { throw cancellation } }.exceptionOrNull()
+        assertTrue(rethrown === cancellation)
     }
 }
