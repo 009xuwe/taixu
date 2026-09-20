@@ -97,6 +97,9 @@ extensions.configure<ApplicationExtension> {
                 applicationIdSuffix = ".debug"
             }
             versionNameSuffix = if (taiXuDevBuild) "-dev" else "-debug"
+            if (signingConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         release {
             manifestPlaceholders["appLabel"] = if (taiXuDevBuild) "TaiXuDev" else "太墟"
