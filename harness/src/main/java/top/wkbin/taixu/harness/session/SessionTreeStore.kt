@@ -127,7 +127,13 @@ class SessionTreeStore(
         repository.deleteSessionData(sessionId)
     }
 
-    suspend fun search(sessionId: String, query: String, limit: Int = 8): List<HarnessMessage> {
+    data class SearchHit(val message: HarnessMessage, val index: Int)
+
+    suspend fun search(sessionId: String, query: String, limit: Int = 8): List<HarnessMessage> =
+        searchIndexed(sessionId, query, limit).map { it.message }
+
+    /** 返回活动分支中的原始索引，与 read(index) 使用同一套编号。 */
+    suspend fun searchIndexed(sessionId: String, query: String, limit: Int = 8): List<SearchHit> {
         val needle = query.trim()
         if (needle.isBlank()) return emptyList()
         val lane = repository.ensureLane(sessionId, MAIN_LANE)
@@ -149,7 +155,7 @@ class SessionTreeStore(
             else SearchMatch(message, index, if (exactMatch) matchedTerms + 2 else matchedTerms)
         }.sortedWith(compareByDescending<SearchMatch> { it.score }.thenByDescending { it.index })
             .take(limit.coerceIn(1, 20))
-            .map { it.message }
+            .map { SearchHit(it.message, it.index) }
     }
 
     suspend fun read(sessionId: String, messageId: String? = null, index: Int? = null): HarnessMessage? {

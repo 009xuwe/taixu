@@ -171,6 +171,27 @@ class SessionMessageProjectorTest {
     }
 
     @Test
+    fun `history search indexes read the same messages including tool entries`() = runBlocking {
+        store.append("history-index", UserMessage(id = "first", createdAt = 1L, text = "needle first"))
+        store.append("history-index", AssistantText(id = "reply", createdAt = 2L, text = "other"))
+        store.append("history-index", ToolCall(
+            id = "call", createdAt = 3L, tool = HarnessTool.BASE,
+            args = buildJsonObject { put("command", "echo other") },
+        ))
+        store.append("history-index", ToolResult(
+            id = "result", createdAt = 4L, toolCallId = "call", success = true, output = "other",
+        ))
+        store.append("history-index", UserMessage(id = "last", createdAt = 5L, text = "needle last"))
+
+        val hits = store.searchIndexed("history-index", "needle")
+
+        assertEquals(listOf(4, 0), hits.map { it.index })
+        hits.forEach { hit ->
+            assertEquals(hit.message.id, store.read("history-index", index = hit.index)?.id)
+        }
+    }
+
+    @Test
     fun `history read of a tool call also returns its result`() = runBlocking {
         store.append("read-related", ToolCall(
             id = "call",
