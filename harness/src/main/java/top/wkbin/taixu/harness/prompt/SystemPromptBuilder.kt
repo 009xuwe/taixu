@@ -14,6 +14,7 @@ import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.BuiltinMcpPresets
 import top.wkbin.taixu.core.tools.ToolRepository
+import top.wkbin.taixu.harness.MentionExtractor
 import top.wkbin.taixu.harness.R
 import top.wkbin.taixu.harness.SubagentDepartmentIndexRenderer
 import top.wkbin.taixu.harness.ToolCallMode

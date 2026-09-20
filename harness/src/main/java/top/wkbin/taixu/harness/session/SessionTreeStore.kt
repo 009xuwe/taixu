@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessEntryEntity
 import top.wkbin.taixu.core.database.HarnessRuntimeRepository
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.HarnessMessage

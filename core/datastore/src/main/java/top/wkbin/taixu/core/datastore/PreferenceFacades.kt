@@ -141,6 +141,11 @@ data class LegacyEnvironmentVariable(
 
 @Singleton
 class AgentPreferences @Inject constructor(private val store: SettingsDataStore) {
+    /** 对话结束后自动建议沉淀/进化技能（默认开启） */
+    val skillEvolutionSuggestions: Flow<Boolean> = store.skillEvolutionSuggestions
+
+    suspend fun setSkillEvolutionSuggestions(enabled: Boolean) = store.setSkillEvolutionSuggestions(enabled)
+
     val thinkingLanguage get() = store.thinkingLanguage
     val customSystemPromptEnabled get() = store.customSystemPromptEnabled
     val customSystemPrompt get() = store.customSystemPrompt
