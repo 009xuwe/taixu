@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -297,12 +299,16 @@ fun HomeScreen(
             )
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Max),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 // 内存指标
                 ResourceMetricCard(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
                     title = stringResource(R.string.home_memory),
                     primaryValue = "${metrics.memoryUsedMb} MB",
                     secondaryValue = stringResource(R.string.home_memory_total, metrics.memoryTotalMb),
@@ -315,7 +321,9 @@ fun HomeScreen(
 
                 // 存储指标
                 ResourceMetricCard(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
                     title = stringResource(R.string.home_storage),
                     primaryValue = "${metrics.storageUsedGb} GB",
                     secondaryValue = stringResource(R.string.home_storage_total, metrics.storageTotalGb),
@@ -712,17 +720,24 @@ private fun DoctorItemRow(
                         text = item.title,
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f, fill = false),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         text = "· ${item.category.displayName}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
                 Text(
                     text = item.summary,
                     style = MaterialTheme.typography.bodySmall,
                     color = if (item.status != DoctorStatus.HEALTHY) statusColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 val detail = item.detail
                 if (!detail.isNullOrBlank() && item.status != DoctorStatus.HEALTHY) {
@@ -1187,6 +1202,7 @@ private fun ResourceMetricCard(
         contentPadding = PaddingValues(14.dp),
     ) {
         Column(
+            modifier = Modifier.fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
@@ -1230,6 +1246,7 @@ private fun ResourceMetricCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = if (progress >= 0.8f) effectiveAccent else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
 
             Text(

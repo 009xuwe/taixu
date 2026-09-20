@@ -652,6 +652,7 @@ private fun FileItemRow(
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = if (item.isDirectory) FontWeight.SemiBold else FontWeight.Normal,
                     ),
+                    modifier = Modifier.weight(1f, fill = false),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -668,6 +669,8 @@ private fun FileItemRow(
                                 fontWeight = FontWeight.Bold,
                             ),
                             color = extColor,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                         )
                     }

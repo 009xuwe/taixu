@@ -133,6 +133,8 @@ internal fun ToolCard(
                         fontSize = 11.5.sp,
                     ),
                     color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     if (call.tool == HarnessTool.MCP) {

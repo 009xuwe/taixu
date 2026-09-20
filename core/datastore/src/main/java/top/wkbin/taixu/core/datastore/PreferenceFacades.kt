@@ -142,6 +142,11 @@ class AgentPreferences(private val store: SettingsDataStore) {
 
     suspend fun setSkillEvolutionSuggestions(enabled: Boolean) = store.setSkillEvolutionSuggestions(enabled)
 
+    /** 已忽略或已应用的技能进化建议 id 集合流（持久化） */
+    val dismissedSkillSuggestions: Flow<Set<String>> = store.dismissedSkillSuggestions
+
+    suspend fun dismissSkillSuggestion(id: String) = store.dismissSkillSuggestion(id)
+
     val thinkingLanguage get() = store.thinkingLanguage
     val customSystemPromptEnabled get() = store.customSystemPromptEnabled
     val customSystemPrompt get() = store.customSystemPrompt

@@ -356,7 +356,14 @@ private fun BranchCard(branch: ConversationBranch, enabled: Boolean, onClick: ()
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(branch.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        branch.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f, fill = false),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (branch.isCurrent) MiniBadge(stringResource(R.string.chat_badge_current), tint)
                     if (branch.isBusy) MiniBadge(stringResource(R.string.chat_badge_busy), Color(0xFF7C4DFF))
                     if (branch.faulted) MiniBadge(stringResource(R.string.chat_badge_faulted), MaterialTheme.colorScheme.error)
@@ -582,7 +589,14 @@ private fun subagentTaskDetails(prompt: String): String {
 @Composable
 private fun MiniBadge(text: String, color: Color) {
     Surface(color = color.copy(alpha = 0.12f), shape = RoundedCornerShape(6.dp)) {
-        Text(text, style = MaterialTheme.typography.labelSmall, color = color, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+        )
     }
 }
 

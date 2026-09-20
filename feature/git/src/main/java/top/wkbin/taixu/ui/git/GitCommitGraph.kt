@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -157,6 +158,7 @@ private fun RefBadge(ref: GitRefLabel) {
     Surface(
         color = tint.copy(alpha = 0.12f),
         shape = RoundedCornerShape(4.dp),
+        modifier = Modifier.widthIn(max = 80.dp),
     ) {
         Text(
             text = label,
@@ -164,6 +166,7 @@ private fun RefBadge(ref: GitRefLabel) {
             color = tint,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            softWrap = false,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
         )
     }

@@ -213,14 +213,28 @@ class ChatViewModel(
         _workflowSuggestions.update { suggestions -> suggestions.filterNot { it.workflowId == workflowId } }
     }
 
-    private val _hiddenSkillSuggestions = MutableStateFlow<Set<String>>(emptySet())
-    /** 已应用或忽略的技能进化建议 id；卡片从列表隐藏，转写消息本身保留。 */
-    val hiddenSkillSuggestions: StateFlow<Set<String>> = _hiddenSkillSuggestions.asStateFlow()
+    private val _localHiddenSkillSuggestions = MutableStateFlow<Set<String>>(emptySet())
+    /** 已应用或忽略的技能进化建议 id；卡片从列表隐藏，转写消息本身保留。通过 DataStore 持久化防杀进程重复展示。 */
+    val hiddenSkillSuggestions: StateFlow<Set<String>> = combine(
+        settingsDataStore.dismissedSkillSuggestions,
+        _localHiddenSkillSuggestions,
+        agentSkillRepository.allSkills,
+        harnessLoop.messages,
+    ) { persisted, local, skills, messages ->
+        SkillSuggestionActions.computeHiddenSuggestionIds(persisted, local, skills, messages)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = emptySet(),
+    )
 
     fun dismissSkillSuggestion(id: String) {
         val suggestionId = id.trim()
         if (suggestionId.isEmpty()) return
-        _hiddenSkillSuggestions.update { it + suggestionId }
+        _localHiddenSkillSuggestions.update { it + suggestionId }
+        viewModelScope.launch {
+            settingsDataStore.dismissSkillSuggestion(suggestionId)
+        }
     }
 
     /**

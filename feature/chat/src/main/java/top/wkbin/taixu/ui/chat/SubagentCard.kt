@@ -207,6 +207,7 @@ fun SubagentCard(
                                 text = "$roleLabel: $taskName",
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
                                 color = roleColor,
+                                modifier = Modifier.weight(1f, fill = false),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )

@@ -119,4 +119,54 @@ class SkillSuggestionActionsTest {
         ) { "custom_blank" }
         assertEquals("自定义技能", skill.description)
     }
+
+    @Test
+    fun `computeHiddenSuggestionIds combines persisted and local sets`() {
+        val hidden = SkillSuggestionActions.computeHiddenSuggestionIds(
+            persisted = setOf("id-1"),
+            local = setOf("id-2"),
+            skills = emptyList(),
+            messages = emptyList(),
+        )
+        assertEquals(setOf("id-1", "id-2"), hidden)
+    }
+
+    @Test
+    fun `computeHiddenSuggestionIds auto-dismisses create suggestion if skill already exists in repository`() {
+        val messages = listOf(
+            suggestion(action = "create").copy(id = "sug-create", skillName = "旧技能"),
+            suggestion(action = "create").copy(id = "sug-other", skillName = "未存在技能"),
+        )
+        val hidden = SkillSuggestionActions.computeHiddenSuggestionIds(
+            persisted = emptySet(),
+            local = emptySet(),
+            skills = listOf(customSkill),
+            messages = messages,
+        )
+        assertTrue(hidden.contains("sug-create"))
+        assertTrue(!hidden.contains("sug-other"))
+    }
+
+    @Test
+    fun `computeHiddenSuggestionIds auto-dismisses update suggestion if target skill is already updated`() {
+        val updatedTarget = customSkill.copy(systemPrompt = "第二人称指导")
+        val messages = listOf(
+            suggestion(action = "update", targetSkillId = customSkill.id).copy(
+                id = "sug-update-done",
+                systemPrompt = "第二人称指导",
+            ),
+            suggestion(action = "update", targetSkillId = customSkill.id).copy(
+                id = "sug-update-pending",
+                systemPrompt = "新的未应用的修改",
+            ),
+        )
+        val hidden = SkillSuggestionActions.computeHiddenSuggestionIds(
+            persisted = emptySet(),
+            local = emptySet(),
+            skills = listOf(updatedTarget),
+            messages = messages,
+        )
+        assertTrue(hidden.contains("sug-update-done"))
+        assertTrue(!hidden.contains("sug-update-pending"))
+    }
 }

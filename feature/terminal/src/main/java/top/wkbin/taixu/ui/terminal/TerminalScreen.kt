@@ -59,6 +59,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -760,6 +761,9 @@ private fun SessionListDialog(
                                         Text(
                                             handle.label,
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                         Surface(
                                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
@@ -769,6 +773,8 @@ private fun SessionListDialog(
                                                 distroName,
                                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                                 color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1,
+                                                softWrap = false,
                                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                             )
                                         }
@@ -781,6 +787,8 @@ private fun SessionListDialog(
                                                     stringResource(R.string.terminal_current),
                                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                                     color = MaterialTheme.colorScheme.primary,
+                                                    maxLines = 1,
+                                                    softWrap = false,
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                                 )
                                             }
@@ -790,6 +798,8 @@ private fun SessionListDialog(
                                         handle.workingDirectory,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 if (handles.size == 1) {

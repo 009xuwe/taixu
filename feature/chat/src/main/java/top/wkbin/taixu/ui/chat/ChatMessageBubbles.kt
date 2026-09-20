@@ -74,7 +74,8 @@ import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.SkillSuggestion
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.FlowRow
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.harness.checkpoint.RewindScope
@@ -888,12 +889,16 @@ internal fun SkillSuggestionCard(
                 suggestion.skillName,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             if (suggestion.description.isNotBlank()) {
                 Text(
                     suggestion.description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             if (suggestion.reason.isNotBlank()) {
@@ -901,26 +906,37 @@ internal fun SkillSuggestionCard(
                     "依据：" + suggestion.reason,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (isUpdate) {
-                    OutlinedButton(onClick = onUpdate, modifier = Modifier.height(34.dp)) {
-                        Text("更新技能", style = MaterialTheme.typography.labelMedium)
+                    OutlinedButton(
+                        onClick = onUpdate,
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    ) {
+                        Text("更新技能", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                     }
                 }
                 Button(
                     onClick = onCreate,
-                    modifier = Modifier.height(34.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                 ) {
-                    Text(if (isUpdate) "另存为新技能" else "创建技能", style = MaterialTheme.typography.labelMedium)
+                    Text(if (isUpdate) "另存为新技能" else "创建技能", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                 }
-                TextButton(onClick = onDismiss, modifier = Modifier.height(34.dp)) {
-                    Text("忽略", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                ) {
+                    Text("忽略", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
                 }
             }
         }

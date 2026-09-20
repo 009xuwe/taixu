@@ -44,6 +44,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,6 +64,9 @@ import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconButton
 import top.wkbin.taixu.ui.components.RuntimeIconName
 
+internal const val EDGE_HANDLE_TOUCH_WIDTH_DP = 32
+internal const val EDGE_HANDLE_TOUCH_HEIGHT_DP = 40
+
 /**
  * 智枢桌面悬浮小窗视图（支持胶囊态与面板态即时切换，去除多余遮罩与阴影瑕疵）。
  */
@@ -71,7 +77,10 @@ fun FloatingChatView(
     running: Boolean,
     thinkingLive: Boolean,
     isExpanded: Boolean,
+    isEdgeHidden: Boolean,
+    dockedOnLeft: Boolean,
     onToggleExpanded: () -> Unit,
+    onReveal: () -> Unit,
     onDragBy: (dx: Float, dy: Float) -> Unit,
     onDragEnd: () -> Unit,
     onSendPrompt: (String) -> Unit,
@@ -93,6 +102,14 @@ fun FloatingChatView(
             onRestoreApp = onRestoreApp,
             onClose = onClose,
         )
+    } else if (isEdgeHidden) {
+        FloatingChatEdgeHandle(
+            running = running,
+            dockedOnLeft = dockedOnLeft,
+            onReveal = onReveal,
+            onDragBy = onDragBy,
+            onDragEnd = onDragEnd,
+        )
     } else {
         FloatingChatCapsule(
             sessionTitle = sessionTitle,
@@ -102,6 +119,87 @@ fun FloatingChatView(
             onDragBy = onDragBy,
             onDragEnd = onDragEnd,
         )
+    }
+}
+
+/** 贴边后仅保留可触摸的小入口，不占用胶囊原有的整块屏幕区域。 */
+@Composable
+private fun FloatingChatEdgeHandle(
+    running: Boolean,
+    dockedOnLeft: Boolean,
+    onReveal: () -> Unit,
+    onDragBy: (dx: Float, dy: Float) -> Unit,
+    onDragEnd: () -> Unit,
+) {
+    val shape = if (dockedOnLeft) {
+        RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp)
+    } else {
+        RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)
+    }
+    val revealLabel = stringResource(R.string.chat_floating_reveal)
+    Box(
+        modifier = Modifier
+            .size(width = EDGE_HANDLE_TOUCH_WIDTH_DP.dp, height = EDGE_HANDLE_TOUCH_HEIGHT_DP.dp)
+            .semantics {
+                contentDescription = revealLabel
+                onClick(label = revealLabel) {
+                    onReveal()
+                    true
+                }
+            }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val change = awaitTouchSlopOrCancellation(down.id) { c, overSlop ->
+                        c.consume()
+                        onDragBy(overSlop.x, overSlop.y)
+                    }
+                    if (change != null) {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pointerChange = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!pointerChange.pressed) {
+                                pointerChange.consume()
+                                break
+                            }
+                            val dragAmount = pointerChange.positionChange()
+                            pointerChange.consume()
+                            onDragBy(dragAmount.x, dragAmount.y)
+                        }
+                        onDragEnd()
+                    } else {
+                        onReveal()
+                    }
+                }
+            },
+        contentAlignment = if (dockedOnLeft) Alignment.CenterStart else Alignment.CenterEnd,
+    ) {
+        Surface(
+            modifier = Modifier.size(width = 20.dp, height = 32.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.96f),
+            shape = shape,
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                if (running) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            ),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                if (running) {
+                    RuntimeCircularProgressIndicator(
+                        modifier = Modifier.size(11.dp),
+                        strokeWidth = 1.6.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    RuntimeIcon(
+                        RuntimeIconName.Brain,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -110,6 +110,8 @@ internal fun ProjectCard(
                                 text = if (isBuilding) stringResource(R.string.workspace_building_badge) else project.projectType.displayName,
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
                                 color = if (isBuilding) MaterialTheme.colorScheme.primary else typeBadgeColor,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                             )
                         }
@@ -219,10 +221,22 @@ internal fun ProjectCard(
                                     strokeWidth = 2.dp,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
-                                Text(stringResource(R.string.workspace_compiling), style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    stringResource(R.string.workspace_compiling),
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
                             } else {
                                 RuntimeIcon(RuntimeIconName.Play, Modifier.size(14.dp), tint = typeBadgeColor)
-                                Text(stringResource(R.string.workspace_run_on_device), style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = typeBadgeColor)
+                                Text(
+                                    stringResource(R.string.workspace_run_on_device),
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = typeBadgeColor,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
                             }
                         }
                     }
@@ -237,7 +251,13 @@ internal fun ProjectCard(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
-                            Text(stringResource(R.string.workspace_terminal), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                stringResource(R.string.workspace_terminal),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
                         }
                     }
                 }

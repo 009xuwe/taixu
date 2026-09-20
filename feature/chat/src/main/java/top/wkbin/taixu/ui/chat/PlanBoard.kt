@@ -195,7 +195,12 @@ internal fun SessionPlanBoardCard(
                 modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
             )
             AnimatedVisibility(visible = expanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 240.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     steps.forEach { step ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -224,6 +229,9 @@ internal fun SessionPlanBoardCard(
                             Text(
                                 step.title,
                                 style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                                 textDecoration = if (step.isCompleted) TextDecoration.LineThrough else null,
                                 color = when {
                                     step.isCompleted -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -358,6 +366,9 @@ internal fun StickyPlanBar(
                             Text(
                                 step.title,
                                 style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                                 textDecoration = if (step.isCompleted) TextDecoration.LineThrough else null,
                                 color = when {
                                     step.isCompleted -> MaterialTheme.colorScheme.onSurfaceVariant

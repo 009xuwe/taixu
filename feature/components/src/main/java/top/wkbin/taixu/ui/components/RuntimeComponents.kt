@@ -294,11 +294,16 @@ private fun LiquidGlassBottomBar(
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
 
+        val currentSelected by rememberUpdatedState(selected)
+        val currentOnNavigate by rememberUpdatedState(onNavigate)
+        val currentTabWidth by rememberUpdatedState(tabWidth)
+        val currentIsLtr by rememberUpdatedState(isLtr)
+
         fun selectDestination(index: Int) {
             val destination = destinations.getOrNull(index) ?: return
-            if (destination != selected) {
+            if (destination != currentSelected) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onNavigate(destination)
+                currentOnNavigate(destination)
             }
         }
 
@@ -311,31 +316,38 @@ private fun LiquidGlassBottomBar(
                 initialScale = 1f,
                 pressedScale = 78f / 56f,
                 onDragStarted = {},
-                onDragStopped = {
-                    val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
-                    animateToValue(targetIndex.toFloat())
-                    animationScope.launch {
-                        offsetAnimation.animateTo(
-                            0f,
-                            spring(1f, 300f, 0.5f)
-                        )
-                    }
-                    selectDestination(targetIndex)
-                },
-                onDrag = { _, dragAmount ->
-                    updateValue(
-                        (targetValue + dragAmount.x / tabWidth * if (isLtr) 1f else -1f)
-                            .fastCoerceIn(0f, (tabsCount - 1).toFloat())
-                    )
-                    animationScope.launch {
-                        offsetAnimation.snapTo(offsetAnimation.value + dragAmount.x)
-                    }
-                }
+                onDragStopped = {},
+                onDrag = { _, _ -> },
             )
         }
 
+        dampedDragAnimation.onDragStopped = {
+            val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
+            animateToValue(targetIndex.toFloat())
+            animationScope.launch {
+                offsetAnimation.animateTo(
+                    0f,
+                    spring(1f, 300f, 0.5f)
+                )
+            }
+            selectDestination(targetIndex)
+        }
+
+        dampedDragAnimation.onDrag = { _, dragAmount ->
+            updateValue(
+                (targetValue + dragAmount.x / currentTabWidth * if (currentIsLtr) 1f else -1f)
+                    .fastCoerceIn(0f, (tabsCount - 1).toFloat())
+            )
+            animationScope.launch {
+                offsetAnimation.snapTo(offsetAnimation.value + dragAmount.x)
+            }
+        }
+
         LaunchedEffect(selected) {
-            dampedDragAnimation.animateToValue(selected.ordinal.toFloat())
+            val targetOrdinal = selected.ordinal.toFloat()
+            if (abs(dampedDragAnimation.targetValue - targetOrdinal) > 0.001f) {
+                dampedDragAnimation.animateToValue(targetOrdinal)
+            }
         }
 
         val interactiveHighlight = remember(animationScope) {
@@ -343,8 +355,8 @@ private fun LiquidGlassBottomBar(
                 animationScope = animationScope,
                 position = { size, _ ->
                     Offset(
-                        if (isLtr) (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset
-                        else size.width - (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset,
+                        if (currentIsLtr) (dampedDragAnimation.value + 0.5f) * currentTabWidth + panelOffset
+                        else size.width - (dampedDragAnimation.value + 0.5f) * currentTabWidth + panelOffset,
                         size.height / 2f
                     )
                 }
@@ -938,7 +950,11 @@ fun RuntimeSwitch(
 
     val density = LocalDensity.current
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+    val currentIsLtr by rememberUpdatedState(isLtr)
+    val currentChecked by rememberUpdatedState(checked)
+    val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
     val dragWidth = with(density) { 20.dp.toPx() }
+    val currentDragWidth by rememberUpdatedState(dragWidth)
     val animationScope = rememberCoroutineScope()
     var didDrag by remember { mutableStateOf(false) }
     var fraction by remember { mutableFloatStateOf(if (checked) 1f else 0f) }
@@ -952,26 +968,30 @@ fun RuntimeSwitch(
             initialScale = 1f,
             pressedScale = 1.35f,
             onDragStarted = {},
-            onDragStopped = {
-                if (didDrag) {
-                    fraction = if (targetValue >= 0.5f) 1f else 0f
-                    onCheckedChange(fraction == 1f)
-                    didDrag = false
-                } else {
-                    fraction = if (checked) 0f else 1f
-                    onCheckedChange(fraction == 1f)
-                }
-            },
-            onDrag = { _, dragAmount ->
-                if (!didDrag) {
-                    didDrag = dragAmount.x != 0f
-                }
-                val delta = dragAmount.x / dragWidth
-                fraction =
-                    if (isLtr) (fraction + delta).fastCoerceIn(0f, 1f)
-                    else (fraction - delta).fastCoerceIn(0f, 1f)
-            },
+            onDragStopped = {},
+            onDrag = { _, _ -> },
         )
+    }
+
+    dampedDragAnimation.onDragStopped = {
+        if (didDrag) {
+            fraction = if (targetValue >= 0.5f) 1f else 0f
+            currentOnCheckedChange(fraction == 1f)
+            didDrag = false
+        } else {
+            fraction = if (currentChecked) 0f else 1f
+            currentOnCheckedChange(fraction == 1f)
+        }
+    }
+
+    dampedDragAnimation.onDrag = { _, dragAmount ->
+        if (!didDrag) {
+            didDrag = dragAmount.x != 0f
+        }
+        val delta = dragAmount.x / currentDragWidth
+        fraction =
+            if (currentIsLtr) (fraction + delta).fastCoerceIn(0f, 1f)
+            else (fraction - delta).fastCoerceIn(0f, 1f)
     }
 
     LaunchedEffect(dampedDragAnimation) {
@@ -1613,6 +1633,11 @@ fun RuntimeSlider(
     ) {
         val trackWidth = constraints.maxWidth.toFloat()
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+        val currentTrackWidth by rememberUpdatedState(trackWidth)
+        val currentIsLtr by rememberUpdatedState(isLtr)
+        val currentEnabled by rememberUpdatedState(enabled)
+        val currentOnValueChange by rememberUpdatedState(onValueChange)
+        val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
         val animationScope = rememberCoroutineScope()
         var isDragging by remember { mutableStateOf(false) }
         var currentDragValue by remember { mutableFloatStateOf(value) }
@@ -1625,31 +1650,37 @@ fun RuntimeSlider(
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
                 pressedScale = 1.5f,
-                onDragStarted = {
-                    if (enabled) {
-                        isDragging = true
-                        currentDragValue = value
-                    }
-                },
-                onDragStopped = {
-                    if (isDragging) {
-                        val finalVal = quantize(currentDragValue)
-                        onValueChange(finalVal)
-                        onValueChangeFinished?.invoke()
-                        isDragging = false
-                    }
-                },
-                onDrag = { _, dragAmount ->
-                    if (enabled && trackWidth > 0f) {
-                        isDragging = true
-                        val delta = rangeSize * (dragAmount.x / trackWidth) * if (isLtr) 1f else -1f
-                        currentDragValue = (currentDragValue + delta).coerceIn(valueRange)
-                        updateValue(currentDragValue)
-                        val nextQuantized = quantize(currentDragValue)
-                        onValueChange(nextQuantized)
-                    }
-                },
+                onDragStarted = {},
+                onDragStopped = {},
+                onDrag = { _, _ -> },
             )
+        }
+
+        dampedDragAnimation.onDragStarted = {
+            if (currentEnabled) {
+                isDragging = true
+                currentDragValue = value
+            }
+        }
+
+        dampedDragAnimation.onDragStopped = {
+            if (isDragging) {
+                val finalVal = quantize(currentDragValue)
+                currentOnValueChange(finalVal)
+                currentOnValueChangeFinished?.invoke()
+                isDragging = false
+            }
+        }
+
+        dampedDragAnimation.onDrag = { _, dragAmount ->
+            if (currentEnabled && currentTrackWidth > 0f) {
+                isDragging = true
+                val delta = rangeSize * (dragAmount.x / currentTrackWidth) * if (currentIsLtr) 1f else -1f
+                currentDragValue = (currentDragValue + delta).coerceIn(valueRange)
+                updateValue(currentDragValue)
+                val nextQuantized = quantize(currentDragValue)
+                currentOnValueChange(nextQuantized)
+            }
         }
 
         LaunchedEffect(value) {

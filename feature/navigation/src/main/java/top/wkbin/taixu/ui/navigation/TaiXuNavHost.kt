@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -134,24 +133,10 @@ fun TaiXuNavHost(
     val settingsStack = rememberNavBackStack(SettingsDestination)
     var pendingHealingTask by remember { mutableStateOf<HealingTask?>(null) }
     var selectedMain by rememberSaveable { mutableStateOf(MainDestination.Home) } // 默认进入太墟开辟主界
-    var lastNavTime by remember { mutableLongStateOf(0L) }
-    var navTransitionLockedUntil by remember { mutableLongStateOf(0L) }
-
-    fun isNavTransitionLocked(): Boolean =
-        System.currentTimeMillis() < navTransitionLockedUntil
-
-    fun lockNavTransition() {
-        navTransitionLockedUntil =
-            System.currentTimeMillis() + NAV_TRANSITION_LOCK_MS
-    }
-
-    /** Programmatic stack mutation (bus / workflow) — still transition-locks. */
-    fun NavBackStack<NavKey>.pushRaw(destination: NavKey, lock: Boolean = true) {
-        if (isNavTransitionLocked()) return
+    /** Programmatic stack mutation (bus / workflow). */
+    fun NavBackStack<NavKey>.pushRaw(destination: NavKey) {
         if (lastOrNull() == destination) return
-        lastNavTime = System.currentTimeMillis()
         add(destination)
-        if (lock) lockNavTransition()
     }
 
     LaunchedEffect(chatViewModel) {
@@ -170,7 +155,7 @@ fun TaiXuNavHost(
                     selectedMain = MainDestination.Settings
                     if (settingsStack.lastOrNull() != AdbLogcatDestination) {
                         if (settingsStack.lastOrNull() == SettingsDestination) {
-                            settingsStack.pushRaw(SystemDevSettingsDestination, lock = false)
+                            settingsStack.pushRaw(SystemDevSettingsDestination)
                         }
                         if (settingsStack.lastOrNull() == SystemDevSettingsDestination) {
                             settingsStack.pushRaw(AdbLogcatDestination)
@@ -205,24 +190,14 @@ fun TaiXuNavHost(
     }
 
     fun NavBackStack<NavKey>.push(from: NavKey, destination: NavKey) {
-        if (isNavTransitionLocked()) return
-        val now = System.currentTimeMillis()
-        if (now - lastNavTime < 120L) return
         if (lastOrNull() == from && lastOrNull() != destination) {
-            lastNavTime = now
             add(destination)
-            lockNavTransition()
         }
     }
 
     fun popBack() {
-        if (isNavTransitionLocked()) return
-        val now = System.currentTimeMillis()
-        if (now - lastNavTime < 120L) return
         if (activeStack.size <= 1) return
-        lastNavTime = now
         activeStack.removeLastOrNull()
-        lockNavTransition()
     }
 
     @Composable
@@ -712,9 +687,3 @@ private data class HealingTask(
     val title: String,
     val prompt: String,
 )
-
-/**
- * 导航转场期间锁定新导航的时长：miuix NavDisplay 默认转场 500ms + 40ms 余量，
- * 防止转场中连续入栈导致的栈错乱与视觉跳变。
- */
-private const val NAV_TRANSITION_LOCK_MS = 540L

@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -197,13 +198,29 @@ fun EnvironmentVariableSettingsScreen(
                     ) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(entry.key, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace)
-                                if (entry.note.isNotBlank()) Text(entry.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    entry.key,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (entry.note.isNotBlank()) {
+                                    Text(
+                                        entry.note,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                                 Text(
                                     values[entry.key].orEmpty().ifEmpty { "（空值）" },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontFamily = FontFamily.Monospace,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                             IconButton(onClick = { openEnvironmentEditor(entry, entry.key, values[entry.key].orEmpty()) }) { RuntimeIcon(RuntimeIconName.Edit) }

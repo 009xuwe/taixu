@@ -82,6 +82,8 @@ internal fun WorkspaceBuildStatusBanner(
                         text = stringResource(R.string.workspace_building_project, activeBuildingProjectName.orEmpty()),
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         text = buildProgress?.step ?: stringResource(R.string.workspace_building),
@@ -118,6 +120,8 @@ internal fun WorkspaceBuildStatusBanner(
                         text = stringResource(if (progress.isSuccess == true) R.string.workspace_build_ready else R.string.workspace_build_failed),
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                         color = if (progress.isSuccess == true) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     progress.message?.let {
                         Text(

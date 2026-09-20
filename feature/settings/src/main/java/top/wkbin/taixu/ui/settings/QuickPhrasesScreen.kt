@@ -336,6 +336,9 @@ private fun QuickPhraseCard(
                             text = phrase.title,
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f, fill = false),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
 
                         // 标签：项目类型
@@ -352,6 +355,8 @@ private fun QuickPhraseCard(
                             Text(
                                 text = typeLabel,
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

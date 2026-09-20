@@ -500,6 +500,7 @@
     <string name="chat_floating_send">发送</string>
     <string name="chat_floating_stop">停止</string>
     <string name="chat_floating_close">关闭小窗</string>
+    <string name="chat_floating_reveal">展开智枢悬浮窗</string>
     <string name="chat_floating_idle">就绪</string>
     <string name="chat_floating_thinking">🧠 思考中…</string>
     <string name="chat_floating_running">⚡ 执行中…</string>

@@ -177,6 +177,8 @@ class SettingsDataStore(
 
     /** 对话结束后自动建议「沉淀新技能 / 修复既有技能」（自进化闭环） */
     private val skillEvolutionSuggestionsKey = booleanPreferencesKey("skill_evolution_suggestions")
+    /** 已忽略或已应用的技能进化建议 id 集合（防止杀进程后重复展示） */
+    private val dismissedSkillSuggestionsKey = stringSetPreferencesKey("dismissed_skill_suggestions")
     private val environmentJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
     val environmentPrivacyMode: Flow<Boolean> = context.settingsDataStore.data.map { it[environmentPrivacyModeKey] ?: true }
 
@@ -185,6 +187,28 @@ class SettingsDataStore(
 
     suspend fun setSkillEvolutionSuggestions(enabled: Boolean) {
         context.settingsDataStore.edit { it[skillEvolutionSuggestionsKey] = enabled }
+    }
+
+    /** 已忽略或已应用的技能进化建议 id 集合流（持久化） */
+    val dismissedSkillSuggestions: Flow<Set<String>> = context.settingsDataStore.data.map {
+        it[dismissedSkillSuggestionsKey].orEmpty()
+    }
+
+    /** 记录已忽略或已应用的技能建议 id（持久化落盘，且限制最大容量防止无限膨胀） */
+    suspend fun dismissSkillSuggestion(id: String) {
+        val trimmed = id.trim()
+        if (trimmed.isEmpty()) return
+        context.settingsDataStore.edit { prefs ->
+            val current = prefs[dismissedSkillSuggestionsKey].orEmpty()
+            if (trimmed !in current) {
+                val updated = if (current.size >= MAX_DISMISSED_SKILL_SUGGESTIONS) {
+                    current.drop(current.size - (MAX_DISMISSED_SKILL_SUGGESTIONS - 1)).toSet() + trimmed
+                } else {
+                    current + trimmed
+                }
+                prefs[dismissedSkillSuggestionsKey] = updated
+            }
+        }
     }
 
     suspend fun setEnvironmentPrivacyMode(enabled: Boolean) {
@@ -899,5 +923,6 @@ class SettingsDataStore(
         const val MAX_BASE_COMMAND_TIMEOUT_SECONDS = 60 * 60
         const val DEFAULT_ROUND_LIMIT_AUTO_CONTINUATIONS = 2
         const val MAX_ROUND_LIMIT_AUTO_CONTINUATIONS = 10
+        const val MAX_DISMISSED_SKILL_SUGGESTIONS = 1000
     }
 }

@@ -443,6 +443,7 @@
     <string name="chat_floating_send">Send</string>
     <string name="chat_floating_stop">Stop</string>
     <string name="chat_floating_close">Close Float</string>
+    <string name="chat_floating_reveal">Show agent floating window</string>
     <string name="chat_floating_idle">Ready</string>
     <string name="chat_floating_thinking">🧠 Thinking…</string>
     <string name="chat_floating_running">⚡ Executing…</string>

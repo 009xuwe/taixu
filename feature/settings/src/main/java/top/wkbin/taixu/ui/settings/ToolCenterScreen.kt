@@ -1318,24 +1318,24 @@ private fun ToolCard(
                     FilledTonalButton(
                         onClick = onOpenDetail,
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     ) {
-                        Text("详情配置", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                        Text("详情配置", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
 
                     TextButton(
                         onClick = onViewLogs,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                     ) {
-                        Text("日志", style = MaterialTheme.typography.labelSmall)
+                        Text("日志", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                     }
 
                     if (isInstalled) {
                         TextButton(
                             onClick = onUninstall,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                         ) {
-                            Text("卸载", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            Text("卸载", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -1349,47 +1349,47 @@ private fun ToolCard(
                         Button(
                             onClick = onUpdate,
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
                         ) {
-                            Text("更新", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                            Text("更新", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                         }
                     } else if (isFailed) {
                         Button(
                             onClick = onStartAiHealing,
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
                         ) {
                             RuntimeIcon(
                                 name = RuntimeIconName.Brain,
-                                modifier = Modifier.size(15.dp),
+                                modifier = Modifier.size(14.dp),
                             )
-                            Spacer(Modifier.width(4.dp))
-                            Text("AI 自愈", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            Spacer(Modifier.width(3.dp))
+                            Text("AI 自愈", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                         }
                         FilledTonalButton(
                             onClick = onInstall,
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
+                        ) {
+                            RuntimeIcon(
+                                name = RuntimeIconName.Download,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text("重试", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                        }
+                    } else if (!isInstalled && !isInstalling) {
+                        Button(
+                            onClick = onInstall,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
                         ) {
                             RuntimeIcon(
                                 name = RuntimeIconName.Download,
                                 modifier = Modifier.size(14.dp),
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("重试", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.labelMedium)
-                        }
-                    } else if (!isInstalled && !isInstalling) {
-                        Button(
-                            onClick = onInstall,
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        ) {
-                            RuntimeIcon(
-                                name = RuntimeIconName.Download,
-                                modifier = Modifier.size(15.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("安装", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                            Text("安装", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                         }
                     }
                 }

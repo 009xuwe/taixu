@@ -792,6 +792,7 @@ private fun BranchRow(
                     Text(
                         branch.shortName,
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.weight(1f, fill = false),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1403,6 +1404,8 @@ private fun MiniBadge(text: String, color: Color) {
             text,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
             color = color,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
         )
     }
