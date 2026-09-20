@@ -65,7 +65,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
@@ -302,7 +301,20 @@ class ChatViewModel @Inject constructor(
         branchMessageRevision,
         _branchRefresh,
         branchEventRevision,
-    ) { sessionId, _, _, _ -> sessionId }.mapLatest { sessionId ->
+    ) { sessionId, messageRevision, refresh, eventRevision ->
+        // 关键：把四个流压缩成一个「可比较的重投影信号」，而不是丢弃后三个。
+        // 此前写法为 `{ sessionId, _, _, _ -> sessionId }`，后三个流的变化被完全吞掉，
+        // 导致 _branchRefresh++ 与运行事件（子智能体进展）都无法触发重投影——
+        // 注释声称「用运行事件驱动分支重投影」，实现却做不到（注释与实现两张皮）。
+        // 这里显式纳入 messageRevision / refresh / eventRevision，任一变化都会重新拉取分支。
+        ProjectionKey(
+            sessionId = sessionId,
+            messageRevision = messageRevision,
+            refresh = refresh,
+            eventRevision = eventRevision,
+        )
+    }.distinctUntilChanged().mapLatest { key ->
+        val sessionId = key.sessionId
         if (sessionId.isBlank()) emptyList() else runCatching { laneManager.branches(sessionId) }.getOrDefault(emptyList())
     }
         // 首屏卡顿修复（P0）：laneManager.branches() 内部会读取该会话**全部** entry
@@ -329,9 +341,14 @@ class ChatViewModel @Inject constructor(
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val activePlan: StateFlow<top.wkbin.taixu.core.database.AgentPlanEntity?> =
-        combine(harnessLoop.currentSessionId, harnessLoop.status) { sessionId, _ -> sessionId }
+        combine(harnessLoop.currentSessionId, harnessLoop.status) { sessionId, status ->
+            // 原写法 lambda 输出恒等于 sessionId，配合下游 distinctUntilChanged 去重后，
+            // status 的变化被完全吞掉；而一轮执行内状态多次变化（工具往返、压缩、等待审批），
+            // 看板进度因此无法实时刷新。这里让 status 真正参与，状态每变一次即重读。
+            sessionId to status
+        }
             .distinctUntilChanged()
-            .flatMapLatest { sessionId ->
+            .flatMapLatest { (sessionId, _) ->
                 kotlinx.coroutines.flow.flow {
                     emit(if (sessionId.isBlank()) null else agentContextDao.getActivePlan(sessionId)?.takeIf { it.status == "active" })
                 }
@@ -344,8 +361,16 @@ class ChatViewModel @Inject constructor(
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val activeCompaction: StateFlow<top.wkbin.taixu.harness.compaction.CompactionSnapshot?> =
-        combine(harnessLoop.currentSessionId, messages) { sessionId, _ -> sessionId }
-            .flatMapLatest { sessionId ->
+        // 原写法 combine(currentSessionId, messages) { sessionId, _ -> sessionId }
+        // 的 lambda 输出恒等于 sessionId：messages 变化虽会触发重跑，但输出值不变，
+        // 若上游加了 distinctUntilChanged 则变化被吞。上下文压缩恰好伴随状态切换
+        // （运行 → 压缩 → 运行），以 (sessionId, status) 作为重投影信号更贴合语义，
+        // 状态每变一次即重读快照。
+        combine(harnessLoop.currentSessionId, harnessLoop.status) { sessionId, status ->
+            sessionId to status
+        }
+            .distinctUntilChanged()
+            .flatMapLatest { (sessionId, _) ->
                 kotlinx.coroutines.flow.flow {
                     emit(if (sessionId.isBlank()) null else compactionManager.latestSnapshot(sessionId))
                 }
@@ -369,9 +394,9 @@ class ChatViewModel @Inject constructor(
             harnessLoop.currentSessionId,
             harnessLoop.status,
             scratchpadRefresh,
-        ) { sessionId, _, _ -> sessionId }
+        ) { sessionId, status, refresh -> Triple(sessionId, status, refresh) }
             .distinctUntilChanged()
-            .flatMapLatest { sessionId ->
+            .flatMapLatest { (sessionId, _, _) ->
                 flow {
                     emit(if (sessionId.isBlank()) emptyList() else agentContextDao.listScratchpads(sessionId))
                 }
@@ -1401,3 +1426,17 @@ data class MentionItem(
 enum class MentionType {
     SKILL, MCP_SERVER
 }
+
+/**
+ * 分支列表重投影的触发键。
+ *
+ * 用于把 combine 的多个上游流压缩成一个「可比较信号」，任一上游变化都会产生不同的 key，
+ * 从而触发重新投影；配合 distinctUntilChanged 避免同一 key 重复拉取。
+ * 取代此前 `{ sessionId, _, _, _ -> sessionId }` 丢弃上游的做法。
+ */
+private data class ProjectionKey(
+    val sessionId: String,
+    val messageRevision: Pair<Int, String?>,
+    val refresh: Int,
+    val eventRevision: Pair<Int, Int>,
+)
