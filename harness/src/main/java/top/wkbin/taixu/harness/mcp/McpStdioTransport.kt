@@ -3,8 +3,6 @@ package top.wkbin.taixu.harness.mcp
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -40,8 +38,7 @@ internal class McpJsonRpcErrorException(val code: Int, message: String) :
  * in-memory factory to exercise idle reaping, fail-fast cooldown, ignore-frame thresholds,
  * and process death recovery without a real PRoot subprocess.
  */
-@Singleton
-class McpStdioTransport @Inject constructor(
+class McpStdioTransport(
     private val json: Json,
     private val commandBuilder: McpCommandBuilder,
     private val channelFactory: McpStdioChannelFactory,

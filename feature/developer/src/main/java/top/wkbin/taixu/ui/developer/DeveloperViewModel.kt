@@ -21,8 +21,6 @@ import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
-import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,8 +29,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
-@HiltViewModel
-class DeveloperViewModel @Inject constructor(
+class DeveloperViewModel(
     private val linuxRuntime: LinuxRuntime,
     private val runtimeManager: RuntimeManager,
     private val runtimePreferences: RuntimePreferences,

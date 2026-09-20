@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.iteration
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,7 +30,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeButton
@@ -42,7 +42,7 @@ import top.wkbin.taixu.ui.components.SectionHeader
 fun CustomIterationScreen(
     onBack: () -> Unit,
     onNavigateToChat: (prefillPrompt: String) -> Unit,
-    viewModel: CustomIterationViewModel = hiltViewModel()
+    viewModel: CustomIterationViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 

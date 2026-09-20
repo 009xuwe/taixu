@@ -15,8 +15,6 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -43,8 +41,7 @@ import top.wkbin.taixu.harness.mcp.MCP_PROTOCOL_VERSION
  *  - start 后用 resolvedConnectors() 显式确认绑定成功（bind 失败会抛出/超时）；
  *  - 首选端口被占用时自动顺延尝试 [portFallbackRange] 个相邻端口，全部失败才返回 false。
  */
-@Singleton
-class McpServerRuntime @Inject constructor(
+class McpServerRuntime(
     private val toolDispatcher: McpToolDispatcher,
     private val resourceDispatcher: McpResourceDispatcher,
 ) {

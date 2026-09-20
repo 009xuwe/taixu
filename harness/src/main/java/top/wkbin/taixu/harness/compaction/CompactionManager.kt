@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness.compaction
 
 import android.util.Log
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import top.wkbin.taixu.core.database.HarnessEntryEntity
@@ -21,8 +19,7 @@ sealed interface CompressAnchorResult {
 }
 
 /** Persists compaction as an immutable tree entry and projects provider context from it. */
-@Singleton
-class CompactionManager @Inject constructor(
+class CompactionManager(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
     private val sessionStore: SessionTreeStore,

@@ -1,8 +1,6 @@
 package top.wkbin.taixu.runtime
 
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.files.SafeFileTree
@@ -12,8 +10,7 @@ import top.wkbin.taixu.core.common.result.ErrorCode
 import top.wkbin.taixu.core.database.WorkspaceRepository
 
 /** Boundary-safe file operations for a registered workspace. */
-@Singleton
-class WorkspaceFileService @Inject constructor(
+class WorkspaceFileService(
     private val pathManager: RuntimePathManager,
     private val workspaceRepository: WorkspaceRepository,
 ) {

@@ -4,9 +4,6 @@ import android.content.Context
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -55,13 +52,12 @@ data class WorkflowHistoryEntry(
     val scheduleId: String?,
 )
 
-@HiltViewModel
-class WorkflowViewModel @Inject constructor(
+class WorkflowViewModel(
     private val repository: WorkflowRepository,
     private val runManager: WorkflowRunManager,
     private val scheduleRepository: WorkflowScheduleRepository,
     private val hud: WorkflowGuiHudBridge,
-    @ApplicationContext private val appContext: Context,
+    private val appContext: Context,
     aiModelRepository: AiModelRepository,
     private val pathManager: RuntimePathManager,
     private val json: Json,

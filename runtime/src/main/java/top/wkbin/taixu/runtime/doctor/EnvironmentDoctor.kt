@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
-import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.model.DoctorCategory
 import top.wkbin.taixu.core.model.DoctorItem
 import top.wkbin.taixu.core.model.DoctorReport
@@ -13,14 +12,11 @@ import top.wkbin.taixu.core.model.DoctorStatus
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.ShellCommand
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@Singleton
-class EnvironmentDoctor @Inject constructor(
-    @ApplicationContext private val context: Context? = null,
+class EnvironmentDoctor(
+    private val context: Context? = null,
     private val linuxRuntime: LinuxRuntime,
 ) {
     suspend fun check(): DoctorReport = withContext(Dispatchers.IO) {

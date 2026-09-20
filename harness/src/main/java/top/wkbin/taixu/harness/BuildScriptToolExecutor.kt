@@ -2,16 +2,13 @@ package top.wkbin.taixu.harness
 
 import java.io.File
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.core.database.BuildScriptEntity
 import top.wkbin.taixu.core.database.BuildScriptRepository
 
 /** Controlled Harness API for reusable workshop scripts. */
-@Singleton
-class BuildScriptToolExecutor @Inject constructor(
+class BuildScriptToolExecutor(
     private val repository: BuildScriptRepository,
 ) {
     suspend fun execute(args: JsonObject, workspace: String): Pair<Boolean, String> {

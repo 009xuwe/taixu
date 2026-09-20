@@ -3,12 +3,9 @@
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 import okhttp3.OkHttpClient
 
-@Singleton
-class HttpClientProvider @Inject constructor() {
+class HttpClientProvider() {
 
     fun create(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)

@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.workspace
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -72,7 +73,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -98,7 +98,7 @@ fun CodeEditorScreen(
     projectName: String,
     relativePath: String,
     onBack: () -> Unit,
-    viewModel: WorkspaceViewModel = hiltViewModel(),
+    viewModel: WorkspaceViewModel = koinViewModel(),
 ) {
     val fileContent by viewModel.fileContent.collectAsStateWithLifecycle()
     val isDirty by viewModel.isDirty.collectAsStateWithLifecycle()

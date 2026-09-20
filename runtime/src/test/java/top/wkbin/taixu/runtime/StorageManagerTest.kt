@@ -2,7 +2,6 @@ package top.wkbin.taixu.runtime
 
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo
-import dagger.Lazy
 import java.io.File
 import java.lang.reflect.Proxy
 import java.nio.file.Files
@@ -39,7 +38,7 @@ class StorageManagerTest {
                 block()
             }
         }
-        manager = StorageManager(context, paths, Lazy { runtime })
+        manager = StorageManager(context, paths, lazy { runtime })
         write(File(paths.rootfsDir("debian"), "usr/bin/bash"), 10)
     }
     private fun write(file: File, size: Int = 16, old: Boolean = true): File {

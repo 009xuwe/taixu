@@ -2,7 +2,6 @@ package top.wkbin.taixu.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -28,7 +27,6 @@ import top.wkbin.taixu.core.tools.ToolManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.UUID
-import javax.inject.Inject
 
 data class ToolDetailUiState(
     val tool: ToolEntity? = null,
@@ -72,8 +70,7 @@ data class ToolDetailUiState(
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-@HiltViewModel
-class ToolDetailViewModel @Inject constructor(
+class ToolDetailViewModel(
     private val toolManager: ToolManager,
     private val settingsDataStore: ToolPreferences,
     private val providerRepository: ProviderRepository,

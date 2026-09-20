@@ -13,11 +13,8 @@ import top.wkbin.taixu.core.model.CcProviderProfile
 import top.wkbin.taixu.core.model.CcSwitchDaemonStatus
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class CcSwitchClient @Inject constructor(
+class CcSwitchClient(
     httpClientProvider: HttpClientProvider,
 ) {
     private val json = Json {

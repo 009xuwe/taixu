@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.task
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.task.AgentTaskCheckpoint
 import top.wkbin.taixu.core.database.task.AgentTaskEntity
@@ -13,8 +11,7 @@ import top.wkbin.taixu.core.database.task.AgentTaskTransition
  * Durable task lifecycle only. Execution belongs to HarnessLoop; this class owns validated,
  * compare-and-set persistence transitions so process recovery can never report phantom success.
  */
-@Singleton
-class AgentStateMachine @Inject constructor(
+class AgentStateMachine(
     private val repository: AgentTaskRepository,
     private val logger: AppLogger? = null,
 ) {

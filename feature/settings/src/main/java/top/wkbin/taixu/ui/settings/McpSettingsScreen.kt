@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import android.content.ClipData
@@ -67,7 +68,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -89,7 +89,7 @@ import top.wkbin.taixu.ui.components.RuntimeTopBar
 @Composable
 fun McpSettingsScreen(
     onBack: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel(),
+    viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val servers by viewModel.mcpServers.collectAsStateWithLifecycle()
     val connectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()

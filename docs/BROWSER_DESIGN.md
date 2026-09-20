@@ -200,7 +200,7 @@ BrowserScreen
 | SecretRedactor | 所有 cookie / Authorization / password / set-cookie / token 自动替换为 `[REDACTED_*]`（复用 `core:security` 已实现） |
 | 风险等级 | LOW/MEDIUM/HIGH/CRITICAL 四档；HIGH+ 触发 ApprovalRequestDialog |
 | 外接开关 | `browserPreferences.allowRemoteConnect` 默认 `false`；开启后端口仅绑 `0.0.0.0`，同时要求 User 已设置 `browserRemoteToken`（≥32 字节 base64）|
-| 敏感域白名单 | 主域列表（`localhost`、`127.0.0.1`、用户配置的允许域）允许 `cleartext`；其它强制 HTTPS（Hilt Qualifier + NetworkSecurityConfig） |
+| 敏感域白名单 | 主域列表（`localhost`、`127.0.0.1`、用户配置的允许域）允许 `cleartext`；其它强制 HTTPS（Koin Qualifier + NetworkSecurityConfig） |
 | 文件沙箱 | `*file.*` 工具复用现有 `WorkspaceFileService` 路径校验，禁止 `/proc /sys /dev /system /root` |
 | Token | `mcp__browser__*` 内置 server 默认走 loopback 不需要 token；外接强制要求 token；token 通过 SecureRandom 生成、SecretRedactor 加密保存 |
 
@@ -244,7 +244,7 @@ runtime/browser/src/main/java/top/wkbin/taixu/runtime/browser/
     tools/BrowserMcpTools.kt          (注册全部 mcp__browser__* tool handler)
     tools/BrowserMcpResources.kt      (browser://* resource handler)
     capabilities/BrowserCapabilities.kt (engine.family → capability set)
-    di/BrowserModule.kt               (Hilt bindings)
+    di/BrowserModule.kt               (Koin bindings)
 
 runtime/browser/src/main/AndroidManifest.xml
 

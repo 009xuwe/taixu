@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness
 
-import javax.inject.Inject
-import javax.inject.Singleton
 
 sealed interface TurnProviderOutcome {
     data class Success(val result: ChatResult, val streamText: String) : TurnProviderOutcome
@@ -33,8 +31,7 @@ sealed interface TurnOutcome {
  * follow-up/tool branch. Validation, approval and execution are supplied as one effect port so
  * this state machine stays deterministic while the production port retains its security policy.
  */
-@Singleton
-class TurnRunner @Inject constructor(
+class TurnRunner(
     private val normalizer: ProviderResponseNormalizer,
 ) {
     suspend fun run(

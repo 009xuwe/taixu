@@ -1,5 +1,6 @@
 package top.wkbin.taixu.service
 
+import org.koin.android.ext.android.inject
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -16,8 +17,6 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,10 +33,9 @@ import top.wkbin.taixu.harness.workflow.WorkflowRunManager
  * 逐运行展示进度通知；运行结束发终态通知后自行退出。
  * 由 TaiXuApplication 根据 WorkflowRunManager.running 联动启动。
  */
-@AndroidEntryPoint
 class WorkflowForegroundService : Service() {
 
-    @Inject lateinit var runManager: WorkflowRunManager
+    val runManager: WorkflowRunManager by inject()
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collecting = false

@@ -213,7 +213,7 @@ $env:TAIXU_DEV_BUILD="1"
 
 ```text
 TaiXu/
-├── app/                  # 宿主壳、Hilt 装配、Manifest、JNI 与前台服务
+├── app/                  # 宿主壳、Koin 装配、Manifest、JNI 与前台服务
 ├── baselineprofile/      # Baseline Profile 与启动性能基准
 ├── core/
 │   ├── model/            # 纯 Kotlin 领域模型

@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.operation
 
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -19,8 +17,7 @@ import top.wkbin.taixu.harness.events.HarnessEventBus
 import top.wkbin.taixu.harness.session.SessionTreeStore
 
 /** Owns all durable operation transitions and their transaction boundaries. */
-@Singleton
-class OperationCoordinator @Inject constructor(
+class OperationCoordinator(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
     private val eventBus: HarnessEventBus,

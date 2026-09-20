@@ -4,8 +4,6 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import java.net.InetSocketAddress
 import java.net.Socket
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -65,8 +63,7 @@ interface LocalServiceLauncher {
     suspend fun stopAll()
 }
 
-@Singleton
-class LocalServiceLauncherImpl @Inject constructor(
+class LocalServiceLauncherImpl(
     private val linuxRuntime: LinuxRuntime,
 ) : LocalServiceLauncher {
     private val mutex = Mutex()

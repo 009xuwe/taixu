@@ -7,8 +7,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * 赞助者/贡献者名单仓库。
@@ -59,8 +57,7 @@ data class SponsorEntry(
 @Serializable
 data class SponsorListDto(val entries: List<SponsorEntry> = emptyList())
 
-@Singleton
-class SponsorListRepository @Inject constructor(
+class SponsorListRepository(
     private val httpClient: OkHttpClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }

@@ -5,7 +5,6 @@ import android.content.ContextWrapper
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
-import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
@@ -20,8 +19,6 @@ import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -117,15 +114,14 @@ data class WorkspaceFileItem(
 )
 
 /** 工作区：目录在 App 私有挂载点，元数据（路径/创建时间）存 Room。 */
-@Singleton
-class WorkspaceManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class WorkspaceManager(
+    private val context: Context,
     private val pathManager: RuntimePathManager,
     private val workspaceDao: WorkspaceRepository,
     private val fileService: WorkspaceFileService,
-    private val linuxRuntime: dagger.Lazy<LinuxRuntime>,
+    private val linuxRuntime: Lazy<LinuxRuntime>,
     private val projectTemplateEngine: ProjectTemplateEngine,
-    private val buildScriptRepository: dagger.Lazy<top.wkbin.taixu.core.database.BuildScriptRepository>? = null,
+    private val buildScriptRepository: Lazy<top.wkbin.taixu.core.database.BuildScriptRepository>? = null,
 ) {
     constructor(
         pathManager: RuntimePathManager,
@@ -136,7 +132,7 @@ class WorkspaceManager @Inject constructor(
         pathManager,
         workspaceDao,
         WorkspaceFileService(pathManager, workspaceDao),
-        dagger.Lazy<LinuxRuntime> { error("Linux runtime is unavailable in this test constructor") },
+        lazy<LinuxRuntime> { error("Linux runtime is unavailable in this test constructor") },
         projectTemplateEngine,
         null,
     )
@@ -418,7 +414,7 @@ class WorkspaceManager @Inject constructor(
                 File(directory, UNLINKED_MARKER).writeText("unlinkedAt=${System.currentTimeMillis()}\n")
             }
             workspaceDao.delete(name)
-            runCatching { buildScriptRepository?.get()?.unbind(name) }
+            runCatching { buildScriptRepository?.value?.unbind(name) }
             AppResult.Success(Unit)
         } catch (throwable: Throwable) {
             AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "删除项目失败", throwable))
@@ -512,7 +508,7 @@ class WorkspaceManager @Inject constructor(
             ProjectType.FLUTTER -> "builtin-flutter"
             else -> return
         }
-        val repository = buildScriptRepository?.get() ?: return
+        val repository = buildScriptRepository?.value ?: return
         runCatching {
             if (repository.findBinding(project.name) == null) {
                 repository.bind(project.name, builtinId)
@@ -581,7 +577,7 @@ class WorkspaceManager @Inject constructor(
         cleanupOnFailure: Boolean,
         onProgress: ((String) -> Unit)? = null,
     ) {
-        val result = linuxRuntime.get().execute(
+        val result = linuxRuntime.value.execute(
             ShellCommand(
                 // --progress 让 git 在非 TTY 管道下也输出克隆进度（remote:/Receiving objects: 等）
                 commandLine = "git clone --depth 1 --progress -- ${shellQuote(url.trim())} ${shellQuote(linuxPathFor(directory))}",
@@ -756,7 +752,7 @@ class WorkspaceManager @Inject constructor(
         try {
             hookFile.writeBytes(projectTemplateEngine.readHook(templateId, relativePath))
             hookFile.setExecutable(true)
-            val result = linuxRuntime.get().execute(
+            val result = linuxRuntime.value.execute(
                 ShellCommand(
                     commandLine = "sh ${shellQuote(linuxPathFor(hookFile))}",
                     workingDirectory = linuxPathFor(projectDir),

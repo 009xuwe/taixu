@@ -5,13 +5,10 @@ import top.wkbin.taixu.core.database.ToolEntity
 import top.wkbin.taixu.core.model.ToolManifest
 import android.net.Uri
 import top.wkbin.taixu.core.common.result.AppResult
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 
 /** Tool persistence and registry boundary; UI layers do not access Room directly. */
-@Singleton
-class ToolRepository @Inject constructor(
+class ToolRepository(
     private val toolDao: ToolDao,
     private val toolRegistry: ToolRegistry,
 ) {

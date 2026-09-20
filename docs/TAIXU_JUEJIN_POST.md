@@ -139,7 +139,7 @@ Android 开发者专属的提效神器：
 
 ```text
 LinuxAIRuntime/
-├── app/                  # 宿主壳工程：JNI C/C++ 桥接、Hilt 装配、前台保活 Service、悬浮窗服务
+├── app/                  # 宿主壳工程：JNI C/C++ 桥接、Koin 装配、前台保活 Service、悬浮窗服务
 ├── core/
 │   ├── model/           # 纯 Kotlin 数据模型 (Pure Kotlin，严禁任何平台与框架依赖)
 │   ├── database/        # Room 数据库：会话树、消息因果链、Checkpoints 快照、执行审计

@@ -9,8 +9,6 @@ import java.util.UUID
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-import javax.inject.Inject
-import javax.inject.Singleton
 
 data class ApprovalDecision(
     val required: Boolean,
@@ -20,8 +18,7 @@ data class ApprovalDecision(
 )
 
 /** Host-side policy. The model prompt is deliberately not part of this decision. */
-@Singleton
-class ApprovalPolicyEngine @Inject constructor(
+class ApprovalPolicyEngine(
     private val pathResolver: HarnessPathResolver,
 ) {
     /**

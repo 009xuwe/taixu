@@ -8,13 +8,10 @@ import top.wkbin.taixu.runtime.service.LocalServiceSpec
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import java.net.InetSocketAddress
 import java.net.Socket
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
 
 /** Owns background-tool lifecycle and readiness probing independently from install transactions. */
-@Singleton
-class ToolServiceController @Inject constructor(
+class ToolServiceController(
     private val linuxRuntime: LinuxRuntime,
 ) {
     fun isRunning(toolId: String, spec: LocalServiceSpec?): Boolean =

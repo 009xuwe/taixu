@@ -15,15 +15,12 @@ import top.wkbin.taixu.runtime.RootfsUpdateInfo
 import java.io.BufferedInputStream
 import java.io.File
 import java.util.zip.GZIPInputStream
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
-@Singleton
-class RootfsInstaller @Inject constructor(
+class RootfsInstaller(
     private val pathManager: RuntimePathManager,
     private val tarStreamExtractor: TarStreamExtractor,
     private val rootfsValidator: RootfsValidator,

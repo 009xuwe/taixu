@@ -5,8 +5,6 @@ import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.ShellCommand
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -22,8 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-@Singleton
-class EnvironmentRepairer @Inject constructor(
+class EnvironmentRepairer(
     private val linuxRuntime: LinuxRuntime,
     private val environmentDoctor: EnvironmentDoctor,
 ) {

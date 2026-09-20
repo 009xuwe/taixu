@@ -85,8 +85,7 @@ interface McpOAuthTransactionDao {
 }
 
 /** Room facade that keeps token plaintext out of entities and UI flows. */
-@javax.inject.Singleton
-class McpOAuthCredentialRepository @javax.inject.Inject constructor(
+class McpOAuthCredentialRepository(
     private val credentials: McpOAuthCredentialDao,
     private val transactions: McpOAuthTransactionDao,
     private val secretManager: top.wkbin.taixu.core.security.SecretManager,

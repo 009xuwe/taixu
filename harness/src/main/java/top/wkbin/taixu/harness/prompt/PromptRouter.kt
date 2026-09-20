@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.prompt
 
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * 系统提示词分层路由器（L2 任务规则选择）。
@@ -12,8 +10,7 @@ import javax.inject.Singleton
  * 路由判断保守宁滥勿缺：多注入一个块的成本远小于模型在缺少规则时犯错；
  * 若代码层判断不确定，模型仍可通过 load_rule 工具按需自取。
  */
-@Singleton
-class PromptRouter @Inject constructor(
+class PromptRouter(
     private val promptAssets: PromptAssetLoader,
 ) {
     /** 可按需加载的规则块。[assetPath] 为 assets 内路径，[loadName] 为 load_rule 工具使用的标识。 */

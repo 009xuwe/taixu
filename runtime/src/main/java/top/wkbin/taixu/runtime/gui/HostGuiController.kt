@@ -13,13 +13,10 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.widget.Toast
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
-import javax.inject.Inject
-import javax.inject.Singleton
 
 data class ScreenObservation(
     val packageName: String,
@@ -43,9 +40,8 @@ data class ScreenObservation(
     }
 }
 
-@Singleton
-class HostGuiController @Inject constructor(
-    @ApplicationContext private val context: Context,
+class HostGuiController(
+    private val context: Context,
     private val privilegeManager: PrivilegeManager,
     private val toolkit: HostGuiToolkit,
     private val hud: WorkflowGuiHudBridge,

@@ -1,15 +1,12 @@
 package top.wkbin.taixu.harness.mcp
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import top.wkbin.taixu.core.model.McpServerConfig
 
 /**
  * Quoting helpers for the MCP STDIO PTY invocation. Kept separate so unit tests can lock down
  * command-line construction without spinning up a Linux session.
  */
-@Singleton
-class McpCommandBuilder @Inject constructor() {
+class McpCommandBuilder() {
     fun commandLine(server: McpServerConfig): String {
         require(server.command.isNotBlank()) { "MCP STDIO server requires a non-blank command" }
         val argv = (listOf(server.command) + server.args).joinToString(" ", transform = ::shellQuote)

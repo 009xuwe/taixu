@@ -428,13 +428,14 @@ internal class AnthropicApi(
         cacheWriteTokens = usage["cache_creation_input_tokens"]?.jsonPrimitive?.longOrNull ?: 0,
     )
 
-    /** 非 429/5xx 的 HTTP 错误：命中上下文超限文案时抛可自愈类型，供引擎紧急压缩后重试。 */
+    /** 非 429/5xx 的 HTTP 错误：413 与上下文超限文案走可自愈类型，供引擎紧急压缩后重试。 */
     private fun httpError(code: Int, body: String): Exception {
-        val message = "Claude 请求失败 HTTP $code：${extractError(body)}"
-        return if (ProviderClient.isContextOverflowMessage(body)) {
-            LlmContextOverflowException(message)
-        } else {
-            IllegalStateException(message)
+        val detail = extractError(body)
+        val message = "Claude 请求失败 HTTP $code：$detail"
+        return when (ProviderClient.contextOverflowException(code, body)) {
+            is LlmContextOverflowException -> LlmContextOverflowException(message)
+            is LlmInvalidOutputTokensException -> LlmInvalidOutputTokensException(message)
+            else -> IllegalStateException(message)
         }
     }
 

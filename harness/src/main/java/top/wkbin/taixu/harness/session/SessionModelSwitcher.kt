@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.session
 
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.AiModelRepository
@@ -21,8 +19,7 @@ import top.wkbin.taixu.harness.projection.LiveMessagePort
  * Occupancy UI and the next provider request must share this same budget — never the
  * model that happened to be active when the session was created.
  */
-@Singleton
-class SessionModelSwitcher @Inject constructor(
+class SessionModelSwitcher(
     private val sessionDao: HarnessSessionRepository,
     private val modelDao: AiModelRepository,
     private val settingsDataStore: AgentPreferences,

@@ -1,7 +1,6 @@
 package top.wkbin.taixu.runtime.webchat
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.InputStream
 import java.net.Inet4Address
@@ -9,8 +8,6 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,9 +54,8 @@ data class WebChatServerStatus(
 }
 
 /** LAN bridge for TaiXu's own Harness sessions and registered Linux workspaces. */
-@Singleton
-class WebChatBridgeServer @Inject constructor(
-    @ApplicationContext private val context: Context,
+class WebChatBridgeServer(
+    private val context: Context,
     private val sessions: HarnessSessionRepository,
     private val models: AiModelRepository,
     private val quickPhrases: QuickPhraseRepository,

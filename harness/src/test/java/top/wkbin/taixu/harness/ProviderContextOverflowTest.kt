@@ -65,6 +65,19 @@ class ProviderContextOverflowTest {
     }
 
     @Test
+    fun `http 413 is always classified as recoverable overflow`() {
+        val html = ProviderClient.contextOverflowException(
+            413,
+            "<html><head><title>413 Request Entity Too Large</title></head></html>",
+        )
+        assertTrue("Nginx HTML 413 必须可自愈", html is LlmContextOverflowException)
+        assertTrue(html.message.orEmpty().contains("413"))
+
+        val empty = ProviderClient.contextOverflowException(413, "")
+        assertTrue("空 body 的 413 也必须可自愈", empty is LlmContextOverflowException)
+    }
+
+    @Test
     fun `emergency fold budget is quarter of clamped budget with floor`() {
         val large = ModelConfig(
             name = "test",
@@ -74,7 +87,7 @@ class ProviderContextOverflowTest {
             apiKey = "sk-test",
             contextTokens = 200_000,
         )
-        // 200k × 25% = 50k（clampedBudget 上限 200k 内不截断）
+        // 200k × 25% = 50k（clampedBudget 上限 1M 内不截断）
         assertTrue(HarnessProviderRunner.emergencyFoldBudget(large) == 50_000)
 
         val unknown = ModelConfig(

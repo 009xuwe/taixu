@@ -9,8 +9,6 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.InternalCoroutinesApi
@@ -48,9 +46,9 @@ class TransientHttpException(
 ) : IOException(message)
 
 /**
- * 上下文超限（HTTP 400 家族）：与其他 4xx 的本质区别是可自愈——引擎捕获后执行紧急
- * 机械压缩并重试同一请求（对齐 opencode 的 overflow → compact → replay 闭环），
- * 而不是直接把失败抛给用户。
+ * 上下文超限（HTTP 400 家族与 413 Payload Too Large）：与其他 4xx 的本质区别是可自愈——
+ * 引擎捕获后执行紧急机械压缩并重试同一请求（对齐 opencode 的 overflow → compact → replay 闭环），
+ * 而不是直接把失败抛给用户。HTTP 413 常见于 Nginx/中转拒绝过大 JSON，body 往往是 HTML。
  */
 class LlmContextOverflowException(message: String) : IOException(message)
 
@@ -723,8 +721,7 @@ data class ChatResponseMessage(
  * 模型配置优先取 [AiModelRepository] 中激活的 [top.wkbin.taixu.core.database.AiModelEntity]，
  * 未配置时回退到 [ProviderRepository]；API Key 始终从加密存储读取，绝不落库/落日志。
  */
-@Singleton
-class ProviderClient @Inject constructor(
+class ProviderClient(
     private val okHttpClient: OkHttpClient,
     private val providerRepository: ProviderRepository,
     private val modelDao: AiModelRepository,
@@ -1049,6 +1046,9 @@ class ProviderClient @Inject constructor(
             // 远端把错误页（HTML/纯文本）当成 body 返回时，给出可读的固定文案，
             // 避免直接把 <html>... 拼到错误提示里刷屏。
             if (!looksLikeJsonResponse(trimmedBody)) {
+                if (code == 413) {
+                    return "请求体过大 (HTTP 413)：反向代理或网关拒绝了本次请求（常见于 Nginx client_max_body_size）。引擎将尝试压缩历史后重试。"
+                }
                 val kind = when {
                     trimmedBody.trimStart().startsWith("<", ignoreCase = true) -> "网页"
                     else -> "非 JSON 文本"
@@ -1063,6 +1063,8 @@ class ProviderClient @Inject constructor(
 
             val lowerMsg = errorMsg.lowercase()
             return when {
+                code == 413 ->
+                    "请求体过大 (HTTP 413)：反向代理或网关拒绝了本次请求（常见于 Nginx client_max_body_size）。引擎将尝试压缩历史后重试。"
                 code == 403 && (lowerMsg.contains("free quota") || lowerMsg.contains("quota exhausted") || lowerMsg.contains("free tier")) ->
                     "API 免费额度已耗尽 (HTTP 403)：请前往模型服务商控制台充值、关闭免费层限制，或在太墟中切换其他可用模型。"
                 code == 401 || lowerMsg.contains("invalid api key") || lowerMsg.contains("unauthorized") ->
@@ -1107,13 +1109,15 @@ class ProviderClient @Inject constructor(
 
         /**
          * 上下文超限识别（对齐 opencode session/retry 的 RETRYABLE 思路，但走压缩恢复而非重试）：
-         * 命中 [CONTEXT_OVERFLOW_PATTERNS] 时返回 [LlmContextOverflowException]，
-         * 其余 4xx 仍是 [IllegalStateException]。
+         * HTTP 413 一律视为可恢复的荷载超限（Nginx/中转 HTML 页往往不含 token 文案）；
+         * 其余 4xx 命中 [CONTEXT_OVERFLOW_PATTERNS] 时返回 [LlmContextOverflowException]，
+         * 否则仍是 [IllegalStateException]。
          * 匹配对 rawBody 原文做小写包含——各家 400 文案不同，宁滥勿缺：误报的代价只是
          * 多一次机械压缩尝试（有界），漏报则用户直接看到失败。
          */
         internal fun contextOverflowException(code: Int, rawBody: String): Exception =
             when {
+                code == 413 -> LlmContextOverflowException(formatHttpErrorMessage(code, rawBody))
                 isContextOverflowMessage(rawBody) -> LlmContextOverflowException(formatHttpErrorMessage(code, rawBody))
                 isInvalidOutputTokensMessage(rawBody) -> LlmInvalidOutputTokensException(formatHttpErrorMessage(code, rawBody))
                 else -> IllegalStateException(formatHttpErrorMessage(code, rawBody))

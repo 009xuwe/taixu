@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness.checkpoint
 
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -21,8 +19,7 @@ import kotlinx.serialization.json.Json
  * 安全网特性可接受，且该轮大概率会被重做）；启动后首次访问该会话时从磁盘恢复。
  * 未配置根目录时退化为纯内存（进程被杀后 rewind 丢失），行为与旧版一致。
  */
-@Singleton
-class CheckpointStore @Inject constructor() {
+class CheckpointStore() {
 
     /** 持久化配置；null = 纯内存模式。由宿主在初始化期一次性注入。 */
     @Volatile

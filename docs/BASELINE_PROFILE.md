@@ -7,7 +7,7 @@
 APK 内嵌 `assets/dexopt/baseline.prof`（由 `app/src/release/generated/baselineProfiles/` 编译打包）。
 首次安装后 `androidx.profileinstaller` 在后台把它提交给 ART 预编译，覆盖：
 
-- `Application.onCreate` → Hilt 图构建 → 首屏 Compose 组合的完整启动路径
+- `Application.onCreate` → Koin 图构建 → 首屏 Compose 组合的完整启动路径
 - 首帧 LazyColumn 滚动路径
 
 ## 模块结构
@@ -63,3 +63,5 @@ adb install -r app/build/outputs/apk/release/taixu-v0.6.0-release.apk
 adb shell am start -W top.wkbin.taixu/.MainActivity   # 对比 TotalTime
 adb logcat -s TaiXuStartup                            # splash dismissed 耗时
 ```
+
+Koin 迁移已移除旧 DI 生成类的 profile 条目；完整的新启动热点需按本文流程在 ARM64 设备上重新采集，不能仅替换类名。

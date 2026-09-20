@@ -7,12 +7,9 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,9 +44,8 @@ sealed interface FtpServiceState {
 }
 
 /** Owns the built-in FTP server exposing the active Linux distribution's rootfs. */
-@Singleton
-class FtpServiceManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class FtpServiceManager(
+    private val context: Context,
     private val linuxRuntime: LinuxRuntime,
     private val preferences: FtpPreferences,
     private val sshPreferences: SshPreferences,

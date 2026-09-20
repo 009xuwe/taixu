@@ -23,8 +23,6 @@ import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
 import top.wkbin.taixu.core.database.AndroidAppRepository
 import top.wkbin.taixu.core.model.ExecutionMode
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -42,8 +40,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * 任何工具失败都不会抛异常，而是以结构化的 [ToolResult] 返回给 HarnessLoop，
  * 由模型决定下一步（自我纠正）。
  */
-@Singleton
-class ToolExecutor @Inject constructor(
+class ToolExecutor(
     private val fileAccess: WorkspaceFileAccess,
     private val linuxRuntime: LinuxRuntime,
     private val pathResolver: HarnessPathResolver,
@@ -73,10 +70,8 @@ class ToolExecutor @Inject constructor(
     private val compactionManager: top.wkbin.taixu.harness.compaction.CompactionManager? = null,
     private val providerClient: ProviderClient? = null,
     private val skillRepository: top.wkbin.taixu.core.database.AgentSkillRepository? = null,
+    private val settingsDataStore: AgentPreferences? = null,
 ) {
-    @Inject
-    lateinit var settingsDataStore: AgentPreferences
-
     suspend fun execute(
         toolCall: ToolCall,
         sessionId: String = "",
@@ -182,7 +177,9 @@ class ToolExecutor @Inject constructor(
         val redactedOutput = secretRedactor.redact(
             value = finalOutput,
             secretValues = linuxEnvironmentManager?.values?.value?.values.orEmpty(),
-            privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
+            privacyMode = settingsDataStore?.let { prefs ->
+                runCatching { prefs.environmentPrivacyMode.first() }.getOrDefault(true)
+            } ?: true,
         )
         return ToolResult(
             id = UUID.randomUUID().toString(),
@@ -792,11 +789,9 @@ class ToolExecutor @Inject constructor(
     }
 
     private suspend fun executeCompress(args: JsonObject, sessionId: String): Pair<Boolean, String> {
-        val compressionEnabled = if (::settingsDataStore.isInitialized) {
-            runCatching { settingsDataStore.commandOutputCompressionEnabled.first() }.getOrDefault(true)
-        } else {
-            true
-        }
+        val compressionEnabled = settingsDataStore?.let { prefs ->
+            runCatching { prefs.commandOutputCompressionEnabled.first() }.getOrDefault(true)
+        } ?: true
         if (!compressionEnabled) {
             return false to "手动 compress 已被设置中的‘命令输出压缩’开关关闭；未修改会话历史。请先开启该开关后重试。"
         }
@@ -954,18 +949,14 @@ class ToolExecutor @Inject constructor(
         val command = requireString(args, "command")
         require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
         val cwd = pathResolver.resolveWorkingDirectory(args["cwd"]?.jsonPrimitive?.content, workspace)
-        val commandOutputCompressionEnabled = if (::settingsDataStore.isInitialized) {
-            runCatching { settingsDataStore.commandOutputCompressionEnabled.first() }.getOrDefault(true)
-        } else {
-            true
-        }
+        val commandOutputCompressionEnabled = settingsDataStore?.let { prefs ->
+            runCatching { prefs.commandOutputCompressionEnabled.first() }.getOrDefault(true)
+        } ?: true
         val preparedCommand = RtkCommandOptimizer.prepare(command, commandOutputCompressionEnabled)
-        val configuredTimeoutSeconds = if (::settingsDataStore.isInitialized) {
-            runCatching { settingsDataStore.baseCommandTimeoutSeconds.first() }
-                .getOrDefault(settingsDataStore.defaultBaseCommandTimeoutSeconds)
-        } else {
-            settingsDataStore.defaultBaseCommandTimeoutSeconds
-        }
+        val configuredTimeoutSeconds = settingsDataStore?.let { prefs ->
+            runCatching { prefs.baseCommandTimeoutSeconds.first() }
+                .getOrDefault(AgentPreferences.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS)
+        } ?: AgentPreferences.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS
         val timeoutSeconds = optionalLong(
             args = args,
             key = "timeout_seconds",

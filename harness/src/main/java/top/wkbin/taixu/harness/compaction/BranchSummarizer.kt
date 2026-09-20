@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness.compaction
 
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessEntryEntity
@@ -21,8 +19,7 @@ import top.wkbin.taixu.harness.session.SessionTreeStore
  * 被放弃段太短（< [MIN_MESSAGES] 条消息）不值得一次 LLM 调用，直接跳过。
  * 同一进程内同一 fromLeafId 只摘要一次，防止来回切换产生重复摘要。
  */
-@Singleton
-class BranchSummarizer @Inject constructor(
+class BranchSummarizer(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
     private val logger: AppLogger,

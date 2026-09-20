@@ -9,9 +9,6 @@ import java.io.InputStream
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import javax.inject.Inject
-import javax.inject.Singleton
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,9 +62,8 @@ sealed interface LocalLlmServiceState {
  * Model files live below /opt/taixu/data inside the sandbox, so they stay isolated per distro
  * and are already covered by the existing trusted PRoot bind mount.
  */
-@Singleton
-class LocalLlmManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class LocalLlmManager(
+    private val context: Context,
     private val pathManager: RuntimePathManager,
     private val linuxRuntime: LinuxRuntime,
     private val fileDownloader: FileDownloader,

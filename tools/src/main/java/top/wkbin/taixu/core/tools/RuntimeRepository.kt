@@ -3,12 +3,9 @@
 import top.wkbin.taixu.core.database.RuntimeDao
 import top.wkbin.taixu.core.database.RuntimeDependencyRefEntity
 import top.wkbin.taixu.core.database.RuntimeEntity
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /** Persistence boundary for shared runtimes and their tool references. */
-@Singleton
-class RuntimeRepository @Inject constructor(
+class RuntimeRepository(
     private val runtimeDao: RuntimeDao,
 ) {
     suspend fun findRuntime(id: String): RuntimeEntity? = runtimeDao.findRuntime(id)

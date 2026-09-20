@@ -10,9 +10,6 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,9 +26,8 @@ import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
  * 解决在手机「开发者选项 ➔ 使用配对码配对设备」弹窗时，一旦切出应用弹窗自动关闭且配对码失效的问题。
  * 在通知栏常驻展示包含 RemoteInput 输入框与连接控制动作的通知，让用户直接下拉通知栏即可完成 6 位配对码输入与连接。
  */
-@Singleton
-class AdbNotificationManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class AdbNotificationManager(
+    private val context: Context,
     private val embeddedAdbManager: EmbeddedAdbManager,
     private val preferences: top.wkbin.taixu.core.datastore.RuntimePreferences,
 ) {

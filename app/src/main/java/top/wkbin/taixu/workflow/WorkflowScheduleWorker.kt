@@ -2,11 +2,8 @@ package top.wkbin.taixu.workflow
 
 import android.content.Context
 import android.util.Log
-import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import top.wkbin.taixu.core.model.workflow.WorkflowRunTrigger
 import top.wkbin.taixu.harness.workflow.WorkflowRunManager
 import top.wkbin.taixu.harness.workflow.WorkflowScheduleRepository
@@ -17,10 +14,9 @@ import top.wkbin.taixu.service.WorkflowForegroundService
  * 运行启动后 Worker 立即返回成功；存活由前台服务接管（Application 联动启动）。
  * 运行时未就绪（如从未安装沙箱）会落一条 FAILED 历史并通知用户，绝不自动下载 RootFS。
  */
-@HiltWorker
-class WorkflowScheduleWorker @AssistedInject constructor(
-    @Assisted appContext: Context,
-    @Assisted params: WorkerParameters,
+class WorkflowScheduleWorker(
+    appContext: Context,
+    params: WorkerParameters,
     private val scheduleRepository: WorkflowScheduleRepository,
     private val runManager: WorkflowRunManager,
 ) : CoroutineWorker(appContext, params) {

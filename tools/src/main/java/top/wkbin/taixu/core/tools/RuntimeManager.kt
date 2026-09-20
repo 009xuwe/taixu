@@ -8,8 +8,6 @@ import top.wkbin.taixu.core.model.RuntimeRequirement
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.tools.RuntimeBinaryInstaller
 import top.wkbin.taixu.runtime.shell.ShellCommand
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,8 +20,7 @@ interface RuntimeManager {
     suspend fun cleanup(runtimeId: String): AppResult<Unit>
 }
 
-@Singleton
-class RuntimeManagerImpl @Inject constructor(
+class RuntimeManagerImpl(
     private val linuxRuntime: LinuxRuntime,
     private val runtimeRepository: RuntimeRepository,
     private val runtimeBinaryInstaller: RuntimeBinaryInstaller,

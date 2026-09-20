@@ -5,7 +5,6 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,8 +32,6 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
 import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * 宿主桥接 (Host Bridge) — 沙箱与 Android 宿主之间的 localhost HTTP 通道。
@@ -49,9 +46,8 @@ import javax.inject.Singleton
  *
  * 安全：仅监听 127.0.0.1；所有写操作需 Bearer Token 认证（token 写入 /opt/taixu/.bridge-key）。
  */
-@Singleton
-class HostBridge @Inject constructor(
-    @ApplicationContext private val context: Context,
+class HostBridge(
+    private val context: Context,
     private val logger: AppLogger,
     private val privilegeManager: PrivilegeManager,
     private val embeddedAdbManager: EmbeddedAdbManager,

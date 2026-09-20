@@ -205,14 +205,14 @@
       <tr><td>#9 离屏截图空白</td><td style="color:var(--green);">✔ 已修</td><td>ScreenshotRecorder 对未 layout 的 view 先 measure+layout 再 draw</td></tr>
       <tr><td>#10 console_clear</td><td style="color:var(--green);">✔ 已修</td><td>调用 engine.eventBus.clearConsole()</td></tr>
       <tr><td>#11 domFingerprint 随机</td><td style="color:var(--green);">✔ 已修</td><td>改为对 refs 内容做 SHA-256 稳定指纹</td></tr>
-      <tr><td>#14 prefs 写死（低危）</td><td style="color:var(--orange);">△ 部分</td><td>本轮保留 DEFAULT 快照并加 TODO 注释，未引入 Hilt 构造期 DataStore 阻塞；留待后续动态注入</td></tr>
+      <tr><td>#14 prefs 写死（低危）</td><td style="color:var(--orange);">△ 部分</td><td>本轮保留 DEFAULT 快照并加 TODO 注释，未引入构造期 DataStore 阻塞；留待后续动态注入</td></tr>
       <tr><td>#16 runBlocking（原低危）</td><td style="color:var(--green);">✔ 复核</td><td>确认 McpServerRuntime 无 runBlocking，该子项不成立；notifications/initialized 脏日志、bootstrap 幂等未校验两点保留为小瑕疵</td></tr>
       <tr><td>#4/#15 外接能力（低危）</td><td style="color:var(--green);">✔ 已修</td><td>bootstrap 按 allowRemoteConnect 偏好决定 0.0.0.0 绑定并生成 Bearer Token（McpAuthFilter 强制校验）；desktopUserAgent 偏好接入引擎；删除 builtInConfig() 死代码</td></tr>
       <tr><td>#12 超时后副作用（低危）</td><td style="color:var(--green);">✔ 已修</td><td>postMain/JsEvaluator 超时语义注释 + 日志：明确副作用不可取消、结果已丢弃，提示勿重试同参数操作</td></tr>
       <tr><td>#13 cleartext（低危）</td><td style="color:var(--green);">✔ 复核</td><td>全局 networkSecurityConfig cleartextTrafficPermitted=true 已允许，http:// 页面可加载，无需改码</td></tr>
       <tr><td>#14 prefs 写死（低危）</td><td style="color:var(--green);">✔ 已修</td><td>McpServerModule 注入 datastore.BrowserPreferences，启动时读真实偏好映射为工具层快照（失败兜底 DEFAULT）</td></tr>
     </table>
-    <p style="color:var(--secondary);font-size:12px;">验证：<code>gradlew :harness:compileDebugKotlin :core:browser:test</code> 与 <code>:app:compileDebugKotlin</code> BUILD SUCCESSFUL（含 Hilt 装配图）。两轮修复 commit 随附。</p>
+    <p style="color:var(--secondary);font-size:12px;">验证：<code>gradlew :harness:compileDebugKotlin :core:browser:test</code> 与 <code>:app:compileDebugKotlin</code> BUILD SUCCESSFUL（含 Koin 装配图）。两轮修复 commit 随附。</p>
   </div>
 
   <div class="foot">

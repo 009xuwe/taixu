@@ -11,12 +11,6 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
-import dagger.Binds
-import dagger.Module
-import dagger.hilt.InstallIn
-import dagger.hilt.components.SingletonComponent
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
@@ -183,8 +177,7 @@ interface WorkflowScheduleStore {
     suspend fun updateRunInfo(id: String, executionId: String?, runAt: Long, nextRunAt: Long?)
 }
 
-@Singleton
-class RoomWorkflowScheduleStore @Inject constructor(
+class RoomWorkflowScheduleStore(
     private val dao: WorkflowScheduleDao,
 ) : WorkflowScheduleStore {
     override fun observeSchedules(): Flow<List<WorkflowScheduleEntity>> = dao.observeSchedules()
@@ -217,8 +210,7 @@ interface WorkflowRepository {
     suspend fun findExecutionById(id: String): WorkflowExecutionLogEntity?
 }
 
-@Singleton
-class RoomWorkflowRepository @Inject constructor(
+class RoomWorkflowRepository(
     private val dao: WorkflowDao,
     private val json: Json,
 ) : WorkflowRepository {
@@ -291,10 +283,4 @@ class RoomWorkflowRepository @Inject constructor(
 
     private fun decode(entity: WorkflowEntity): WorkflowDefinition? =
         runCatching { json.decodeFromString<WorkflowDefinition>(entity.jsonContent) }.getOrNull()
-}
-
-@Module
-@InstallIn(SingletonComponent::class)
-abstract class WorkflowRepositoryModule {
-    @Binds abstract fun bindWorkflowRepository(impl: RoomWorkflowRepository): WorkflowRepository
 }

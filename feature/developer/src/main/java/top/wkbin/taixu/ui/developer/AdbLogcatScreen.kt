@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.developer
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -35,7 +36,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
 import top.wkbin.taixu.ui.components.IconTile
@@ -63,7 +63,7 @@ import top.wkbin.taixu.ui.developer.LocalizedText as Text
 @Composable
 fun AdbLogcatScreen(
     onBack: () -> Unit,
-    viewModel: DeveloperViewModel = hiltViewModel(),
+    viewModel: DeveloperViewModel = koinViewModel(),
 ) {
     val adbState by viewModel.adbState.collectAsStateWithLifecycle()
     val adbDiscovery by viewModel.adbDiscovery.collectAsStateWithLifecycle()

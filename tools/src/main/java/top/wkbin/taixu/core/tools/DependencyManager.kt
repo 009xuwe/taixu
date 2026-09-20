@@ -4,8 +4,6 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.model.InstalledRuntime
 import top.wkbin.taixu.core.model.RuntimeRequirement
 import top.wkbin.taixu.core.model.ToolManifest
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /** Owns dependency resolution at the Tool boundary; adapters do not access RuntimeManager directly. */
 interface DependencyManager {
@@ -19,8 +17,7 @@ interface DependencyManager {
     suspend fun release(runtimeId: String, toolId: String): AppResult<Unit>
 }
 
-@Singleton
-class DependencyManagerImpl @Inject constructor(
+class DependencyManagerImpl(
     private val resolver: DependencyResolver,
     private val runtimeManager: RuntimeManager,
 ) : DependencyManager {

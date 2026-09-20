@@ -4,11 +4,8 @@ import top.wkbin.taixu.core.model.RuntimeName
 import top.wkbin.taixu.core.model.RuntimeRequirement
 import top.wkbin.taixu.core.model.ToolDependency
 import top.wkbin.taixu.core.model.ToolManifest
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class DependencyResolver @Inject constructor() {
+class DependencyResolver() {
     fun resolve(manifest: ToolManifest): List<RuntimeRequirement> = manifest.dependencies.mapNotNull { dependency ->
         ManifestDependencyParser.parse(dependency)?.let { parsed ->
             when (parsed.name) {

@@ -36,7 +36,7 @@ object CustomIterationBootstrap {
    - 将 Fork 后的仓库克隆到 ~/custom_taixu。
 
 4. 遵循 taixu-custom-iteration Skill 开发规范：
-   - 按照太墟的 Jetpack Compose、Hilt 和多模块规范进行修改；
+   - 按照太墟的 Jetpack Compose、Koin 和多模块规范进行修改；
    - 编写或调整功能后运行单元测试验证；
    - 提交修改并推送到 Fork 仓库的特性分支。
 

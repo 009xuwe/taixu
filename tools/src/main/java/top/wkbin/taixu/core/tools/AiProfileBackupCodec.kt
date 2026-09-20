@@ -6,15 +6,12 @@ import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.model.AiModelProfileBundle
 import top.wkbin.taixu.core.model.AiModelProfileExport
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * AI 模型档案的导入/导出编解码：实体 ↔ 导出 JSON 的唯一映射实现。
  * Settings 与 Onboarding 共用，保证两处容错规则一致。
  */
-@Singleton
-class AiProfileBackupCodec @Inject constructor(
+class AiProfileBackupCodec(
     private val aiModelDao: AiModelRepository,
     private val providerRepository: ProviderRepository,
     private val profileWriter: AiProfileWriter,

@@ -7,15 +7,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
-import dagger.Module
-import dagger.Provides
-import dagger.hilt.InstallIn
-import dagger.hilt.android.qualifiers.ApplicationContext
-import dagger.hilt.components.SingletonComponent
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 import top.wkbin.taixu.core.database.WorkflowScheduleEntity
 import top.wkbin.taixu.core.model.workflow.WorkflowScheduleRepeat
 import top.wkbin.taixu.harness.workflow.WorkflowScheduleDispatcher
@@ -26,7 +19,7 @@ import top.wkbin.taixu.harness.workflow.WorkflowScheduleRepository
  * 恢复排队。DAILY 用 24h 周期 + 到点 initialDelay（Doze 下可能有分钟级顺延）；
  * INTERVAL 用 N 分钟周期（下限 15 分钟）；ONCE 用一次性延时任务。
  */
-class WorkManagerScheduleDispatcher @Inject constructor(
+class WorkManagerScheduleDispatcher(
     private val context: Context,
 ) : WorkflowScheduleDispatcher {
 
@@ -88,12 +81,8 @@ class WorkManagerScheduleDispatcher @Inject constructor(
 
     private fun uniqueWorkName(scheduleId: String) = "workflow_schedule_$scheduleId"
 
-    @Module
-    @InstallIn(SingletonComponent::class)
     object ScheduleDispatcherModule {
-        @Provides
-        @Singleton
-        fun provideDispatcher(@ApplicationContext context: Context): WorkflowScheduleDispatcher =
+        fun provideDispatcher(context: Context): WorkflowScheduleDispatcher =
             WorkManagerScheduleDispatcher(context)
     }
 

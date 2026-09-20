@@ -143,7 +143,7 @@ class ProductListViewModel: ObservableObject {
 // Modern Jetpack Compose component with state management
 @Composable
 fun ProductListScreen(
-    viewModel: ProductListViewModel = hiltViewModel()
+    viewModel: ProductListViewModel = viewModel() // org.koin.androidx.compose.viewModel
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -189,8 +189,8 @@ fun ProductListScreen(
 }
 
 // ViewModel with proper lifecycle management
-@HiltViewModel
-class ProductListViewModel @Inject constructor(
+// Registered via a Koin module: viewModel { ProductListViewModel(get()) }
+class ProductListViewModel(
     private val productRepository: ProductRepository
 ) : ViewModel() {
     

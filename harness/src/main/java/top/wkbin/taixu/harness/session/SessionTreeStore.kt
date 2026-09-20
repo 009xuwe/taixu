@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.session
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -19,8 +17,7 @@ import top.wkbin.taixu.harness.UserMessage
 import java.util.concurrent.ConcurrentHashMap
 
 /** Serialization and active-branch projection for the immutable session tree. */
-@Singleton
-class SessionTreeStore @Inject constructor(
+class SessionTreeStore(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
     private val logger: AppLogger,

@@ -1,9 +1,13 @@
 package top.wkbin.taixu
 
+import org.koin.android.ext.android.inject
+import org.koin.android.ext.koin.androidContext
+import org.koin.androidx.workmanager.factory.KoinWorkerFactory
+import org.koin.core.context.startKoin
+import top.wkbin.taixu.di.taiXuModule
 import android.annotation.SuppressLint
 import android.app.Application
 import android.util.Log
-import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import top.wkbin.taixu.core.common.logging.CrashReporter
 import top.wkbin.taixu.harness.HarnessLoop
@@ -14,9 +18,6 @@ import top.wkbin.taixu.core.database.SkillScanRoot
 import top.wkbin.taixu.service.AgentForegroundService
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import top.wkbin.taixu.harness.browser.BrowserMcpBootstrap
-import dagger.hilt.android.HiltAndroidApp
-import dagger.Lazy
-import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,41 +32,45 @@ import top.wkbin.taixu.workflow.WorkflowApprovalNotifier
 import top.wkbin.taixu.workflow.WorkflowRunUiController
 import java.io.File
 
-@HiltAndroidApp
 class TaiXuApplication : Application(), Configuration.Provider {
 
     companion object {
         private const val TAG = "TaiXuApp"
     }
-    @Inject lateinit var crashReporter: CrashReporter
+    val crashReporter: CrashReporter by inject()
 
-    // WorkManager 按需初始化 + HiltWorkerFactory：定时计划 Worker（@HiltWorker）靠它注入
+    // WorkManager 按需初始化 + KoinWorkerFactory：定时计划 Worker 靠它注入
     // harness 单例（WorkflowRunManager / WorkflowScheduleRepository）
-    @Inject lateinit var hiltWorkerFactory: HiltWorkerFactory
+    private val workerFactory: KoinWorkerFactory by lazy { KoinWorkerFactory() }
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
-            .setWorkerFactory(hiltWorkerFactory)
+            .setWorkerFactory(workerFactory)
             .build()
 
     // 启动性能：HarnessLoop / Room 仓储的构造图很重（DAO、DataStore、Agent 引擎全家桶），
-    // eager 注入会拖慢第一帧。改为 dagger.Lazy，把实际构建推迟到首个 IO 协程内。
-    @Inject lateinit var harnessLoopLazy: Lazy<HarnessLoop>
-    @Inject lateinit var workflowRunManagerLazy: Lazy<WorkflowRunManager>
-    @Inject lateinit var workflowRunUiController: WorkflowRunUiController
-    @Inject lateinit var workflowApprovalNotifier: WorkflowApprovalNotifier
-    @Inject lateinit var appForegroundTracker: AppForegroundTracker
-    @Inject lateinit var appStatsPreferences: AppStatsPreferences
-    @Inject lateinit var agentSkillRepositoryLazy: Lazy<AgentSkillRepository>
-    @Inject lateinit var mcpServerRepositoryLazy: Lazy<McpServerRepository>
-    @Inject lateinit var pathManagerLazy: Lazy<RuntimePathManager>
-    @Inject lateinit var privilegeManager: PrivilegeManager
-    @Inject lateinit var browserMcpBootstrap: BrowserMcpBootstrap
+    // eager 注入会拖慢第一帧。改为 Kotlin Lazy，把实际构建推迟到首个 IO 协程内。
+    val harnessLoopLazy: Lazy<HarnessLoop> = inject()
+    val workflowRunManagerLazy: Lazy<WorkflowRunManager> = inject()
+    val workflowRunUiController: WorkflowRunUiController by inject()
+    val workflowApprovalNotifier: WorkflowApprovalNotifier by inject()
+    val appForegroundTracker: AppForegroundTracker by inject()
+    val appStatsPreferences: AppStatsPreferences by inject()
+    val agentSkillRepositoryLazy: Lazy<AgentSkillRepository> = inject()
+    val mcpServerRepositoryLazy: Lazy<McpServerRepository> = inject()
+    val pathManagerLazy: Lazy<RuntimePathManager> = inject()
+    val privilegeManager: PrivilegeManager by inject()
+    val browserMcpBootstrap: BrowserMcpBootstrap by inject()
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
         super.onCreate()
+        startKoin {
+            allowOverride(false)
+            androidContext(this@TaiXuApplication)
+            modules(taiXuModule)
+        }
         configureCursorWindowSize()
         crashReporter.install()
         appScope.launch(Dispatchers.IO) {
@@ -80,12 +85,12 @@ class TaiXuApplication : Application(), Configuration.Provider {
                 launch { runCatching { browserMcpBootstrap.bootstrap() } }
                 launch {
                     runCatching {
-                        val skillRepository = agentSkillRepositoryLazy.get()
+                        val skillRepository = agentSkillRepositoryLazy.value
                         skillRepository.ensureInitialized()
                         // 批量自动发现：把 rikkahub / aicode 等工具的 skills 目录整体复制到
                         // attachments/skills 或工作区 skills 目录后，重启即可全部导入；
                         // 按 resourcePath 去重，重复扫描安全。
-                        val pathManager = pathManagerLazy.get()
+                        val pathManager = pathManagerLazy.value
                         val imported = skillRepository.syncFromDirectories(
                             listOf(
                                 SkillScanRoot(File(pathManager.attachmentsDir, "skills"), "/attachments/skills"),
@@ -97,7 +102,7 @@ class TaiXuApplication : Application(), Configuration.Provider {
                         }
                     }
                 }
-                launch { runCatching { mcpServerRepositoryLazy.get().ensureInitialized() } }
+                launch { runCatching { mcpServerRepositoryLazy.value.ensureInitialized() } }
             }
             appStatsPreferences.incrementLaunchCount()
             // 时序门：上面的任务全部就绪后才构造 HarnessLoop——
@@ -105,9 +110,9 @@ class TaiXuApplication : Application(), Configuration.Provider {
             //     否则首启预热读到空表，第一轮对话缺工具；
             //  2) 浏览器 HTTP server 已监听 + 引擎已注册：内置 browser server 的自环发现
             //     不会撞"连接拒绝 → 5 分钟冷却"；
-            //  3) 构造不再由前台服务监听协程在主线程提前触发（重 Hilt 图主线程构造即启动 jank，
+            //  3) 构造不再由前台服务监听协程在主线程提前触发（重 依赖图主线程构造即启动 jank，
             //     且预热时机不受控）。即使页面抢先注入触发构造，预热失败也按轮自愈，此处只是尽量保证顺序。
-            val harnessLoop = harnessLoopLazy.get()
+            val harnessLoop = harnessLoopLazy.value
             // Agent 开始执行时拉起前台服务，保证后台存活 + 通知进度；结束后由服务发带回复框的通知。
             // 并入本协程：构造完成后才开始监听，不再单独开协程抢构造。
             launch {
@@ -130,7 +135,7 @@ class TaiXuApplication : Application(), Configuration.Provider {
             }
             // 工作流后台化：启动对账（把进程死亡遗留的非终态运行标为已中断）+ 通知/HUD
             // 控制器 + FGS 联动。工作流 agent 会话由工作流体系自管，已在恢复中排除。
-            val workflowRunManager = workflowRunManagerLazy.get()
+            val workflowRunManager = workflowRunManagerLazy.value
             appForegroundTracker.register(this@TaiXuApplication)
             workflowRunUiController.start()
             workflowApprovalNotifier.start(this@TaiXuApplication)

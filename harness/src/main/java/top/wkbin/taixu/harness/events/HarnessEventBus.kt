@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.events
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -118,8 +116,7 @@ sealed interface HarnessEvent {
  * 进程内事件总线。尽力投递：订阅者处理慢不阻塞运行链路，
  * 溢出时丢弃最旧事件（事件是观察侧数据，不是控制面信号）。
  */
-@Singleton
-class HarnessEventBus @Inject constructor() {
+class HarnessEventBus() {
     private val _events = MutableSharedFlow<HarnessEvent>(
         replay = 0,
         extraBufferCapacity = 256,

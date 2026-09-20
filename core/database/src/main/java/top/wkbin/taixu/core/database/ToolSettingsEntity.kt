@@ -7,8 +7,6 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Entity(tableName = "tool_settings", primaryKeys = ["distroId", "toolId"])
 data class ToolSettingsEntity(
@@ -32,8 +30,7 @@ interface ToolSettingsDao {
     suspend fun deleteByDistro(distroId: String)
 }
 
-@Singleton
-class ToolSettingsRepository @Inject constructor(
+class ToolSettingsRepository(
     private val dao: ToolSettingsDao,
 ) {
     fun autoStart(distroId: String, toolId: String): Flow<Boolean> = dao.observeAutoStart(distroId, toolId).map { it ?: false }

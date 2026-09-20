@@ -1,7 +1,6 @@
 package top.wkbin.taixu.harness
 
 import java.io.File
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +17,7 @@ import top.wkbin.taixu.harness.mcp.McpWorkspaceRecommender
 import top.wkbin.taixu.runtime.RuntimePathManager
 
 /** 前台工作区的 MCP 推荐投影；切换工作区时撤销旧扫描。 */
-class HarnessWorkspaceRecommendations @Inject constructor(
+class HarnessWorkspaceRecommendations(
     private val recommender: McpWorkspaceRecommender,
     private val servers: McpServerRepository,
     private val paths: RuntimePathManager,

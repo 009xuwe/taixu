@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness.mcp.oauth
 
 import android.net.Uri
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -24,8 +22,7 @@ import top.wkbin.taixu.core.model.McpServerConfig
  * Authorization Code + PKCE coordinator. Browser/UI integration calls begin() and callback().
  * The coordinator never returns token material to callers; only authorization URL/state/result.
  */
-@Singleton
-class McpOAuthCoordinator @Inject constructor(
+class McpOAuthCoordinator(
     private val credentials: McpOAuthCredentialRepository,
     private val client: OkHttpClient,
 ) {

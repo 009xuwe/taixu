@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.mcp
 
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -18,8 +16,7 @@ import kotlinx.coroutines.withContext
  * 只做轻量顶层扫描（不递归、限制条目数），结果供 UI 提示用户一键启用；
  * 不自动启用任何服务，启用决定权始终在用户。
  */
-@Singleton
-class McpWorkspaceRecommender @Inject constructor() {
+class McpWorkspaceRecommender() {
 
     data class Recommendation(
         val presetId: String,

@@ -1,11 +1,8 @@
 package top.wkbin.taixu.runtime
 
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /** Single source of truth for the environment visible inside Debian. */
-@Singleton
-class EnvironmentResolver @Inject constructor() {
+class EnvironmentResolver() {
     fun runtimePath(): String = listOf(
         "/root/.local/bin",
         "/opt/taixu/bin",

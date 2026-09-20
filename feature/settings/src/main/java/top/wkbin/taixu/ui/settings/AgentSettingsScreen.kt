@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import androidx.compose.foundation.background
@@ -61,7 +62,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.AgentPlugin
 import top.wkbin.taixu.harness.ContextWindowPolicy
@@ -82,7 +82,7 @@ enum class AgentSettingsCategory { EXECUTION, SUBAGENTS, SKILLS }
 fun AgentSettingsScreen(
     onBack: () -> Unit,
     category: AgentSettingsCategory = AgentSettingsCategory.EXECUTION,
-    viewModel: SettingsViewModel = hiltViewModel(),
+    viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
     val thinkingLanguage by viewModel.thinkingLanguage.collectAsStateWithLifecycle()
@@ -1154,8 +1154,9 @@ private fun ContextFoldingRatioSliderRow(
             )
         }
         Text(
-            "历史在「预算 × 比例」处开始折叠；调小可显著降低单次请求 token 量（省费用、降首字延迟）。" +
-                "100% 表示只在预算的 75% 减去输出/工具/系统预留处折叠。",
+            "历史在「预算 × 比例」处开始折叠；默认 70%，让长会话在撞满预算 / 网关之前平滑进摘要。" +
+                "调到 100% 则只在预算的 75% 减去输出/工具/系统预留处折叠。" +
+                "大窗口模型不再被 96K 封顶。走 Nginx/中转时请把 client_max_body_size 调到 20m 以上，否则可能 HTTP 413。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.approval
 
 import java.security.MessageDigest
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -26,8 +24,7 @@ import kotlinx.serialization.json.contentOrNull
  * - `mcp:` mcp__server__tool / use_capability(call) → server + tool；
  * - `exact:` 其余操作 → argumentsJson 的 SHA-256。
  */
-@Singleton
-class SessionApprovalGrants @Inject constructor() {
+class SessionApprovalGrants() {
 
     private val grants = java.util.concurrent.ConcurrentHashMap<String, LinkedHashMap<String, Long>>()
 

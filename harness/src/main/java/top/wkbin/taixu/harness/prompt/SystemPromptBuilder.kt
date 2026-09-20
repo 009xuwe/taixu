@@ -1,9 +1,6 @@
 package top.wkbin.taixu.harness.prompt
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AgentContextRepository
@@ -27,9 +24,8 @@ import top.wkbin.taixu.harness.WorkspaceFileAccess
  * 专精技能、已安装套件、长期记忆、活动任务规划、子智能体指引、工具调用协议、
  * 工作区上下文、项目说明与权限章节。
  */
-@Singleton
-class SystemPromptBuilder @Inject constructor(
-    @ApplicationContext private val context: Context,
+class SystemPromptBuilder(
+    private val context: Context,
     private val settingsDataStore: AgentPreferences,
     private val skillRepository: AgentSkillRepository,
     private val toolRepository: ToolRepository,

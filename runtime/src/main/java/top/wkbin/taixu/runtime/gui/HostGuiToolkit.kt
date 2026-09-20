@@ -7,11 +7,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -25,9 +22,8 @@ import top.wkbin.taixu.runtime.privilege.PrivilegeManager
  * 4) Privileged `/system/bin/input`
  * Paste prefers clipboard + KEYCODE_PASTE / Ctrl+V (CJK-safe).
  */
-@Singleton
-class HostGuiToolkit @Inject constructor(
-    @ApplicationContext private val context: Context,
+class HostGuiToolkit(
+    private val context: Context,
     private val privilegeManager: PrivilegeManager,
     private val accessibilityEnabler: GuiAccessibilityEnabler,
 ) {

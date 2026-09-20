@@ -2,7 +2,6 @@ package top.wkbin.taixu.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,7 +34,6 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import javax.inject.Inject
 
 data class CcSwitchUiState(
     val isInstalled: Boolean = true,
@@ -78,8 +76,7 @@ data class CcSwitchUiState(
     }
 }
 
-@HiltViewModel
-class CcSwitchViewModel @Inject constructor(
+class CcSwitchViewModel(
     private val toolManager: ToolManager,
     private val ccSwitchClient: CcSwitchClient,
     private val aiModelDao: AiModelRepository,

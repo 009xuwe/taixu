@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,7 +54,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.QuickPhrase
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -68,7 +68,7 @@ import top.wkbin.taixu.ui.components.RuntimeTopBar
 @Composable
 fun QuickPhrasesScreen(
     onBack: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel(),
+    viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val phrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
     // QuickPhrase 非 Parcelable：仅保存 id，旋转后从列表按 id 恢复编辑对象

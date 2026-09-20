@@ -1,5 +1,6 @@
 package top.wkbin.taixu.service
 
+import org.koin.android.ext.android.inject
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -20,8 +21,6 @@ import top.wkbin.taixu.R
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.model.SessionRunState
 import top.wkbin.taixu.harness.HarnessLoop
-import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,11 +40,10 @@ import kotlin.time.Duration.Companion.milliseconds
  * 为每个并行运行的 Agent 会话分发专属的系统通知（标题含会话名与当前执行动作），
  * 支持独立点击【停止】以及执行完毕后的【回复】续跑。
  */
-@AndroidEntryPoint
 class AgentForegroundService : Service() {
 
-    @Inject lateinit var harnessLoop: HarnessLoop
-    @Inject lateinit var sessionDao: HarnessSessionRepository
+    val harnessLoop: HarnessLoop by inject()
+    val sessionDao: HarnessSessionRepository by inject()
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collecting = false

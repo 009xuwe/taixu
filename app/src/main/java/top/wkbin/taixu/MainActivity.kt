@@ -1,5 +1,7 @@
 package top.wkbin.taixu
 
+import org.koin.android.ext.android.inject
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.onboarding.OnboardingScreen
 import top.wkbin.taixu.ui.onboarding.OnboardingViewModel
@@ -49,10 +51,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
-import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.datastore.AppearancePreferences
@@ -66,35 +66,26 @@ import top.wkbin.taixu.ui.theme.TaiXuTheme
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
-import javax.inject.Inject
 import top.wkbin.taixu.core.common.navigation.AppNavigationTarget
 import top.wkbin.taixu.core.common.navigation.GlobalNavigationBus
 import top.wkbin.taixu.harness.mcp.oauth.McpOAuthCoordinator
 import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.service.adb.AdbNotificationManager
 
-@AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
-    @Inject
-    lateinit var settingsDataStore: AppearancePreferences
+    val settingsDataStore: AppearancePreferences by inject()
 
-    @Inject
-    lateinit var appUpdateManager: AppUpdateManager
+    val appUpdateManager: AppUpdateManager by inject()
 
-    @Inject
-    lateinit var runtimeServiceController: RuntimeServiceController
+    val runtimeServiceController: RuntimeServiceController by inject()
 
-    @Inject
-    lateinit var globalNavigationBus: GlobalNavigationBus
+    val globalNavigationBus: GlobalNavigationBus by inject()
 
-    @Inject
-    lateinit var adbNotificationManager: AdbNotificationManager
+    val adbNotificationManager: AdbNotificationManager by inject()
 
-    @Inject
-    lateinit var mcpOAuthCoordinator: McpOAuthCoordinator
+    val mcpOAuthCoordinator: McpOAuthCoordinator by inject()
 
-    @Inject
-    lateinit var mcpManager: McpManager
+    val mcpManager: McpManager by inject()
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -141,7 +132,7 @@ class MainActivity : AppCompatActivity() {
                     darkTheme = isDark,
                     backgroundUri = chengmingBackgroundUri,
                 ) {
-                val onboardingViewModel: OnboardingViewModel = hiltViewModel()
+                val onboardingViewModel: OnboardingViewModel = koinViewModel()
                 val onboarding by onboardingViewModel.status.collectAsStateWithLifecycle()
 
                 // onboarding 偏好读盘完成后让 SplashScreen 退场；Runtime 恢复已在后台继续，不阻塞首帧。

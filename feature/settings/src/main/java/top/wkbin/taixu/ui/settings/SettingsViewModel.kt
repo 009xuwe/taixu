@@ -35,8 +35,6 @@ import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.proot.QemuCompatibilityLayout
 import top.wkbin.taixu.runtime.privilege.PhantomProcessLimitStatus
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
-import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -61,8 +59,7 @@ import java.io.BufferedOutputStream
 import top.wkbin.taixu.core.model.AiModelProfileExport
 
 
-@HiltViewModel
-class SettingsViewModel @Inject constructor(
+class SettingsViewModel(
     private val application: Application,
     private val logger: top.wkbin.taixu.core.common.logging.AppLogger,
     private val appearancePreferences: AppearancePreferences,
@@ -718,7 +715,8 @@ class SettingsViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
 
     /**
-     * 历史折叠线比例（%，默认 100）：历史在预算的百分之几处开始折叠。
+     * 历史折叠线比例（%，默认 70）：历史在预算的百分之几处开始折叠。
+     * 低于 75% 才会比引擎输入预留更早摘要。
      */
     val contextFoldingRatioPercent: StateFlow<Int> = agentPreferences.contextFoldingRatioPercent
         .stateIn(viewModelScope, SharingStarted.Eagerly, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)

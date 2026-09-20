@@ -6,9 +6,6 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,9 +45,8 @@ data class MobileModelPreset(
     val sha256: String? = null,
 )
 
-@HiltViewModel
-class LocalLlmViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class LocalLlmViewModel(
+    private val context: Context,
     private val localLlmManager: LocalLlmManager,
     private val toolManager: ToolManager,
     private val linuxRuntime: LinuxRuntime,

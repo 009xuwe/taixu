@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -48,7 +49,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.runtime.StorageCategory
 import top.wkbin.taixu.runtime.StorageEntry
@@ -123,7 +123,7 @@ private fun StorageScanNotice(warnings: List<String>) {
 @Composable
 fun StorageUsageScreen(
     onBack: () -> Unit,
-    viewModel: StorageUsageViewModel = hiltViewModel(),
+    viewModel: StorageUsageViewModel = koinViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val usage = uiState.usage

@@ -1,8 +1,6 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
-    alias(libs.plugins.hilt)
 }
 android {
     namespace = "top.wkbin.taixu.harness"
@@ -42,8 +40,7 @@ dependencies {
     implementation(project(":core:network"))
     implementation(project(":runtime"))
     implementation(project(":tools"))
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
+    implementation(libs.koin.core)
     implementation(libs.okhttp)
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.cio)

@@ -2,7 +2,6 @@ package top.wkbin.taixu.ui.settings.stats
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,7 +10,6 @@ import top.wkbin.taixu.core.model.StatsDateRange
 import top.wkbin.taixu.core.model.StatsDateRangePreset
 import top.wkbin.taixu.core.model.StatsSnapshot
 import java.time.LocalDate
-import javax.inject.Inject
 
 data class StatsUiState(
     val range: StatsDateRange = StatsDateRange.allTime(),
@@ -20,8 +18,7 @@ data class StatsUiState(
     val error: String? = null,
 )
 
-@HiltViewModel
-class StatsViewModel @Inject constructor(
+class StatsViewModel(
     private val statsRepository: StatsRepository,
 ) : ViewModel() {
 

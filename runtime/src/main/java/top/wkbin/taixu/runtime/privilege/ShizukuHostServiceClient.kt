@@ -4,9 +4,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
 import android.os.IBinder
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -17,9 +14,8 @@ import org.json.JSONObject
 import rikka.shizuku.Shizuku
 
 /** 应用进程侧的 Shizuku UserService 连接与 AIDL 调用器。 */
-@Singleton
-class ShizukuHostServiceClient @Inject constructor(
-    @ApplicationContext context: Context,
+class ShizukuHostServiceClient(
+    context: Context,
 ) {
     private val serviceArgs = Shizuku.UserServiceArgs(
         ComponentName(context.packageName, ShizukuHostUserService::class.java.name),

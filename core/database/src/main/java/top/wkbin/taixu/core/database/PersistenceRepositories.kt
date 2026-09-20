@@ -1,11 +1,5 @@
 package top.wkbin.taixu.core.database
 
-import dagger.Binds
-import dagger.Module
-import dagger.hilt.InstallIn
-import dagger.hilt.components.SingletonComponent
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import top.wkbin.taixu.core.model.QuickPhrase
@@ -76,8 +70,7 @@ interface BuildScriptRepository {
     suspend fun ensureBuiltinScripts(androidScript: String = "", flutterScript: String = "")
 }
 
-@Singleton
-class RoomBuildScriptRepository @Inject constructor(
+class RoomBuildScriptRepository(
     private val dao: BuildScriptDao,
 ) : BuildScriptRepository {
     override fun observeScripts() = dao.observeScripts()
@@ -142,8 +135,7 @@ class RoomBuildScriptRepository @Inject constructor(
     }
 }
 
-@Singleton
-class RoomAndroidAppRepository @Inject constructor(private val dao: AndroidAppDao) : AndroidAppRepository {
+class RoomAndroidAppRepository(private val dao: AndroidAppDao) : AndroidAppRepository {
     override fun observeAll() = dao.observeAll()
     override suspend fun findByPackageName(packageName: String) = dao.findByPackageName(packageName)
     override suspend fun search(query: String, limit: Int) = dao.search(query, limit)
@@ -176,8 +168,7 @@ interface AgentContextRepository {
     suspend fun clearScratchpads(sessionId: String)
 }
 
-@Singleton
-class RoomAiModelRepository @Inject constructor(private val dao: AiModelDao) : AiModelRepository {
+class RoomAiModelRepository(private val dao: AiModelDao) : AiModelRepository {
     override fun observeAll() = dao.observeAll()
     override suspend fun findById(id: String) = dao.findById(id)
     override suspend fun activeModel() = dao.activeModel()
@@ -188,8 +179,7 @@ class RoomAiModelRepository @Inject constructor(private val dao: AiModelDao) : A
     override suspend fun delete(id: String) = dao.delete(id)
 }
 
-@Singleton
-class RoomHarnessSessionRepository @Inject constructor(private val dao: HarnessSessionDao) : HarnessSessionRepository {
+class RoomHarnessSessionRepository(private val dao: HarnessSessionDao) : HarnessSessionRepository {
     override fun observeAll() = dao.observeAll()
     override suspend fun findById(id: String) = dao.findById(id)
     override suspend fun upsert(session: HarnessSessionEntity) = dao.upsert(session)
@@ -204,8 +194,7 @@ class RoomHarnessSessionRepository @Inject constructor(private val dao: HarnessS
     override suspend fun listAll() = dao.listAll()
 }
 
-@Singleton
-class RoomWorkspaceRepository @Inject constructor(private val dao: WorkspaceDao) : WorkspaceRepository {
+class RoomWorkspaceRepository(private val dao: WorkspaceDao) : WorkspaceRepository {
     override fun observeAll() = dao.observeAll()
     override suspend fun listAll() = dao.listAll()
     override suspend fun findByName(name: String) = dao.findByName(name)
@@ -213,8 +202,7 @@ class RoomWorkspaceRepository @Inject constructor(private val dao: WorkspaceDao)
     override suspend fun delete(name: String) = dao.delete(name)
 }
 
-@Singleton
-class RoomTerminalSessionRepository @Inject constructor(private val dao: TerminalSessionDao) : TerminalSessionRepository {
+class RoomTerminalSessionRepository(private val dao: TerminalSessionDao) : TerminalSessionRepository {
     override fun observeAll() = dao.observeAll()
     override suspend fun listAll() = dao.listAll()
     override suspend fun nextOrder() = dao.nextOrder()
@@ -223,8 +211,7 @@ class RoomTerminalSessionRepository @Inject constructor(private val dao: Termina
     override suspend fun deleteAll() = dao.deleteAll()
 }
 
-@Singleton
-class RoomAgentContextRepository @Inject constructor(private val dao: AgentContextDao) : AgentContextRepository {
+class RoomAgentContextRepository(private val dao: AgentContextDao) : AgentContextRepository {
     override suspend fun saveMemory(memory: AgentMemoryEntity) = dao.saveMemory(memory)
     override suspend fun getMemoryById(id: String) = dao.getMemoryById(id)
     override suspend fun getMemoryByKey(key: String, scope: String, ownerId: String) = dao.getMemoryByKey(key, scope, ownerId)
@@ -265,8 +252,7 @@ interface QuickPhraseRepository {
     suspend fun ensureInitialized()
 }
 
-@Singleton
-class RoomQuickPhraseRepository @Inject constructor(
+class RoomQuickPhraseRepository(
     private val dao: QuickPhraseDao,
 ) : QuickPhraseRepository {
     override fun observeAll(): Flow<List<QuickPhrase>> =
@@ -456,18 +442,4 @@ class RoomQuickPhraseRepository @Inject constructor(
             ),
         )
     }
-}
-
-@Module
-@InstallIn(SingletonComponent::class)
-abstract class PersistenceRepositoryModule {
-    @Binds abstract fun bindAiModelRepository(impl: RoomAiModelRepository): AiModelRepository
-    @Binds abstract fun bindHarnessSessionRepository(impl: RoomHarnessSessionRepository): HarnessSessionRepository
-    @Binds abstract fun bindWorkspaceRepository(impl: RoomWorkspaceRepository): WorkspaceRepository
-    @Binds abstract fun bindTerminalSessionRepository(impl: RoomTerminalSessionRepository): TerminalSessionRepository
-    @Binds abstract fun bindAgentContextRepository(impl: RoomAgentContextRepository): AgentContextRepository
-    @Binds abstract fun bindAndroidAppRepository(impl: RoomAndroidAppRepository): AndroidAppRepository
-    @Binds abstract fun bindQuickPhraseRepository(impl: RoomQuickPhraseRepository): QuickPhraseRepository
-    @Binds abstract fun bindHarnessRuntimeRepository(impl: RoomHarnessRuntimeRepository): HarnessRuntimeRepository
-    @Binds abstract fun bindBuildScriptRepository(impl: RoomBuildScriptRepository): BuildScriptRepository
 }

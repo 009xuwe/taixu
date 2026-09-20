@@ -2,8 +2,6 @@ package top.wkbin.taixu.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -14,8 +12,7 @@ import top.wkbin.taixu.core.database.AndroidAppEntity
 import top.wkbin.taixu.core.database.AndroidAppRepository
 import top.wkbin.taixu.runtime.apps.AndroidAppManager
 
-@HiltViewModel
-class AppManagementViewModel @Inject constructor(
+class AppManagementViewModel(
     repository: AndroidAppRepository,
     private val appManager: AndroidAppManager,
 ) : ViewModel() {

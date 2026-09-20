@@ -52,3 +52,11 @@ adb shell am start -n top.wkbin.taixu/.MainActivity
 # 3. 实时过滤太墟运行时与智能体核心日志
 adb logcat -s TaiXu:V HarnessLoop:V ProotProcess:V
 ```
+
+## 4. Koin 依赖图回归
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "top.wkbin.taixu.di.*" --console=plain
+```
+
+修改依赖注册后同时运行完整单元测试和 `:app:assembleDebug`。依赖注入已迁移为 Koin DSL。

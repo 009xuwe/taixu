@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -18,15 +17,12 @@ import okhttp3.Request
 import top.wkbin.taixu.core.model.AppUpdateInfo
 import java.io.File
 import java.io.FileOutputStream
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * 太墟 · 应用版本更新管理器 (GitHub Releases API)
  */
-@Singleton
-class AppUpdateManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class AppUpdateManager(
+    private val context: Context,
     private val httpClient: OkHttpClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }

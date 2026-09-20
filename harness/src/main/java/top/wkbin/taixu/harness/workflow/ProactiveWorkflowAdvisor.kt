@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.workflow
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -44,8 +42,7 @@ sealed interface WorkflowSignal {
     }
 }
 
-@Singleton
-class WorkflowSignalBus @Inject constructor() {
+class WorkflowSignalBus() {
     private val mutableEvents = MutableSharedFlow<WorkflowSignal>(
         extraBufferCapacity = 32,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -66,8 +63,7 @@ data class ProactiveWorkflowSuggestion(
     val createdAt: Long,
 )
 
-@Singleton
-class ProactiveWorkflowAdvisor @Inject constructor(
+class ProactiveWorkflowAdvisor(
     private val signalBus: WorkflowSignalBus,
     private val workflows: WorkflowRepository,
 ) {

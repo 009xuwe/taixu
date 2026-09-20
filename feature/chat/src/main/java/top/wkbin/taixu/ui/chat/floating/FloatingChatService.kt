@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.chat.floating
 
+import org.koin.android.ext.android.inject
 import android.animation.ValueAnimator
 import android.app.Service
 import android.content.Context
@@ -18,7 +19,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,21 +28,17 @@ import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.ui.theme.TaiXuTheme
-import javax.inject.Inject
 import kotlin.math.roundToInt
 
 /**
  * 智枢 AI 桌面悬浮小窗后台服务。
  * 管理 WindowManager 智枢悬浮图层的创建、更新、对话发送与边缘自动吸附交互（纯净无底色遮罩）。
  */
-@AndroidEntryPoint
 class FloatingChatService : Service() {
 
-    @Inject
-    lateinit var harnessLoop: HarnessLoop
+    val harnessLoop: HarnessLoop by inject()
 
-    @Inject
-    lateinit var sessionDao: HarnessSessionRepository
+    val sessionDao: HarnessSessionRepository by inject()
 
     private var windowManager: WindowManager? = null
     private var composeView: ComposeView? = null

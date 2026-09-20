@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.workspace
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
@@ -41,7 +42,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.feature.workspace.R
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -57,7 +57,7 @@ import top.wkbin.taixu.core.database.BuildScriptEntity
 import top.wkbin.taixu.runtime.ProjectType
 
 @Composable
-fun WorkshopSettingsScreen(onBack: () -> Unit, onOpenEnvironment: () -> Unit, onOpenSigning: () -> Unit = {}, onEditScript: (WorkshopScriptType) -> Unit = {}, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
+fun WorkshopSettingsScreen(onBack: () -> Unit, onOpenEnvironment: () -> Unit, onOpenSigning: () -> Unit = {}, onEditScript: (WorkshopScriptType) -> Unit = {}, viewModel: WorkshopSettingsViewModel = koinViewModel()) {
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val scripts by viewModel.managedScripts.collectAsStateWithLifecycle()
     val projects by viewModel.projects.collectAsStateWithLifecycle()
@@ -245,7 +245,7 @@ private fun ManagedScriptEditorDialog(script: BuildScriptEntity?, onDismiss: () 
 }
 
 @Composable
-fun WorkshopEnvironmentSettingsScreen(onBack: () -> Unit, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
+fun WorkshopEnvironmentSettingsScreen(onBack: () -> Unit, viewModel: WorkshopSettingsViewModel = koinViewModel()) {
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val detected by viewModel.detectedToolchains.collectAsStateWithLifecycle()
 
@@ -423,7 +423,7 @@ private fun ToolchainPathDropdownField(
 }
 
 @Composable
-fun WorkshopScriptEditorScreen(type: WorkshopScriptType, onBack: () -> Unit, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
+fun WorkshopScriptEditorScreen(type: WorkshopScriptType, onBack: () -> Unit, viewModel: WorkshopSettingsViewModel = koinViewModel()) {
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val customScripts by viewModel.customScripts.collectAsStateWithLifecycle()
     val initialContent = remember(type, draft) { viewModel.scriptContent(type) }

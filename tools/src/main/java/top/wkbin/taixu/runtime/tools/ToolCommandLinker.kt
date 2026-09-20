@@ -3,12 +3,9 @@ package top.wkbin.taixu.runtime.tools
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.ShellCommand
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /** Creates stable `/opt/taixu/bin` shims without exposing arbitrary commands. */
-@Singleton
-class ToolCommandLinker @Inject constructor(
+class ToolCommandLinker(
     private val linuxRuntime: LinuxRuntime,
 ) {
     suspend fun link(

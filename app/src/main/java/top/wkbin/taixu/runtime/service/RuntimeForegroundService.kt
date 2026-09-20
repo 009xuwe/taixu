@@ -1,5 +1,6 @@
 package top.wkbin.taixu.runtime.service
 
+import org.koin.android.ext.android.inject
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -15,20 +16,17 @@ import top.wkbin.taixu.R
 import top.wkbin.taixu.runtime.shell.ProcessRegistry
 import top.wkbin.taixu.runtime.SshServiceManager
 import top.wkbin.taixu.runtime.FtpServiceManager
-import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 import kotlinx.coroutines.launch
 
-@AndroidEntryPoint
 class RuntimeForegroundService : Service() {
-    @Inject lateinit var processRegistry: ProcessRegistry
-    @Inject lateinit var localServiceLauncher: LocalServiceLauncher
-    @Inject lateinit var sshServiceManager: SshServiceManager
-    @Inject lateinit var ftpServiceManager: FtpServiceManager
+    val processRegistry: ProcessRegistry by inject()
+    val localServiceLauncher: LocalServiceLauncher by inject()
+    val sshServiceManager: SshServiceManager by inject()
+    val ftpServiceManager: FtpServiceManager by inject()
     /** 停止后的沙箱进程清理作用域：独立于服务生命周期，服务销毁后也要跑完。 */
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

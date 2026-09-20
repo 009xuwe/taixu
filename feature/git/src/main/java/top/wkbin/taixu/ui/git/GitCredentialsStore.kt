@@ -1,10 +1,7 @@
 package top.wkbin.taixu.ui.git
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -20,9 +17,8 @@ import top.wkbin.taixu.core.security.SecretManager
  * - Token 经 SecretManager（AndroidKeyStore AES/GCM）加密后落盘 JSON，绝不明文存储；
  * - 文件为 App 私有目录，仅本应用可读。
  */
-@Singleton
-class GitCredentialsStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+class GitCredentialsStore(
+    private val context: Context,
     private val secretManager: SecretManager,
 ) {
     @Serializable

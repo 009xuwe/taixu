@@ -1,7 +1,5 @@
 package top.wkbin.taixu.core.tools
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -12,8 +10,7 @@ import kotlinx.serialization.json.JsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-@Singleton
-class AgentModelDiscovery @Inject constructor(
+class AgentModelDiscovery(
     private val http: OkHttpClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true }

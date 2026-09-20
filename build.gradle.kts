@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.ksp) apply false
-    alias(libs.plugins.hilt) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.android.test) apply false
     alias(libs.plugins.androidx.baselineprofile) apply false
@@ -47,7 +46,7 @@ tasks.register("architectureCheck") {
     doLast {
         val violations = mutableListOf<String>()
         val modelBuild = file("core/model/build.gradle.kts").readText()
-        listOf("android.library", "hilt", "androidx.core").forEach { forbidden ->
+        listOf("android.library", "koin.android", "androidx.core").forEach { forbidden ->
             if (forbidden in modelBuild) violations += "core:model must stay platform-free: $forbidden"
         }
         if ("project(\":core:security\")" in file("core/common/build.gradle.kts").readText()) {

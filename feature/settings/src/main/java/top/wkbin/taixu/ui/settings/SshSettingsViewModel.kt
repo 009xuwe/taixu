@@ -4,11 +4,8 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import dagger.hilt.android.qualifiers.ApplicationContext
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,9 +34,8 @@ data class SshSettingsUiState(
         get() = "ssh -p $port root@$connectionHost"
 }
 
-@HiltViewModel
-class SshSettingsViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class SshSettingsViewModel(
+    private val context: Context,
     private val linuxRuntime: LinuxRuntime,
     private val preferences: SshPreferences,
     private val manager: SshServiceManager,

@@ -6,8 +6,6 @@ import top.wkbin.taixu.core.network.FileDownloader
 import top.wkbin.taixu.core.network.ChecksumVerifier
 import top.wkbin.taixu.runtime.RuntimePathManager
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -28,8 +26,7 @@ data class FlutterSdkArchive(
  * checksum verification; the archive is placed in the bind-mounted /opt/taixu
  * tree so the script can extract it without downloading again.
  */
-@Singleton
-class FlutterSdkDownloader @Inject constructor(
+class FlutterSdkDownloader(
     private val fileDownloader: FileDownloader,
     private val checksumVerifier: ChecksumVerifier,
     private val pathManager: RuntimePathManager,

@@ -3,10 +3,7 @@ package top.wkbin.taixu.core.common.logging
 import android.util.Log
 import android.content.Context
 import android.os.Environment
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,9 +14,8 @@ import kotlinx.coroutines.launch
  * 便于用户直接从文件管理器取走日志。未授予"所有文件访问"或公共目录写入失败时，
  * 回退到应用私有 files/logs 目录，保证日志永不静默丢失。
  */
-@Singleton
-class AppLogger @Inject constructor(
-    @ApplicationContext private val context: Context,
+class AppLogger(
+    private val context: Context,
     private val secretRedactor: SensitiveDataRedactor,
 ) {
 

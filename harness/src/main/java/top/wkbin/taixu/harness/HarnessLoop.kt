@@ -7,8 +7,6 @@ import top.wkbin.taixu.core.model.SessionRunState
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,8 +57,7 @@ private sealed interface RunResult {
  * 支持多会话后台并行运行、实时状态机追踪（就绪/运行中/完成/失败）、
  * 独立的流式消息队列与前台服务多通知分发。
  */
-@Singleton
-class HarnessLoop @Inject constructor(
+class HarnessLoop(
     private val workspaceRecommendations: HarnessWorkspaceRecommendations,
     private val providerRunner: HarnessProviderRunner,
     private val toolRoundRunner: HarnessToolRoundRunner,

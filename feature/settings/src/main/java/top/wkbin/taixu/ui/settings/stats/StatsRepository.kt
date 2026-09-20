@@ -16,11 +16,8 @@ import top.wkbin.taixu.core.model.StatsTokenBucket
 import top.wkbin.taixu.core.model.StatsTrendDay
 import java.time.LocalDate
 import java.time.ZoneId
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class StatsRepository @Inject constructor(
+class StatsRepository(
     private val runtimeRepository: HarnessRuntimeRepository,
     private val sessionRepository: HarnessSessionRepository,
     private val aiModelRepository: AiModelRepository,

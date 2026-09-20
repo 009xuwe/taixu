@@ -4,15 +4,12 @@ import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.AiModelRepository
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * AI 模型档案的统一写入入口：负责 secretRef 生成、Key 持久化、活跃档案维护。
  * Settings / Chat / Onboarding 的模型保存与删除都应经由本类，避免各处自行拼装实体。
  */
-@Singleton
-class AiProfileWriter @Inject constructor(
+class AiProfileWriter(
     private val aiModelDao: AiModelRepository,
     private val providerRepository: ProviderRepository,
 ) {

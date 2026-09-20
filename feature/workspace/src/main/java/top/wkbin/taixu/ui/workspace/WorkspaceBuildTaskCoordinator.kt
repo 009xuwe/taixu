@@ -1,10 +1,7 @@
 package top.wkbin.taixu.ui.workspace
 
-import javax.inject.Inject
-import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import top.wkbin.taixu.feature.workspace.R
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,9 +25,8 @@ data class WorkspaceBuildTaskState(
 )
 
 /** Keeps a workspace build alive while the workspace destination is recreated. */
-@Singleton
-class WorkspaceBuildTaskCoordinator @Inject constructor(
-    @ApplicationContext private val context: Context,
+class WorkspaceBuildTaskCoordinator(
+    private val context: Context,
     private val runner: WorkspaceBuildRunner,
     private val notifier: ToolNotificationNotifier,
     private val backgroundTaskRegistry: BackgroundTaskRegistry,

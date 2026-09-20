@@ -14,8 +14,6 @@ import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.BuiltinSkills
 import java.io.File
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Entity(tableName = "agent_skills")
 data class AgentSkillEntity(
@@ -56,8 +54,7 @@ data class SkillScanRoot(
     val guestPrefix: String,
 )
 
-@Singleton
-class AgentSkillRepository @Inject constructor(
+class AgentSkillRepository(
     private val dao: AgentSkillDao,
 ) {
     val allSkills: Flow<List<AgentSkill>> = dao.observeAll().map { rows -> rows.map(AgentSkillEntity::toModel) }

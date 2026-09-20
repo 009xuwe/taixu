@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.workspace
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -33,7 +34,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -55,7 +55,7 @@ import androidx.compose.ui.res.stringResource
  * Release 构建时在构建类型选择弹窗中选用这里登记的签名。
  */
 @Composable
-fun WorkshopSigningScreen(onBack: () -> Unit, viewModel: WorkshopSigningViewModel = hiltViewModel()) {
+fun WorkshopSigningScreen(onBack: () -> Unit, viewModel: WorkshopSigningViewModel = koinViewModel()) {
     val keystores by viewModel.keystores.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()

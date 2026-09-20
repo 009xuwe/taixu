@@ -6,18 +6,14 @@ import android.os.Build
 import android.os.Environment
 import android.os.Process
 import android.provider.MediaStore
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /** Stores redacted crash reports locally; no network upload is performed. */
-@Singleton
-class CrashReporter @Inject constructor(
-    @ApplicationContext private val context: Context,
+class CrashReporter(
+    private val context: Context,
     private val secretRedactor: SensitiveDataRedactor,
 ) {
     fun install() {

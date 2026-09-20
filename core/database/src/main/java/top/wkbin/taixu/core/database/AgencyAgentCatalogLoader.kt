@@ -1,9 +1,6 @@
 package top.wkbin.taixu.core.database
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -44,9 +41,8 @@ internal data class AgencyAgentCatalog(
 )
 
 /** Loads the complete, offline Agency Agents catalog bundled with the APK. */
-@Singleton
-class AgencyAgentCatalogLoader @Inject constructor(
-    @ApplicationContext private val context: Context,
+class AgencyAgentCatalogLoader(
+    private val context: Context,
     private val json: Json,
 ) {
     private val loadMutex = Mutex()

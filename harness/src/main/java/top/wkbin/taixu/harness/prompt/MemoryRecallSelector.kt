@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.prompt
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlin.math.ln
 import top.wkbin.taixu.core.database.AgentContextRepository
 import top.wkbin.taixu.core.database.AgentMemoryEntity
@@ -21,8 +19,7 @@ import top.wkbin.taixu.core.database.AgentMemoryEntity
  * 注入」方案的本质区别：system prompt 任何逐轮变化都会击穿其后全部对话的缓存，而追加在
  * user 轮上的后缀只影响该轮之后的新增内容（本来就未缓存）。
  */
-@Singleton
-class MemoryRecallSelector @Inject constructor(
+class MemoryRecallSelector(
     private val agentContextDao: AgentContextRepository,
 ) {
     /**

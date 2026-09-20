@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.workflow
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -44,7 +45,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.workflow.NodeRunStatus
 import top.wkbin.taixu.core.database.WorkflowScheduleEntity
@@ -67,7 +67,7 @@ fun WorkflowScreen(
     initialVariables: Map<String, String> = emptyMap(),
     initialExecutionId: String? = null,
     onBack: () -> Unit,
-    viewModel: WorkflowViewModel = hiltViewModel(),
+    viewModel: WorkflowViewModel = koinViewModel(),
 ) {
     val definitions by viewModel.definitions.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()

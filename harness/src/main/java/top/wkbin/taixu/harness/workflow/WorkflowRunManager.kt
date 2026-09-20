@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness.workflow
 
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,8 +32,7 @@ import top.wkbin.taixu.runtime.LinuxRuntime
  * - 运行随推进持续 upsert RUNNING 面包屑（进程被杀后历史可对账），终态写最终快照；
  * - [reconcileInterruptedRuns] 在应用启动时把进程死亡遗留的非终态行标为 CANCELLED。
  */
-@Singleton
-class WorkflowRunManager @Inject constructor(
+class WorkflowRunManager(
     private val scheduler: WorkflowScheduler,
     private val repository: WorkflowRepository,
     private val linuxRuntime: LinuxRuntime,

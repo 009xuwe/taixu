@@ -2,12 +2,9 @@ package top.wkbin.taixu.core.tools
 
 import top.wkbin.taixu.core.database.InstallTaskDao
 import top.wkbin.taixu.core.database.InstallTaskEntity
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /** Persistence boundary for durable install transactions. */
-@Singleton
-class InstallTaskRepository @Inject constructor(
+class InstallTaskRepository(
     private val dao: InstallTaskDao,
 ) {
     suspend fun upsert(task: InstallTaskEntity) = dao.upsert(task)

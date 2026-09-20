@@ -4,16 +4,13 @@ import android.util.Log
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import java.util.concurrent.atomic.AtomicReference
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * Routes Termux [TerminalSessionClient] callbacks to the active UI bridge
  * (Compose [TerminalView] host). Sessions are created in [TerminalSessionManager]
  * before a view exists, so the delegate is attached later by the screen.
  */
-@Singleton
-class TerminalSessionClientRouter @Inject constructor() : TerminalSessionClient {
+class TerminalSessionClientRouter() : TerminalSessionClient {
     private val delegate = AtomicReference<TerminalSessionClient?>(null)
 
     fun attach(client: TerminalSessionClient?) {

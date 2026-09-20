@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -48,7 +49,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.SubcomposeAsyncImage
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -74,7 +74,7 @@ private val SponsorAccent: Color = Color(0xFFFF4D6D)
 @Composable
 fun SponsorScreen(
     onBack: () -> Unit,
-    viewModel: SponsorListViewModel = hiltViewModel(),
+    viewModel: SponsorListViewModel = koinViewModel(),
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val sponsorState by viewModel.state.collectAsStateWithLifecycle()

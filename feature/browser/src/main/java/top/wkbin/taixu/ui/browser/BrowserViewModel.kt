@@ -3,8 +3,6 @@ package top.wkbin.taixu.ui.browser
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import android.webkit.WebView
-import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,8 +27,7 @@ import top.wkbin.taixu.runtime.browser.cdp.DebugPausedState
 import top.wkbin.taixu.runtime.browser.hook.HookHitRecord
 import top.wkbin.taixu.ui.browser.snapshot.SnapshotSheetState
 
-@HiltViewModel
-class BrowserViewModel @Inject constructor(
+class BrowserViewModel(
     val registry: BrowserRegistry,
     val eventBus: BrowserEventBus,
     private val browserPreferences: BrowserPreferences,

@@ -5,8 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -26,7 +24,7 @@ import top.wkbin.taixu.runtime.gui.HostGuiController
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 
-class ConditionNodeExecutor @Inject constructor() : NodeExecutor {
+class ConditionNodeExecutor() : NodeExecutor {
     override val supportedTypes = setOf(WorkflowNodeType.CONDITION_BRANCH)
 
     override suspend fun execute(
@@ -60,7 +58,7 @@ class ConditionNodeExecutor @Inject constructor() : NodeExecutor {
     }
 }
 
-class DelayNodeExecutor @Inject constructor() : NodeExecutor {
+class DelayNodeExecutor() : NodeExecutor {
     override val supportedTypes = setOf(WorkflowNodeType.DELAY)
 
     override suspend fun execute(
@@ -82,7 +80,7 @@ class DelayNodeExecutor @Inject constructor() : NodeExecutor {
     }
 }
 
-class SetVariableNodeExecutor @Inject constructor() : NodeExecutor {
+class SetVariableNodeExecutor() : NodeExecutor {
     override val supportedTypes = setOf(WorkflowNodeType.SET_VARIABLE)
 
     override suspend fun execute(
@@ -124,8 +122,8 @@ class SetVariableNodeExecutor @Inject constructor() : NodeExecutor {
     }
 }
 
-class HostActionNodeExecutor @Inject constructor(
-    @ApplicationContext private val appContext: Context,
+class HostActionNodeExecutor(
+    private val appContext: Context,
     private val gui: HostGuiController,
     private val privilegeManager: PrivilegeManager,
     private val linuxRuntime: LinuxRuntime,

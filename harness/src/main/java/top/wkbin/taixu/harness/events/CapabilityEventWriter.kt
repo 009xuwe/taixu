@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.events
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
@@ -16,8 +14,7 @@ import top.wkbin.taixu.harness.mcp.McpManager
  * @提及 能力事件写入器：当用户消息提及技能或 MCP 服务时，
  * 在会话内插入一条幂等的 [CapabilityEvent] 展示卡片（同一用户消息下不重复）。
  */
-@Singleton
-class CapabilityEventWriter @Inject constructor(
+class CapabilityEventWriter(
     private val port: LiveMessagePort,
     private val skillRepository: AgentSkillRepository,
     private val mcpServerRepository: McpServerRepository,

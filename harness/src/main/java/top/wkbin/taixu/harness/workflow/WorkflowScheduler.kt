@@ -3,8 +3,6 @@ package top.wkbin.taixu.harness.workflow
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -43,8 +41,7 @@ class WorkflowRunHandle internal constructor(
         decisionAction(nodeId, WorkflowApprovalDecision(approved, variables))
 }
 
-@Singleton
-class WorkflowScheduler @Inject constructor(
+class WorkflowScheduler(
     executors: Set<@JvmSuppressWildcards NodeExecutor>,
     private val approvalBroker: WorkflowApprovalBroker,
 ) {

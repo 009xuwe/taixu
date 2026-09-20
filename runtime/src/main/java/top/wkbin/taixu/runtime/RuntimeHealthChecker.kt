@@ -4,11 +4,8 @@ import top.wkbin.taixu.runtime.proot.ProotCommandBuilder
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.ShellExecutor
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class RuntimeHealthChecker @Inject constructor(
+class RuntimeHealthChecker(
     private val pathManager: RuntimePathManager,
     private val prootCommandBuilder: ProotCommandBuilder,
     private val shellExecutor: ShellExecutor,

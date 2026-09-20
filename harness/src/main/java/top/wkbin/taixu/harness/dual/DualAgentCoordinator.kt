@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.dual
 
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -33,8 +31,7 @@ import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
  * 5. 单步超时熔断：移动端单步限制 120 秒超时熔断，杜绝进程挂死；
  * 6. 事件总线透出：通过 HarnessEventBus 广播步骤状态变更，赋能 UI 步骤流实时呈现。
  */
-@Singleton
-class DualAgentCoordinator @Inject constructor(
+class DualAgentCoordinator(
     private val providerClient: ProviderClient,
     private val laneRunner: SubagentLaneRunner,
     private val promptBuilder: PlannerPromptBuilder,

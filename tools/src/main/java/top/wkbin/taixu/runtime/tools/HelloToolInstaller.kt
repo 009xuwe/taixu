@@ -10,14 +10,11 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
-@Singleton
-class HelloToolInstaller @Inject constructor(
+class HelloToolInstaller(
     private val linuxRuntime: LinuxRuntime,
     private val pathManager: RuntimePathManager,
 ) : ToolRuntimeAdapter {

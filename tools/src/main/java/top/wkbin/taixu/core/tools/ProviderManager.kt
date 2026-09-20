@@ -1,15 +1,11 @@
 package top.wkbin.taixu.core.tools
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-@Singleton
 open class ProviderManager {
     private val providerRepository: ProviderRepository?
 
-    @Inject
     constructor(providerRepository: ProviderRepository) {
         this.providerRepository = providerRepository
     }

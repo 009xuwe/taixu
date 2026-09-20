@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.approval
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.harness.ApprovalPolicyEngine
@@ -26,8 +24,7 @@ data class ApprovalVerdict(
     val isInvalid: Boolean get() = invalidationReason != null
 }
 
-@Singleton
-class ApprovalResumePolicy @Inject constructor(
+class ApprovalResumePolicy(
     private val sessionDao: HarnessSessionRepository,
     private val operationCoordinator: OperationCoordinator,
 ) {

@@ -5,7 +5,6 @@ import android.content.ClipData
 import android.content.Intent
 import android.os.Environment
 import androidx.core.content.FileProvider
-import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.ProjectType
@@ -15,8 +14,6 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.core.datastore.RuntimePreferences
 import top.wkbin.taixu.core.database.BuildScriptRepository
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -125,9 +122,8 @@ private fun observeDependencyOutput(raw: String, previous: DependencyObservation
 /**
  * 工作区项目一键构建并安装运行到手机服务。
  */
-@Singleton
-class WorkspaceBuildRunner @Inject constructor(
-    @ApplicationContext private val context: Context,
+class WorkspaceBuildRunner(
+    private val context: Context,
     private val linuxRuntime: LinuxRuntime,
     private val embeddedAdbManager: EmbeddedAdbManager,
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,

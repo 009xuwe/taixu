@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.session
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.HarnessLaneEntity
@@ -30,8 +28,7 @@ data class ConversationBranch(
 )
 
 /** Public lane surface: create, inspect, navigate, and project shared conversation branches. */
-@Singleton
-class LaneManager @Inject constructor(
+class LaneManager(
     private val repository: HarnessRuntimeRepository,
     private val treeStore: SessionTreeStore,
 ) {

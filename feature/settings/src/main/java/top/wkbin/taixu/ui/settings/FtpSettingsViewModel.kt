@@ -6,9 +6,6 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -52,9 +49,8 @@ data class FtpSettingsUiState(
         }
 }
 
-@HiltViewModel
-class FtpSettingsViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class FtpSettingsViewModel(
+    private val context: Context,
     private val linuxRuntime: LinuxRuntime,
     private val preferences: FtpPreferences,
     private val sshPreferences: SshPreferences,

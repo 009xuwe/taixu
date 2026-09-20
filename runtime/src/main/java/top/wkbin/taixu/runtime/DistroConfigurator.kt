@@ -1,8 +1,6 @@
 package top.wkbin.taixu.runtime
 
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.runtime.bridge.HostBridge
 import top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer
@@ -18,8 +16,7 @@ import top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer
  * 唯一行为变化：[configureRootfs] 由同步 runBlocking 改为 suspend，
  * 不再阻塞调用线程且可被协作取消。
  */
-@Singleton
-class DistroConfigurator @Inject constructor(
+class DistroConfigurator(
     private val pathManager: RuntimePathManager,
     private val hostBridge: HostBridge,
     private val assetSynchronizer: RuntimeAssetSynchronizer,

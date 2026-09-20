@@ -1,12 +1,9 @@
 package top.wkbin.taixu.harness
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 
 /** Protocol normalization boundary shared by the main loop and independently testable. */
-@Singleton
-class ProviderResponseNormalizer @Inject constructor(
+class ProviderResponseNormalizer(
     private val json: Json,
 ) {
     fun normalize(result: ChatResult, rawText: String, toolsEnabled: Boolean): NormalizedProviderResponse {

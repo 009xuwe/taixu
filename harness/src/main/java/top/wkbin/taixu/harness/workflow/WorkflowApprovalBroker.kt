@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.workflow
 
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,8 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import top.wkbin.taixu.core.model.workflow.WorkflowApprovalDecision
 import top.wkbin.taixu.core.model.workflow.WorkflowApprovalRequest
 
-@Singleton
-class WorkflowApprovalBroker @Inject constructor() {
+class WorkflowApprovalBroker() {
     private val waiting = linkedMapOf<String, Pair<WorkflowApprovalRequest, CompletableDeferred<WorkflowApprovalDecision>>>()
 
     // 按 executionId 隔离的当前审批请求流：并发工作流互不串扰（A 的 UI 不会显示 B 的请求）

@@ -5,8 +5,6 @@ import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.proot.ProotCommandBuilder
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -51,8 +49,7 @@ interface ProcessRegistry {
     fun clearLogs(idOrToolId: String)
 }
 
-@Singleton
-class ProcessRegistryImpl @Inject constructor(
+class ProcessRegistryImpl(
     private val pathManager: RuntimePathManager,
     private val prootCommandBuilder: ProotCommandBuilder,
 ) : ProcessRegistry {

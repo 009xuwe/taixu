@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.browser
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -45,7 +46,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -57,7 +57,7 @@ import top.wkbin.taixu.ui.browser.snapshot.SnapshotSheet
 @Composable
 fun BrowserScreen(
     onBack: () -> Unit,
-    viewModel: BrowserViewModel = hiltViewModel(),
+    viewModel: BrowserViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     // 系统返回优先走 WebView 历史栈；无法后退时才退出浏览器页

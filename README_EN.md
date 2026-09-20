@@ -102,7 +102,7 @@ Debug APK output: `app/build/outputs/apk/debug/taixu-v0.11.0-debug.apk`
 
 ```text
 LinuxAIRuntime/
-├── app/                  # Host application: MainActivity, Hilt DI, JNI C code, Foreground Service
+├── app/                  # Host application: MainActivity, Koin DI, JNI C code, Foreground Service
 ├── core/
 │   ├── model/           # Pure Kotlin data models (Strictly decoupled from Android SDK)
 │   ├── common/          # Coroutine dispatchers, logging, Global Navigation Bus

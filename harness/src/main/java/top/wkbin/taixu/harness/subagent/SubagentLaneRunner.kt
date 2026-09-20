@@ -1,12 +1,8 @@
 package top.wkbin.taixu.harness.subagent
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Provider
-import javax.inject.Singleton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -51,15 +47,14 @@ data class SubagentLaneResult(
 /**
  * Headless lane interpreter used by subagents; it shares tree history but owns its operation.
  *
- * [ToolExecutor] 以 [Provider] 注入以打断 Hilt 依赖环：
+ * [ToolExecutor] 通过函数提供器延迟获取，打断依赖环：
  * ToolExecutor → SubagentOrchestrator → SubagentLaneRunner → ToolExecutor。
  * 工具只在 [run] 执行期才实际取用，构造期延迟解析是安全的。
  */
-@Singleton
-class SubagentLaneRunner @Inject constructor(
-    @ApplicationContext private val context: Context,
+class SubagentLaneRunner(
+    private val context: Context,
     private val providerClient: ProviderClient,
-    private val toolExecutor: Provider<ToolExecutor>,
+    private val toolExecutor: () -> ToolExecutor,
     private val treeStore: SessionTreeStore,
     private val operations: OperationCoordinator,
     private val settingsDataStore: AgentPreferences,
@@ -246,7 +241,7 @@ class SubagentLaneRunner @Inject constructor(
                             blockedWrites += subagentWriteTargetLabel(rawName, args)
                             ToolResult(UUID.randomUUID().toString(), now(), call.id, false, writeRejection)
                         }
-                        else -> toolExecutor.get().execute(
+                        else -> toolExecutor().execute(
                             call,
                             sessionId,
                             workspace,

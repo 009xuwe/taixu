@@ -1,7 +1,5 @@
 package top.wkbin.taixu.core.tools
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -9,8 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-@Singleton
-class AgentModelConnectionTester @Inject constructor(private val http: OkHttpClient) {
+class AgentModelConnectionTester(private val http: OkHttpClient) {
     suspend fun test(
         baseUrl: String,
         model: String,

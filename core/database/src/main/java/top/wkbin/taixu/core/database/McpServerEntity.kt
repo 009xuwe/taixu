@@ -14,8 +14,6 @@ import top.wkbin.taixu.core.model.BuiltinMcpPresets
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpTransportType
 import top.wkbin.taixu.core.security.SecretManager
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Entity(tableName = "mcp_servers")
 data class McpServerEntity(
@@ -83,8 +81,7 @@ interface McpServerDao {
     suspend fun deleteCustom(id: String)
 }
 
-@Singleton
-class McpServerRepository @Inject constructor(
+class McpServerRepository(
     private val dao: McpServerDao,
     private val secretManager: SecretManager,
 ) {

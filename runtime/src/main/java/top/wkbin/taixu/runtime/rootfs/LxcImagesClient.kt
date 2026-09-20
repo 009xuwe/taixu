@@ -4,8 +4,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -22,8 +20,7 @@ import top.wkbin.taixu.runtime.DownloadProgress
  * 仅作为 OCI 线路（DaoCloud / Docker Hub）全部失败后的兜底，且只支持映射到
  * lxc-images 的发行版。
  */
-@Singleton
-class LxcImagesClient @Inject constructor(
+class LxcImagesClient(
     private val http: OkHttpClient,
     private val logger: AppLogger,
 ) {

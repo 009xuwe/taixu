@@ -7,8 +7,6 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.model.AgentSubagent
 import top.wkbin.taixu.core.model.AgentSubagentIndexEntry
 import top.wkbin.taixu.core.model.SubagentTaskSpec
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -55,8 +53,7 @@ internal const val DEFAULT_MAX_CONCURRENT_SUBAGENTS = 3
  * 负责解析主智能体的 invoke_subagent 请求，动态创建隔离的子会话，
  * 并发调度子智能体执行研究、编写或测试任务，最终汇聚输出结构化 Markdown。
  */
-@Singleton
-class SubagentOrchestrator @Inject constructor(
+class SubagentOrchestrator(
     private val sessionDao: HarnessSessionRepository,
     private val laneManager: LaneManager,
     private val laneRunner: SubagentLaneRunner,

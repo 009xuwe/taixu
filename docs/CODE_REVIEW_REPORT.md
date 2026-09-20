@@ -391,7 +391,7 @@ return HttpResponse(404, errorJson("APK file not found: $apkPath (resolved: $hos
 - `HostBridge.bridgeScope`
 - `HarnessLoop.loopScope`
 
-建议通过 Hilt 提供一个全局 `@ApplicationScope` 的 `CoroutineScope`，统一管理生命周期，便于在 App 退出时统一取消。
+建议通过 Koin 提供一个全局的 `CoroutineScope`，统一管理生命周期，便于在 App 退出时统一取消。
 
 ---
 

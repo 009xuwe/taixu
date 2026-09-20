@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.queue
 
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 import top.wkbin.taixu.core.database.HarnessEntryEntity
 import top.wkbin.taixu.core.database.HarnessQueueItemEntity
@@ -23,8 +21,7 @@ enum class PromptQueue(val id: String) {
  * 所有操作以 [laneName] 定位队列（默认主 lane）；子智能体等独立 lane
  * 可通过显式传参获得同等的持久化队列能力。
  */
-@Singleton
-class PromptQueueManager @Inject constructor(
+class PromptQueueManager(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
     private val sessionStore: SessionTreeStore,

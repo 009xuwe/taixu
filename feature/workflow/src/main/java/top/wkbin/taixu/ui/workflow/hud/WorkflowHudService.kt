@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.workflow.hud
 
+import org.koin.android.ext.android.inject
 import android.app.Application
 import android.app.Service
 import android.content.Context
@@ -16,8 +17,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,11 +33,9 @@ import top.wkbin.taixu.ui.theme.TaiXuTheme
  * [WorkflowGuiHudBridge.Session.overlayVisible] is false so screen dumps skip
  * the overlay.
  */
-@AndroidEntryPoint
 class WorkflowHudService : Service() {
 
-    @Inject
-    lateinit var hud: WorkflowGuiHudBridge
+    val hud: WorkflowGuiHudBridge by inject()
 
     private var windowManager: WindowManager? = null
     private var composeView: ComposeView? = null

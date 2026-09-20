@@ -1,6 +1,5 @@
 package top.wkbin.taixu.harness.workflow
 
-import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.coroutineScope
@@ -17,7 +16,7 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.shell.ShellCommand
 
-class PassthroughNodeExecutor @Inject constructor() : NodeExecutor {
+class PassthroughNodeExecutor() : NodeExecutor {
     override val supportedTypes = setOf(WorkflowNodeType.TRIGGER, WorkflowNodeType.TERMINAL_OUTPUT)
 
     override suspend fun execute(
@@ -39,7 +38,7 @@ class PassthroughNodeExecutor @Inject constructor() : NodeExecutor {
     }
 }
 
-class ApprovalNodeExecutor @Inject constructor(
+class ApprovalNodeExecutor(
     private val broker: WorkflowApprovalBroker,
 ) : NodeExecutor {
     override val supportedTypes = setOf(WorkflowNodeType.HUMAN_APPROVAL)
@@ -68,7 +67,7 @@ class ApprovalNodeExecutor @Inject constructor(
     }
 }
 
-class LinuxNodeExecutor @Inject constructor(
+class LinuxNodeExecutor(
     private val linuxRuntime: LinuxRuntime,
 ) : NodeExecutor {
     override val supportedTypes = setOf(
@@ -168,7 +167,7 @@ class LinuxNodeExecutor @Inject constructor(
     }
 }
 
-class AgentNodeExecutor @Inject constructor(
+class AgentNodeExecutor(
     private val agentExecution: WorkflowAgentExecutionPort,
 ) : NodeExecutor {
     override val supportedTypes = setOf(WorkflowNodeType.AGENT_INFERENCE, WorkflowNodeType.SUBAGENT_DELEGATE)

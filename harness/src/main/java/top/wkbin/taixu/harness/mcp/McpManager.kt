@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.mcp
 
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,8 +31,7 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import kotlin.time.Duration.Companion.milliseconds
 
 /** Thin MCP registry coordinator; transports own protocol and process details. */
-@Singleton
-class McpManager @Inject constructor(
+class McpManager(
     private val repository: McpServerRepository,
     private val stdio: McpStdioTransport,
     private val http: McpHttpTransport,

@@ -1,7 +1,5 @@
 package top.wkbin.taixu.core.common.navigation
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -22,8 +20,7 @@ sealed interface AppNavigationTarget {
  * 用于在非 UI 逻辑（系统通知、后台服务、快捷方式、Intent 处理）与 Compose Navigation 之间
  * 建立解耦、可靠的导航事件传递通道。
  */
-@Singleton
-class GlobalNavigationBus @Inject constructor() {
+class GlobalNavigationBus() {
     private val _events = MutableSharedFlow<AppNavigationTarget>(
         replay = 1,
         extraBufferCapacity = 1,

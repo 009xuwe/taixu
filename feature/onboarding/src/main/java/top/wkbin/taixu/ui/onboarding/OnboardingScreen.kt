@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.onboarding
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
@@ -65,7 +66,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.feature.onboarding.R
 import top.wkbin.taixu.core.model.RuntimeState
@@ -94,7 +94,7 @@ private val distributionOptions = DistributionCatalog.supported.map { SetupOptio
  * 太墟 · 启程配置向导 (Onboarding Wizard)
  */
 @Composable
-fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
+fun OnboardingScreen(viewModel: OnboardingViewModel = koinViewModel()) {
     val page by viewModel.page.collectAsStateWithLifecycle()
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         when (page) {

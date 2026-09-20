@@ -1,9 +1,6 @@
 ﻿package top.wkbin.taixu.core.tools
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -32,9 +29,8 @@ private data class AgentProviderDocument(
     val providers: List<AgentProviderDefinition>,
 )
 
-@Singleton
-class AgentProviderCatalog @Inject constructor(
-    @ApplicationContext private val context: Context,
+class AgentProviderCatalog(
+    private val context: Context,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 

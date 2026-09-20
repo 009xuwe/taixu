@@ -9,7 +9,7 @@
   - **主工程构建链**：Gradle 9.7.0 / AGP 9.3.1 / Kotlin 2.4.10 / compileSdk & targetSdk 37 / NDK 30.0.15729638
   - **语言**：Kotlin（100% Kotlin + Jetpack Compose）
   - **UI 风格**：Material 3 Expressive (M3 动态表面、Haptic 触觉反馈、双栏自适应 Dual-Pane)
-  - **依赖注入**：Hilt / Dagger
+  - **依赖注入**：Koin 4.2.2（显式 Kotlin DSL）
   - **状态与异步**：Kotlin Coroutines, StateFlow, SharedFlow
   - **本地存储**：Jetpack DataStore (Preferences), Room Database (SQLite)
 - **底层运行时 (Runtime & Native)**：
@@ -29,7 +29,7 @@
 
 ```text
 LinuxAIRuntime/
-├── app/                  # 应用壳工程：MainActivity、Hilt 初始化、JNI C 代码、前台保活 Service
+├── app/                  # 应用壳工程：MainActivity、Koin 初始化、JNI C 代码、前台保活 Service
 ├── core/
 │   ├── model/           # 纯 Kotlin 数据模型 (不含 Android SDK 依赖)
 │   ├── common/          # 协程调度器、日志、通用工具类
@@ -77,3 +77,13 @@ LinuxAIRuntime/
    - ZIP 导入必须执行路径穿越防范（Zip Slip Check）、文件大小上限与条目数校验；Git clone 必须在沙箱内隔离执行。
 6. **构建调度与保活边界**：
    - 工作区构建由单例 `WorkspaceBuildTaskCoordinator` 全局持有，UI 页面旋转或重建不中断构建任务；底层构建执行与环境预检由 `WorkspaceBuildRunner` 承载。
+
+## 4. 依赖装配（Koin）
+
+- 各模块的 `src/main/java/top/wkbin/taixu/di/**/KoinModule.kt` 声明本模块构造器与接口绑定；`app/di/TaiXuModules.kt` 汇总完整依赖图，Application 启动时注册应用 Context，并禁止定义覆盖。
+- 业务类使用普通构造器；仅 Android 创建的 Application、Activity、Service、Receiver 和 Compose ViewModel 入口访问 Koin。新增构造依赖时同步更新所属模块注册，并运行 `:app:testDebugUnitTest` 的依赖图测试。
+- 原进程单例使用 `single`，无作用域对象使用 `factory`，ViewModel 使用 `viewModel`，保留 Navigation3 的 ViewModelStoreOwner 归属。
+- Kotlin `Lazy` 保留 Runtime、仓储与 MCP Server 的延迟创建；子代理通过 `() -> ToolExecutor` 打断依赖环。ToolExecutor 的偏好通过构造器显式装配。
+- 工作流执行器与工具适配器集合使用不同 qualifier，避免泛型擦除后的 Set 定义冲突。
+- WorkManager 保留 `Configuration.Provider` 按需初始化，使用 `KoinWorkerFactory` 创建 Worker；WorkerParameters 来自系统，Context 来自应用容器。
+- DI 使用经典 DSL，不引入 Koin 编译插件；KSP 仅用于 Room。依赖完整性由图测试保障，不能把 Kotlin 编译通过等同于 DI 图验证通过。

@@ -41,8 +41,6 @@ import top.wkbin.taixu.core.tools.AgentModelDiscovery
 import top.wkbin.taixu.core.tools.AgentProviderCatalog
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.core.tools.ProviderRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import android.net.Uri
 import android.util.Log
@@ -51,7 +49,6 @@ import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import top.wkbin.taixu.feature.chat.R
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -93,9 +90,8 @@ data class WorkflowLaunchRequest(
 /** 空会话首屏的权限感知引导档位；决定开场提示卡的文案与色调。 */
 enum class OnboardingPrivilege { SANDBOX, SANDBOX_UNLOCKABLE, SHIZUKU_READY, ROOT_READY }
 
-@HiltViewModel
-class ChatViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class ChatViewModel(
+    private val context: Context,
     private val savedStateHandle: SavedStateHandle,
     private val harnessLoop: HarnessLoop,
     private val sessionDao: HarnessSessionRepository,

@@ -10,8 +10,6 @@ import java.io.InputStream
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -27,8 +25,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-@Singleton
-class OciRegistryClient @Inject constructor(
+class OciRegistryClient(
     private val http: OkHttpClient,
     private val logger: AppLogger,
 ) {

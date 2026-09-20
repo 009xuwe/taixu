@@ -3,8 +3,6 @@ package top.wkbin.taixu.runtime
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,8 +21,7 @@ private const val ENV_SNAPSHOT_END = "__TAIXU_ENV_SNAPSHOT_END__"
  * The profile fragment is the source of truth. Android preferences intentionally do not keep a
  * second copy, so terminal sessions, agent commands, and the settings screen observe the same data.
  */
-@Singleton
-class LinuxEnvironmentManager @Inject constructor(
+class LinuxEnvironmentManager(
     private val linuxRuntime: LinuxRuntime,
     private val runtimePreferences: RuntimePreferences,
 ) {

@@ -7,8 +7,6 @@ import android.os.StatFs
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +30,6 @@ import top.wkbin.taixu.runtime.doctor.EnvironmentDoctor
 import top.wkbin.taixu.runtime.doctor.EnvironmentRepairer
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import top.wkbin.taixu.runtime.privilege.PrivilegeAvailability
-import javax.inject.Inject
 
 /** 当前运行特权模式的展示状态（首页徽章与规格卡共用）。 */
 data class ExecutionModeStatus(
@@ -63,9 +60,8 @@ data class SystemResourceMetrics(
     val uptimeFormatted: String = "00:00",
 )
 
-@HiltViewModel
-class HomeViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class HomeViewModel(
+    private val context: Context,
     private val linuxRuntime: LinuxRuntime,
     private val environmentDoctor: EnvironmentDoctor,
     private val environmentRepairer: EnvironmentRepairer,

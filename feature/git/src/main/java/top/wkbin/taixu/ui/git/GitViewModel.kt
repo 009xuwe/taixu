@@ -2,8 +2,6 @@ package top.wkbin.taixu.ui.git
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,8 +43,7 @@ data class GitUiState(
     val busy: Boolean get() = operation != null
 }
 
-@HiltViewModel
-class GitViewModel @Inject constructor(
+class GitViewModel(
     private val workspaceManager: WorkspaceManager,
     private val gitManager: GitManager,
     private val credentialsStore: GitCredentialsStore,

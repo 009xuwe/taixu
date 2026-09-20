@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness.workflow
 
 import java.util.Calendar
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.Json
 import top.wkbin.taixu.core.database.WorkflowRepository
@@ -25,8 +23,7 @@ interface WorkflowScheduleDispatcher {
  * workflow_schedules 的增删改查 + nextRunAt 计算。所有写操作都会联动 dispatcher，
  * 保证 Room 状态与 WorkManager 注册一致；enabled=false 的计划只保留配置不再触发。
  */
-@Singleton
-class WorkflowScheduleRepository @Inject constructor(
+class WorkflowScheduleRepository(
     private val store: WorkflowScheduleStore,
     private val workflowRepository: WorkflowRepository,
     private val dispatcher: WorkflowScheduleDispatcher,

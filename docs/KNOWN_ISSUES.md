@@ -4,7 +4,7 @@ This file tracks known issues and environment notes for the TaiXu Android projec
 
 ## 1. Offline build depends on a warm Gradle dependency cache
 
-- The Phase 0 dependency set uses Hilt `2.50`, Room `2.6.1`, and KSP `1.9.22-1.0.17`.
+- The Phase 0 dependency set uses Room `2.6.1`, and KSP `1.9.22-1.0.17`.
 - Room `2.6.1` pulls transitive processor dependencies:
   - `com.google.devtools.ksp:symbol-processing-api:1.9.0-1.0.13`
   - `org.jetbrains.kotlin:kotlin-stdlib:1.8.22`
@@ -25,7 +25,7 @@ This file tracks known issues and environment notes for the TaiXu Android projec
 
 ## 3. Dependency stack is intentionally old but stable for Phase 0
 
-- Kotlin `1.9.22`, AGP `8.2.2`, Gradle `8.5`, KSP `1.9.22-1.0.17`, Hilt `2.50`, Room `2.6.1`.
+- Kotlin `1.9.22`, AGP `8.2.2`, Gradle `8.5`, KSP `1.9.22-1.0.17`, Room `2.6.1`.
 - These versions are sufficient for the Phase 0 skeleton and match the original project plan constraints.
 - A future modernization pass may align with the newer cached toolchain (Kotlin 2.2.x / AGP 8.7.x) if the
   project later requires it, but that is out of scope for Phase 0.
@@ -105,4 +105,4 @@ This file tracks known issues and environment notes for the TaiXu Android projec
 - 设备当前离线，最新 APK（多会话/流式/模型管理/模块化）尚未真机安装验证。
 
 ## 依赖/构建
-- Kotlin 2.4.10 / AGP 9.3.1 / Gradle 9.7 / Hilt 2.60 / Room 2.8.4 / Compose BOM 2026.08。Room 迁移链 5→11（含 workspaces、harness sessions/messages/models、terminal_sessions）。测试分布在 `core/*`、`harness`、`feature:terminal` 与 `app`。
+- Kotlin 2.4.10 / AGP 9.3.1 / Gradle 9.7 / Room 2.8.4 / Compose BOM 2026.08。Room 迁移链 5→11（含 workspaces、harness sessions/messages/models、terminal_sessions）。测试分布在 `core/*`、`harness`、`feature:terminal` 与 `app`。

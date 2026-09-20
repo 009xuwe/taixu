@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness.projection
 
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,8 +31,7 @@ interface LiveMessagePort {
  *
  * 持久化本身由 [SessionTreeStore] 负责；本类只做"已提交内容的发布 + 流式上屏"。
  */
-@Singleton
-class SessionMessageProjector @Inject constructor(
+class SessionMessageProjector(
     private val store: SessionTreeStore,
     private val tracker: CurrentSessionTracker,
 ) : LiveMessagePort {

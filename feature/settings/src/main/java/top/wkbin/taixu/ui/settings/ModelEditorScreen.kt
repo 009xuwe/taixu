@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -71,7 +72,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.database.AiModelEntity
@@ -100,7 +100,7 @@ fun ModelEditorScreen(
     modelId: String?,
     onBack: () -> Unit,
     onSaved: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel(),
+    viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val models by viewModel.models.collectAsStateWithLifecycle()
     val discovered by viewModel.discoveredModels.collectAsStateWithLifecycle()

@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.developer
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import androidx.compose.foundation.background
@@ -40,7 +41,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.InstalledRuntime
 import top.wkbin.taixu.core.model.RuntimeState
@@ -59,7 +59,7 @@ import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
 @Composable
 fun DeveloperScreen(
     onBack: () -> Unit,
-    viewModel: DeveloperViewModel = hiltViewModel(),
+    viewModel: DeveloperViewModel = koinViewModel(),
 ) {
     val runtimeState by viewModel.runtimeState.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()

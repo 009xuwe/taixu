@@ -6,8 +6,6 @@ import java.io.File
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -39,13 +37,11 @@ internal class AndroidFileSystemOps : FileSystemOps {
     }
 }
 
-@Singleton
 class TarStreamExtractor internal constructor(
     private val logWarning: (String, Throwable?) -> Unit,
     private val fsOps: FileSystemOps,
 ) : RootfsExtractor {
 
-    @Inject
     constructor(logger: AppLogger) : this({ msg, err -> logger.w(msg, err) }, AndroidFileSystemOps())
 
     override suspend fun extract(

@@ -18,14 +18,28 @@ object ContextWindowPolicy {
     /** 巨型用户消息截断后至少保留的头部 token 数。 */
     private const val MIN_KEPT_USER_TURN_TOKENS = 800
     /**
-     * 历史消息占用的绝对安全上限（token）。无论模型标称窗口多高，
-     * 压缩触发线都不超过此值，避免 flash 级模型在超高 token 下参数生成崩塌。
+     * Flash 级历史参考线（token）。不再作为所有模型的硬封顶——7B/Flash 靠自身较小的
+     * `contextTokens` 与 [INPUT_BUDGET_FRACTION] 约束；200k/1M 旗舰模型走 [generationCapFor]。
      */
     const val SAFE_GENERATION_CAP = 96_000
-    /** 预算上限：防止标称窗口过大导致系统提示词完全不截断。 */
-    const val MAX_CONTEXT_BUDGET = 200_000
-    /** 历史折叠线比例默认值（%）：100 = 只在 INPUT_BUDGET_FRACTION 预留处折叠，与旧行为一致。 */
-    const val DEFAULT_FOLDING_RATIO_PERCENT = 100
+    /**
+     * 引擎预算上限。与设置页滑块（最高 1M）对齐，避免把 Gemini/Claude 的标称窗口
+     * 先钳到 200k、再被 96k 折叠线二次截断。
+     */
+    const val MAX_CONTEXT_BUDGET = 1_000_000
+    /** 大窗口历史占用相对模型预算的上限比例；与 75% 输入预留取小。 */
+    private const val MODEL_WINDOW_GENERATION_FRACTION = 0.80
+    /**
+     * 发给 Provider 的 JSON 请求体物理上限（字节）。Token 预算看不见 UTF-8/JSON 转义膨胀，
+     * 中转 Nginx 默认 `client_max_body_size` 往往只有 1–10MB，超限即 HTTP 413。
+     */
+    const val REQUEST_BODY_HARD_LIMIT_BYTES = 4 * 1024 * 1024
+    /** 当前轮超长工具输出在体积治理时保留的头部/尾部字符。 */
+    private const val ACTIVE_TOOL_KEEP_HEAD_CHARS = 6_000
+    private const val ACTIVE_TOOL_KEEP_TAIL_CHARS = 1_500
+    private const val JSON_FRAMING_PER_MESSAGE = 64
+    /** 历史折叠线比例默认值（%）。70 = 在 75% 输入预留之前平滑进摘要，降低 413；100 = 只在预留处折叠。 */
+    const val DEFAULT_FOLDING_RATIO_PERCENT = 70
     /** 折叠线比例下限：低于此值会频繁折叠，历史几乎留不住。 */
     const val MIN_FOLDING_RATIO_PERCENT = 10
     /** 折叠线比例上限。 */
@@ -41,8 +55,9 @@ object ContextWindowPolicy {
      * 历史折叠触发线（token），供 UI 预览与 [computeKeepFromIndex] 共用。
      *
      * 口径与引擎一致：先取 `min(预算 × 比例%, 预算 × INPUT_BUDGET_FRACTION)`，
-     * 再减去 [systemTokens]、输出预留与工具 schema 预留，最后钳到 [SAFE_GENERATION_CAP]。
-     * `ratioPercent = 100` 时与旧引擎行为一致（75% 线再减预留）。
+     * 再减去 [systemTokens]、输出预留与工具 schema 预留，最后钳到 [generationCapFor]。
+     * `ratioPercent = 100` 时 128k 默认预算与旧引擎一致（75% 线再减预留）；
+     * 默认 70% 会比这条线更早折叠。200k/1M 窗口不再被 96k 二次封顶。
      *
      * 返回值可能为负（小预算被预留吃光）——引擎据此走最小保留兜底；UI 预览应 `coerceAtLeast(0)`。
      */
@@ -60,7 +75,18 @@ object ContextWindowPolicy {
             systemTokens.coerceAtLeast(0) -
             (reserveTokens ?: RESERVED_OUTPUT_TOKENS) -
             TOOL_SCHEMA_RESERVE_TOKENS
-        return minOf(rawLimit, SAFE_GENERATION_CAP)
+        return minOf(rawLimit, generationCapFor(budget))
+    }
+
+    /**
+     * 历史折叠的模型相关上限：小窗口沿用 [SAFE_GENERATION_CAP] 参考线，
+     * 大窗口允许用到预算的 [MODEL_WINDOW_GENERATION_FRACTION]（通常仍宽于 75% 输入预留，
+     * 因此 200k+ 模型的实际约束是输入预留而不是 96k 硬顶）。
+     */
+    fun generationCapFor(budget: Int): Int {
+        if (budget <= 0) return 0
+        val modelRelative = (budget * MODEL_WINDOW_GENERATION_FRACTION).toInt()
+        return maxOf(SAFE_GENERATION_CAP, modelRelative).coerceAtMost(MAX_CONTEXT_BUDGET)
     }
 
     /**
@@ -310,7 +336,7 @@ object ContextWindowPolicy {
         skillsTokens: Int = 0,
         mcpTokens: Int = 0,
         subagentTokens: Int = 0,
-        /** 历史折叠线比例（%，默认 100 = 与旧行为一致）。透传给 computeKeepFromIndex。 */
+        /** 历史折叠线比例（%，默认 [DEFAULT_FOLDING_RATIO_PERCENT]）。透传给 computeKeepFromIndex。 */
         foldingRatioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
     ): EffectiveContextUsage {
         val keepFrom = if (compactionEnabled) {
@@ -389,12 +415,13 @@ object ContextWindowPolicy {
          */
         reserveTokens: Int? = null,
         /**
-         * 历史折叠线比例（%，默认 100 = 与旧行为一致）。
+         * 历史折叠线比例（%，默认 [DEFAULT_FOLDING_RATIO_PERCENT]）。
          *
          * 用户设置「折叠线比例」后，折叠触发线在原有 `INPUT_BUDGET_FRACTION` 硬上限**之下**
          * 按此比例进一步收窄：`min(budget × 比例%, budget × INPUT_BUDGET_FRACTION)`。
          * 之所以取 min（而非直接替换）：比例只是「提前折叠」的手段，绝不能把线抬到超过
          * [INPUT_BUDGET_FRACTION] 的预留——那会让历史挤占 completion 与工具 schema 空间。
+         * 70–74% 才会比 75% 预留线更早折叠；75–100% 与旧行为等价。
          */
         foldingRatioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
     ): Int {
@@ -403,8 +430,8 @@ object ContextWindowPolicy {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
         val safeRatio = foldingRatioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
-        // 与 [foldingLimitFor] 同一条线：比例线与 75% 硬上限取小，再减 system/输出/工具 schema，钳到安全上限。
-        // ratio=100 时恒等于旧行为，因为 100% 的线总是 ≥ 75% 的硬上限线。
+        // 与 [foldingLimitFor] 同一条线：比例线与 75% 硬上限取小，再减 system/输出/工具 schema，
+        // 并按 [generationCapFor] 钳制。ratio=100 时 128k 默认预算与旧行为一致。
         val limit = foldingLimitFor(
             budget = budget,
             ratioPercent = safeRatio,
@@ -573,6 +600,166 @@ object ContextWindowPolicy {
             }
         }
         return out
+    }
+
+    /**
+     * 请求体物理体积预检：Token 预算看不见 UTF-8/JSON 膨胀与 Base64 图片。
+     * 超限时先压缩当前轮超长工具输出（附 history_read 指针），再剥离历史图片。
+     * 不改变消息条数与顺序，只替换正文；落库 transcript 与 UI 不受影响。
+     */
+    fun enforceRequestByteBudget(
+        messages: List<HarnessMessage>,
+        toolCallDetails: Map<String, Pair<String, JsonObject>> = messages.filterIsInstance<ToolCall>().associate {
+            it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
+        },
+        maxBytes: Int = REQUEST_BODY_HARD_LIMIT_BYTES,
+    ): List<HarnessMessage> {
+        if (messages.isEmpty() || maxBytes <= 0) return messages
+        if (estimateHarnessPayloadBytes(messages) <= maxBytes) return messages
+        val out = messages.toMutableList()
+        var changed = false
+        while (estimateHarnessPayloadBytes(out) > maxBytes) {
+            val idx = out.indices
+                .mapNotNull { index -> (out[index] as? ToolResult)?.takeIf { it.output.length > ACTIVE_TOOL_KEEP_HEAD_CHARS + ACTIVE_TOOL_KEEP_TAIL_CHARS }?.let { index to it } }
+                .maxByOrNull { it.second.output.length }
+                ?.first
+            if (idx == null) break
+            val result = out[idx] as ToolResult
+            val (name, args) = toolCallDetails[result.toolCallId] ?: (null to null)
+            val compacted = compactActiveToolOutput(name, args, result.output, result.success) +
+                "\n[工具输出因请求体体积限制已压缩；全文在会话记录中，需要细节时调用 history_read(message_id=\"${result.id}\") 回读]"
+            if (compacted.length >= result.output.length) break
+            out[idx] = result.copy(output = compacted)
+            changed = true
+        }
+        if (estimateHarnessPayloadBytes(out) > maxBytes) {
+            for (index in out.indices) {
+                if (estimateHarnessPayloadBytes(out) <= maxBytes) break
+                val message = out[index] as? UserMessage ?: continue
+                if (message.imageUrls.isEmpty()) continue
+                out[index] = message.copy(
+                    imageUrls = emptyList(),
+                    text = message.text +
+                        "\n\n[…… 本消息携带的 ${message.imageUrls.size} 张图片因请求体体积限制已从模型上下文省略 ……]",
+                )
+                changed = true
+            }
+        }
+        return if (changed) out else messages
+    }
+
+    /** Provider 投影后再做一次体积治理，覆盖系统提示与压缩后仍过大的 data URL。 */
+    fun shrinkApiMessagesToByteBudget(
+        messages: List<ApiMessage>,
+        maxBytes: Int = REQUEST_BODY_HARD_LIMIT_BYTES,
+    ): List<ApiMessage> {
+        if (messages.isEmpty() || maxBytes <= 0) return messages
+        if (estimateApiPayloadBytes(messages) <= maxBytes) return messages
+        val out = messages.toMutableList()
+        var changed = false
+        while (estimateApiPayloadBytes(out) > maxBytes) {
+            val idx = out.indices
+                .filter { index ->
+                    val message = out[index]
+                    message.role != "system" &&
+                        message.content.orEmpty().length > ACTIVE_TOOL_KEEP_HEAD_CHARS + ACTIVE_TOOL_KEEP_TAIL_CHARS
+                }
+                .maxByOrNull { out[it].content.orEmpty().length }
+            if (idx == null) break
+            val message = out[idx]
+            val compacted = compactActiveText(message.content.orEmpty())
+            if (compacted.length >= message.content.orEmpty().length) break
+            out[idx] = message.copy(content = compacted)
+            changed = true
+        }
+        if (estimateApiPayloadBytes(out) > maxBytes) {
+            for (index in out.indices) {
+                if (estimateApiPayloadBytes(out) <= maxBytes) break
+                val message = out[index]
+                if (message.imageUrls.isEmpty()) continue
+                out[index] = message.copy(
+                    imageUrls = emptyList(),
+                    content = message.content.orEmpty() +
+                        "\n\n[…… ${message.imageUrls.size} 张图片因请求体体积限制已从模型上下文省略 ……]",
+                )
+                changed = true
+            }
+        }
+        return if (changed) out else messages
+    }
+
+    fun estimateHarnessPayloadBytes(messages: List<HarnessMessage>): Int {
+        var bytes = 0
+        messages.forEach { message ->
+            bytes += JSON_FRAMING_PER_MESSAGE
+            when (message) {
+                is UserMessage -> {
+                    bytes += jsonTextBytes(message.text)
+                    bytes += message.imageUrls.sumOf { it.length }
+                }
+                is AssistantText -> {
+                    bytes += jsonTextBytes(assistantTextForContext(message.text))
+                    bytes += jsonTextBytes(message.reasoning.orEmpty())
+                }
+                is ToolCall -> {
+                    bytes += jsonTextBytes(message.args.toString())
+                    bytes += jsonTextBytes(message.reasoning.orEmpty())
+                }
+                is ToolResult -> bytes += jsonTextBytes(message.output)
+                else -> Unit
+            }
+        }
+        return bytes
+    }
+
+    fun estimateApiPayloadBytes(messages: List<ApiMessage>): Int {
+        var bytes = JSON_FRAMING_PER_MESSAGE
+        messages.forEach { message ->
+            bytes += JSON_FRAMING_PER_MESSAGE
+            bytes += jsonTextBytes(message.content.orEmpty())
+            bytes += jsonTextBytes(message.reasoning_content.orEmpty())
+            bytes += message.imageUrls.sumOf { it.length }
+            message.tool_calls.orEmpty().forEach { call ->
+                bytes += jsonTextBytes(call.function.name)
+                bytes += jsonTextBytes(call.function.arguments)
+                bytes += JSON_FRAMING_PER_MESSAGE
+            }
+        }
+        return bytes
+    }
+
+    private fun compactActiveToolOutput(
+        toolName: String?,
+        args: JsonObject?,
+        output: String,
+        success: Boolean,
+    ): String {
+        val status = if (success) "成功" else "失败"
+        val path = runCatching { args?.get("path")?.jsonPrimitive?.contentOrNull }.getOrNull()
+            ?: runCatching { args?.get("command")?.jsonPrimitive?.contentOrNull }.getOrNull()
+        val hint = buildString {
+            if (!toolName.isNullOrBlank()) append("工具:$toolName ")
+            if (!path.isNullOrBlank()) append("对象:${path.take(180)} ")
+        }.trim()
+        return "【当前轮执行结果·状态:$status】$hint\n${compactActiveText(output)}"
+    }
+
+    private fun compactActiveText(output: String): String {
+        val keep = ACTIVE_TOOL_KEEP_HEAD_CHARS + ACTIVE_TOOL_KEEP_TAIL_CHARS
+        if (output.length <= keep + 80) return output
+        val omitted = output.length - ACTIVE_TOOL_KEEP_HEAD_CHARS - ACTIVE_TOOL_KEEP_TAIL_CHARS
+        return output.take(ACTIVE_TOOL_KEEP_HEAD_CHARS) +
+            "\n... [请求体体积限制，已省略 $omitted 字符] ...\n" +
+            output.takeLast(ACTIVE_TOOL_KEEP_TAIL_CHARS)
+    }
+
+    private fun jsonTextBytes(text: String): Int {
+        if (text.isEmpty()) return 0
+        var extra = 0
+        text.forEach { ch ->
+            if (ch == '"' || ch == '\\' || ch < ' ') extra++
+        }
+        return text.toByteArray(Charsets.UTF_8).size + extra
     }
 
     private fun fitUserText(text: String, targetTokens: Int): String? {

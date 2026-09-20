@@ -5,8 +5,6 @@ import top.wkbin.taixu.core.database.AgentMemoryEntity
 import top.wkbin.taixu.core.database.AgentPlanEntity
 import top.wkbin.taixu.core.database.AgentScratchpadEntity
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -20,8 +18,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * - plan: 多步骤任务执行计划管理
  * - scratchpad: 任务局部工作草稿与排查便签
  */
-@Singleton
-class AgentContextExecutor @Inject constructor(
+class AgentContextExecutor(
     private val agentContextDao: AgentContextRepository,
     private val json: Json,
 ) {

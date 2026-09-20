@@ -11,11 +11,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class ProcessShellExecutor @Inject constructor(
+class ProcessShellExecutor(
     private val pathManager: RuntimePathManager,
 ) : ShellExecutor {
 

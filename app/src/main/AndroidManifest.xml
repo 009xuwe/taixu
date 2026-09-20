@@ -131,7 +131,7 @@
         <service
             android:name="top.wkbin.taixu.ui.workflow.hud.WorkflowHudService"
             android:exported="false" />
-        <!-- 工作流定时计划使用按需初始化的 WorkManager（Configuration.Provider + HiltWorkerFactory），
+        <!-- 工作流定时计划使用按需初始化的 WorkManager（Configuration.Provider + KoinWorkerFactory），
              必须移除默认的 WorkManagerInitializer，否则自定义 WorkerFactory 不生效 -->
         <provider
             android:name="androidx.startup.InitializationProvider"

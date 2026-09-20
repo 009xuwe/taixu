@@ -2,9 +2,6 @@ package top.wkbin.taixu.workflow
 
 import android.content.Context
 import android.provider.Settings
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,11 +20,10 @@ import top.wkbin.taixu.ui.workflow.hud.WorkflowHudService
  * 把最新一次运行的状态翻译到 WorkflowGuiHudBridge（原 WorkflowViewModel.publishHud 职责）。
  * 进程级单例，与页面生命周期无关；页面退出后悬浮窗继续显示后台运行进度。
  */
-@Singleton
-class WorkflowRunUiController @Inject constructor(
+class WorkflowRunUiController(
     private val runManager: WorkflowRunManager,
     private val hud: WorkflowGuiHudBridge,
-    @ApplicationContext private val appContext: Context,
+    private val appContext: Context,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var started = false

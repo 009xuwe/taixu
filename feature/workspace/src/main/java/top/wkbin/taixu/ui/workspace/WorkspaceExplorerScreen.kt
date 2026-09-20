@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.workspace
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import android.Manifest
@@ -60,7 +61,6 @@ import androidx.compose.ui.platform.LocalContext
 import top.wkbin.taixu.feature.workspace.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.runtime.WorkspaceFileItem
 import top.wkbin.taixu.ui.components.EmptyPanel
@@ -84,7 +84,7 @@ fun WorkspaceExplorerScreen(
     onBack: () -> Unit,
     onOpenFile: (String) -> Unit,
     onOpenTerminal: (String) -> Unit,
-    viewModel: WorkspaceViewModel = hiltViewModel(),
+    viewModel: WorkspaceViewModel = koinViewModel(),
 ) {
     val fileItems by viewModel.fileItems.collectAsStateWithLifecycle()
     val currentPath by viewModel.currentPath.collectAsStateWithLifecycle()

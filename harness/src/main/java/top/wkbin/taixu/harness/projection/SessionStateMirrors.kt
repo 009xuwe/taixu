@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.projection
 
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,8 +17,7 @@ import top.wkbin.taixu.harness.ToolCall
  * - 每会话一份底层存储；前台会话的值同时镜像到全局单值流供 UI / 通知消费。
  * - 纯内存组件，不持有任何业务依赖；写入语义与原 HarnessLoop 内联实现一致。
  */
-@Singleton
-class SessionStateMirrors @Inject constructor(
+class SessionStateMirrors(
     private val tracker: CurrentSessionTracker,
 ) {
 

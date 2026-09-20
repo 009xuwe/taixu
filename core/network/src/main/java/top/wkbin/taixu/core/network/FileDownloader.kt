@@ -13,8 +13,6 @@ import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.URLProtocol
 import io.ktor.utils.io.readAvailable
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -47,8 +45,7 @@ interface FileDownloader {
     fun download(request: DownloadRequest): Flow<DownloadEvent>
 }
 
-@Singleton
-class ResumableFileDownloader @Inject constructor(
+class ResumableFileDownloader(
     private val httpClient: HttpClient,
     private val checksumVerifier: ChecksumVerifier,
 ) : FileDownloader {

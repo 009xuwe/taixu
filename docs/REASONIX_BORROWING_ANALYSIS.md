@@ -25,7 +25,7 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 - 新增 `harness/prompt/MemoryRecallSelector.kt`：召回逻辑自 SystemPromptBuilder 抽出，渲染为 `<recalled_memory>` 低权威后缀块。
 - `SessionTreeStore.appendRecallBlock`：以 `recall_context` entry 紧随用户轮持久化，entry id 由 userMessageId 确定性推导（天然幂等、无查重读放大）；不入消息流，UI/检索不可见，降级安全。
 - `CompactedContext.recallBlocks` + `CompactionManager.project()` 解码映射；`ApiContextAssembler` 对最新用户轮**只算一次**并持久化，同轮多轮工具循环字节级复用。
-- SystemPromptBuilder：recallSection 移除；技能 @提及与 PromptRouter 规则块改为**全会话累计**（只增不减，枚举上限有界），system prompt 相邻轮字节级一致；MCP 能力章节改用全量活跃清单（新接口 `ActiveMcpToolCatalog` + Hilt @Binds），@ 裁剪不再影响提示词。
+- SystemPromptBuilder：recallSection 移除；技能 @提及与 PromptRouter 规则块改为**全会话累计**（只增不减，枚举上限有界），system prompt 相邻轮字节级一致；MCP 能力章节改用全量活跃清单（新接口 `ActiveMcpToolCatalog` + Koin 绑定），@ 裁剪不再影响提示词。
 
 **② 压缩摘要请求 cache-replay**
 
@@ -33,7 +33,7 @@ Reasonix 的架构能力与太墟大体同一档次，压缩、子代理租约�
 - 新增 `ApiMessageProjector`（session 包）：消息→API 投影从组装器原样抽出，主对话与摘要重放共用同一口径（含 DeepSeek reasoning 回传、悬空调用丢弃）。
 - `CompactionSummarizer` + 纯函数对象 `SummaryReplayRequests`：摘要请求改为重放原 system + 原摘要层 + 与主请求字节一致的折叠前缀（截断已发生过），末尾仅追加压缩指令——输入命中 provider KV 缓存；估算超窗或请求失败自动回退原独立叙事路径，压缩永不因形状问题中断。
 
-验证：`:harness:testDebugUnitTest` 全绿（新增 `CompactionSummarizerReplayTest` 5 项 + ApiContextAssemblerTest 召回持久化/历史冻结/规则块累计/技能累计 4 项，共 16 项）；`:app:compileDebugKotlin` 通过（Hilt 图完整）。
+验证：`:harness:testDebugUnitTest` 全绿（新增 `CompactionSummarizerReplayTest` 5 项 + ApiContextAssemblerTest 召回持久化/历史冻结/规则块累计/技能累计 4 项，共 16 项）；`:app:compileDebugKotlin` 通过（Koin 图完整）。
 
 **③ 子代理完成 claim 的 host 裁定（P1，2026-09-19）**
 

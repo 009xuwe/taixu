@@ -1,9 +1,6 @@
 package top.wkbin.taixu.harness.prompt
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 
@@ -18,9 +15,8 @@ fun interface PrivilegeSectionRenderer {
 }
 
 /** 默认实现：根据当前 PrivilegeManager 状态选择 PROOT / Shizuku / Root 章节。 */
-@Singleton
-class DefaultPrivilegeSectionRenderer @Inject constructor(
-    @ApplicationContext private val context: Context,
+class DefaultPrivilegeSectionRenderer(
+    private val context: Context,
     private val privilegeManager: PrivilegeManager,
     private val promptAssets: PromptAssetLoader,
 ) : PrivilegeSectionRenderer {

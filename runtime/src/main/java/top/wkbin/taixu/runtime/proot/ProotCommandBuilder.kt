@@ -5,16 +5,12 @@ import top.wkbin.taixu.runtime.EnvironmentResolver
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
 class ProotCommandBuilder private constructor(
     private val environmentResolver: EnvironmentResolver,
     private val logWarning: (String) -> Unit,
 ) {
 
-    @Inject
     constructor(
         environmentResolver: EnvironmentResolver,
         logger: AppLogger,

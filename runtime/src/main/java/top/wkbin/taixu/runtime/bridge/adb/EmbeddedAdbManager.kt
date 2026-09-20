@@ -8,12 +8,9 @@ import android.util.Log
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
 import com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,9 +39,8 @@ import top.wkbin.taixu.core.datastore.RuntimePreferences
  * StackOverflowError（NSD Binder 回调在部分设备上会对同一服务连续触发 onServiceUpdated，
  * 且调用栈不跨线程，导致同步无限递归）。所有回调均通过协程调度器异步处理。
  */
-@Singleton
-class EmbeddedAdbManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class EmbeddedAdbManager(
+    private val context: Context,
     private val preferences: RuntimePreferences,
     private val pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
 ) {

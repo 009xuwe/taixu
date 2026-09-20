@@ -8,16 +8,13 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.rootfs.TarStreamExtractor
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import org.tukaani.xz.XZInputStream
 
 /** Installs pinned official ARM64 runtime archives outside the replaceable rootfs. */
-@Singleton
-class RuntimeBinaryInstaller @Inject constructor(
+class RuntimeBinaryInstaller(
     private val pathManager: RuntimePathManager,
     private val linuxRuntime: LinuxRuntime,
     private val fileDownloader: FileDownloader,

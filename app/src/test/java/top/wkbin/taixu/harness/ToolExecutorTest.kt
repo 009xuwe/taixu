@@ -143,10 +143,11 @@ class ToolExecutorTest {
 
         val invalid = executor.execute(toolCall(HarnessTool.BASE, buildJsonObject {
             put("command", "pwd")
-            put("timeout_seconds", 3601)
+            put("timeout_seconds", 901)
         }))
         assertFalse(invalid.success)
-        assertTrue(invalid.output.contains("1-3600"))
+        assertTrue(invalid.output, invalid.output.contains("1-900"))
+        assertEquals(2, runtime.executedShellCommands.size)
     }
 
     @Test

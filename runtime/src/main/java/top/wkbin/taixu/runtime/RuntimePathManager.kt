@@ -2,14 +2,10 @@ package top.wkbin.taixu.runtime
 
 import android.content.Context
 import top.wkbin.taixu.runtime.rootfs.RootfsValidator
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class RuntimePathManager @Inject constructor(
-    @ApplicationContext context: Context,
+class RuntimePathManager(
+    context: Context,
     private val rootfsValidator: RootfsValidator,
 ) {
     private val appFilesDir: File = context.filesDir

@@ -2,8 +2,6 @@ package top.wkbin.taixu.workflow
 
 import android.app.Activity
 import android.app.Application
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,8 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * 进程级前后台追踪：按 startedActivities 计数判定。
  * WorkflowHudService 内有同款逻辑但只服务于悬浮窗；审批通知等组件共用本单例。
  */
-@Singleton
-class AppForegroundTracker @Inject constructor() {
+class AppForegroundTracker() {
     private val _inForeground = MutableStateFlow(false)
     val inForeground: StateFlow<Boolean> = _inForeground.asStateFlow()
 

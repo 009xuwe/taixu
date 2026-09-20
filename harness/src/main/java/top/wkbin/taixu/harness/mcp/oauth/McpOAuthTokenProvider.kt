@@ -1,14 +1,11 @@
 package top.wkbin.taixu.harness.mcp.oauth
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.sync.withLock
 import top.wkbin.taixu.core.database.McpOAuthCredentialRepository
 import top.wkbin.taixu.core.model.McpServerConfig
 
 /** Read-only token provider used by MCP transport; refresh orchestration is added by coordinator. */
-@Singleton
-class McpOAuthTokenProvider @Inject constructor(
+class McpOAuthTokenProvider(
     private val credentials: McpOAuthCredentialRepository,
     private val coordinator: McpOAuthCoordinator,
 ) {

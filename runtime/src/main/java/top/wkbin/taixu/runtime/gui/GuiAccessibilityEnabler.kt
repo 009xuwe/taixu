@@ -3,9 +3,6 @@ package top.wkbin.taixu.runtime.gui
 import android.content.ComponentName
 import android.content.Context
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.delay
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
@@ -14,9 +11,8 @@ import top.wkbin.taixu.runtime.privilege.PrivilegeManager
  * With Shizuku/Root, programmatically enable [TaiXuGuiAccessibilityService]
  * via Secure settings — no manual trip to 无障碍 settings.
  */
-@Singleton
-class GuiAccessibilityEnabler @Inject constructor(
-    @ApplicationContext private val context: Context,
+class GuiAccessibilityEnabler(
+    private val context: Context,
     private val privilegeManager: PrivilegeManager,
 ) {
     @Volatile private var lastAttemptAt = 0L

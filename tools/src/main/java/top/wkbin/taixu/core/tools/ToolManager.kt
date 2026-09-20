@@ -12,8 +12,6 @@ import top.wkbin.taixu.runtime.service.LocalServiceSpec
 import top.wkbin.taixu.runtime.tools.InstallEvent
 import top.wkbin.taixu.runtime.shell.LinuxSession
 import top.wkbin.taixu.runtime.shell.ManagedProcess
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -73,8 +71,7 @@ private data class UninstallOutcome(
     val message: String,
 )
 
-@Singleton
-class ToolManager @Inject constructor(
+class ToolManager(
     private val toolRepository: ToolRepository,
     private val installLogRepository: InstallLogRepository,
     private val installTaskRepository: InstallTaskRepository,

@@ -2,9 +2,7 @@ package top.wkbin.taixu.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.Locale
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,8 +52,7 @@ data class StorageUsageUiState(
         }
 }
 
-@HiltViewModel
-class StorageUsageViewModel @Inject constructor(
+class StorageUsageViewModel(
     private val storageManager: StorageManager,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(StorageUsageUiState())

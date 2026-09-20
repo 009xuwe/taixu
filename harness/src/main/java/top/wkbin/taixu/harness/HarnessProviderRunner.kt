@@ -2,7 +2,6 @@ package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import java.io.IOException
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -20,7 +19,7 @@ import top.wkbin.taixu.harness.session.ApiContextAssembler
 import kotlin.time.Duration.Companion.milliseconds
 
 /** 模型能力选择、流式请求重试及助手回复持久化；不持有会话调度状态。 */
-class HarnessProviderRunner @Inject constructor(
+class HarnessProviderRunner(
     private val providerClient: ProviderClient,
     private val messageStore: SessionTreeStore,
     private val operationCoordinator: OperationCoordinator,

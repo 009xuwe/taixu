@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import androidx.compose.foundation.Image
@@ -65,7 +66,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -90,7 +90,7 @@ fun ToolCenterScreen(
     onLaunchPty: (toolId: String) -> Unit,
     onOpenToolDetail: (toolId: String) -> Unit = {},
     onStartAiHealing: (toolId: String, toolName: String, errorLogs: List<String>) -> Unit = { _, _, _ -> },
-    viewModel: ToolCenterViewModel = hiltViewModel(),
+    viewModel: ToolCenterViewModel = koinViewModel(),
 ) {
     val tools by viewModel.tools.collectAsStateWithLifecycle()
     val installProgress by viewModel.installProgress.collectAsStateWithLifecycle()

@@ -9,8 +9,6 @@ import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import top.wkbin.taixu.core.model.ApprovalMode
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Entity(tableName = "agent_approval_requests")
 data class AgentApprovalRequestEntity(
@@ -93,8 +91,7 @@ interface AgentApprovalDao {
     suspend fun upsertSettings(settings: AgentApprovalSettingsEntity)
 }
 
-@Singleton
-class AgentApprovalRepository @Inject constructor(
+class AgentApprovalRepository(
     private val dao: AgentApprovalDao,
 ) {
     val mode: Flow<ApprovalMode> = dao.observeSettings().map { ApprovalMode.fromId(it?.mode) }

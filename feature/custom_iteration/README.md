@@ -25,7 +25,7 @@ taixu-custom-iteration-module/
     │       │   └── TaiXuDevBuildCoordinator.kt   # CI 调度与 APK 下载校验协调器
     │       └── ui/iteration/
     │           ├── CustomIterationScreen.kt      # Jetpack Compose UI 界面
-    │           └── CustomIterationViewModel.kt   # Hilt 状态管理 ViewModel
+    │           └── CustomIterationViewModel.kt   # Koin 状态管理 ViewModel
 ```
 
 ---

@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import androidx.compose.material3.minimumInteractiveComponentSize
 
@@ -46,7 +47,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.StorageMountBinding
 import top.wkbin.taixu.ui.components.NoticeBanner
@@ -62,7 +62,7 @@ import top.wkbin.taixu.ui.components.RuntimeTopBar
 @Composable
 fun StorageMountSettingsScreen(
     onBack: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel(),
+    viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val downloadEnabled by viewModel.mountDownloadEnabled.collectAsStateWithLifecycle()
     val documentsEnabled by viewModel.mountDocumentsEnabled.collectAsStateWithLifecycle()

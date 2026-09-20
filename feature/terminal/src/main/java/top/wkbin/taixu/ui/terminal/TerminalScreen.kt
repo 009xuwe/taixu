@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.terminal
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import android.app.Activity
@@ -61,7 +62,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import top.wkbin.taixu.feature.terminal.R
@@ -86,7 +86,7 @@ fun TerminalScreen(
     onBack: () -> Unit,
     project: String = "",
     showBackButton: Boolean = true,
-    viewModel: TerminalViewModel = hiltViewModel(),
+    viewModel: TerminalViewModel = koinViewModel(),
 ) {
     val error by viewModel.error.collectAsStateWithLifecycle()
     val handles by viewModel.handles.collectAsStateWithLifecycle()

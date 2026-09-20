@@ -30,7 +30,7 @@ description: 太墟（TaiXu）自定义迭代与 TaiXuDev 构建规范，引导 
    - 检查当前 Git 分支状态与工作区 Clean 状态。
 2. **架构规范约束**：
    - **UI 层**：严格使用 Jetpack Compose + Material3，遵循 `top.wkbin.taixu.ui` 命名规范；
-   - **状态管理**：使用 Hilt 注入 ViewModel，以 `StateFlow` + `collectAsStateWithLifecycle` 暴露状态；
+   - **状态管理**：使用 Koin 注入 ViewModel，以 `StateFlow` + `collectAsStateWithLifecycle` 暴露状态；
    - **Linux 沙盒**：PRoot 系统调用与交互遵循 `runtime` 模块标准契约。
 3. **本地冒烟测试**：
    - 在提交前运行 `./gradlew testDebugUnitTest` 进行基础单元测试；

@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.mcp.server
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -12,8 +10,7 @@ import top.wkbin.taixu.runtime.browser.tools.BrowserMcpTools
 /**
  * 把 `mcp__browser__<tool>` 转发到 [BrowserMcpTools] 实例。
  */
-@Singleton
-class McpToolDispatcher @Inject constructor(
+class McpToolDispatcher(
     private val browserTools: BrowserMcpTools,
 ) {
     fun listTools(): List<JsonObject> = browserTools.list().map { spec ->

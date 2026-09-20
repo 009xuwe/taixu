@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.navigation
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,7 +24,6 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavBackStack
@@ -117,17 +117,17 @@ fun TaiXuNavHost(
     globalNavigationBus: top.wkbin.taixu.core.common.navigation.GlobalNavigationBus? = null,
 ) {
     // Root tab entries are removed from composition when another tab becomes active. Keep the
-    // conversation owner at the Activity scope so switching back to 智枢 does not rebuild Hilt's
+    // conversation owner at the Activity scope so switching back to 智枢 does not rebuild Koin's
     // graph, restore the latest session, and restart its initialization skeleton on every visit.
-    val chatViewModel: ChatViewModel = hiltViewModel()
+    val chatViewModel: ChatViewModel = koinViewModel()
     // 浏览器引擎是全局单例：BrowserViewModel 同样挂到 Activity 作用域，
     // 使智枢内嵌浏览器面板与独立浏览器页共享同一份 tab/URL/共浏览状态。
-    val browserViewModel: top.wkbin.taixu.ui.browser.BrowserViewModel = hiltViewModel()
+    val browserViewModel: top.wkbin.taixu.ui.browser.BrowserViewModel = koinViewModel()
     val browserUiState by browserViewModel.uiState.collectAsStateWithLifecycle()
     // SettingsViewModel owns dozens of eagerly shared DataStore/database streams and performs
     // repository initialization. Let the settings navigation graph share the Activity-scoped
     // instance instead of constructing that whole graph once for every Navigation3 entry.
-    val settingsViewModel: SettingsViewModel = hiltViewModel()
+    val settingsViewModel: SettingsViewModel = koinViewModel()
     val homeStack = rememberNavBackStack(HomeDestination)
     val agentStack = rememberNavBackStack(AgentDestination)
     val workspaceStack = rememberNavBackStack(WorkspaceDestination)

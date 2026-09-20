@@ -3,8 +3,6 @@ package top.wkbin.taixu.runtime.tools
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.ShellCommand
-import javax.inject.Inject
-import javax.inject.Singleton
 import java.net.URI
 import kotlinx.coroutines.delay
 
@@ -16,8 +14,7 @@ import kotlinx.coroutines.delay
  * on every exit path. URLs are deliberately allow-listed because these are
  * application-owned installers, not arbitrary manifest commands.
  */
-@Singleton
-class RemoteScriptRunner @Inject constructor(
+class RemoteScriptRunner(
     private val linuxRuntime: LinuxRuntime,
 ) {
     suspend fun run(

@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.workspace
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,7 +41,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.feature.workspace.R
 import top.wkbin.taixu.runtime.ApkImportSource
@@ -80,7 +80,7 @@ fun WorkspaceScreen(
     onOpenToolCenter: () -> Unit = {},
     onOpenWorkshopSettings: () -> Unit = {},
     onOpenWorkflows: (String) -> Unit = {},
-    viewModel: WorkspaceViewModel = hiltViewModel(),
+    viewModel: WorkspaceViewModel = koinViewModel(),
 ) {
     val projects by viewModel.projects.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()

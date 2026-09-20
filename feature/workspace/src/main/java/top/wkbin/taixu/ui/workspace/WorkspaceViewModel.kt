@@ -9,11 +9,8 @@ import top.wkbin.taixu.runtime.WorkspaceStorage
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.template.InstalledProjectTemplate
 import top.wkbin.taixu.template.ProjectTemplateStore
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import top.wkbin.taixu.feature.workspace.R
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,9 +20,8 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-@HiltViewModel
-class WorkspaceViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class WorkspaceViewModel(
+    private val context: Context,
     private val workspaceManager: WorkspaceManager,
     private val buildCoordinator: WorkspaceBuildTaskCoordinator,
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,

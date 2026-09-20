@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.widget.ImageView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -31,7 +32,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.database.AndroidAppEntity
 import top.wkbin.taixu.ui.components.RuntimeButton
@@ -45,7 +45,7 @@ import top.wkbin.taixu.ui.settings.LocalizedText as Text
 @Composable
 fun AppManagementScreen(
     onBack: () -> Unit,
-    viewModel: AppManagementViewModel = hiltViewModel(),
+    viewModel: AppManagementViewModel = koinViewModel(),
 ) {
     val apps by viewModel.apps.collectAsStateWithLifecycle()
     val syncing by viewModel.syncing.collectAsStateWithLifecycle()

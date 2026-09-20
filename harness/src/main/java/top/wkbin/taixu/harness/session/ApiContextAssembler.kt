@@ -1,11 +1,11 @@
 package top.wkbin.taixu.harness.session
 
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.ContextWindowPolicy
+import top.wkbin.taixu.harness.ImagePayloadCompressor
 import top.wkbin.taixu.harness.HarnessApiMapper
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ModelConfig
@@ -32,7 +32,7 @@ import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
  * user 轮后缀、路由规则块与技能按全会话累计），相邻两轮请求的 system 消息字节级一致；
  * 变化只出现在本轮新增的消息上（本就未进入缓存）。
  */
-class ApiContextAssembler @Inject constructor(
+class ApiContextAssembler(
     private val compactionManager: CompactionManager,
     private val settingsDataStore: AgentPreferences,
     private val systemPromptBuilder: SystemPromptBuilder,
@@ -186,6 +186,9 @@ class ApiContextAssembler @Inject constructor(
                     ),
                 )
             }
+            // 物理字节预检独立于 token 折叠：关闭压缩时历史仍可能把 Nginx/中转撑到 HTTP 413。
+            msgs = ImagePayloadCompressor.downscaleHarness(msgs)
+            msgs = ContextWindowPolicy.enforceRequestByteBudget(msgs, toolCallDetailsOf(msgs))
             val summaryLayer = compactedContext.summaryLayer
             if (summaryLayer.isNotBlank()) {
                 add(
@@ -196,11 +199,15 @@ class ApiContextAssembler @Inject constructor(
                 )
             }
             addAll(
-                ApiMessageProjector.project(
-                    msgs = msgs,
-                    toolCallMode = toolCallMode,
-                    visionEnabled = model.visionEnabled,
-                    recallSuffixes = compactedContext.recallBlocks,
+                ContextWindowPolicy.shrinkApiMessagesToByteBudget(
+                    ImagePayloadCompressor.downscale(
+                        ApiMessageProjector.project(
+                            msgs = msgs,
+                            toolCallMode = toolCallMode,
+                            visionEnabled = model.visionEnabled,
+                            recallSuffixes = compactedContext.recallBlocks,
+                        ),
+                    ),
                 ),
             )
         }

@@ -16,11 +16,8 @@ import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.terminal.TerminalSessionClientRouter
 import top.wkbin.taixu.runtime.terminal.TerminalSessionHandle
 import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import top.wkbin.taixu.feature.terminal.R
-import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,9 +29,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-@HiltViewModel
-class TerminalViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class TerminalViewModel(
+    private val context: Context,
     private val terminalManager: TerminalSessionManager,
     val sessionClientRouter: TerminalSessionClientRouter,
     private val workspaceManager: WorkspaceManager,

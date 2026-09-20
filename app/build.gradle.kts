@@ -17,8 +17,6 @@ val taiXuDevBuild = System.getenv("TAIXU_DEV_BUILD") == "1"
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
-    alias(libs.plugins.hilt)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.androidx.baselineprofile)
 }
@@ -174,6 +172,7 @@ dependencies {
     implementation(project(":core:security"))
     implementation(project(":core:datastore"))
     implementation(project(":runtime"))
+    implementation(project(":project-template"))
     implementation(project(":tools"))
     implementation(project(":harness"))
     implementation(project(":feature:components"))
@@ -197,17 +196,14 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
 
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
-    implementation(libs.androidx.hilt.navigation.compose)
-    // 工作流定时计划：WorkManager 到点触发 + @HiltWorker 注入
+    implementation(libs.koin.android)
+    implementation(libs.koin.compose.viewmodel)
+    // 工作流定时计划：WorkManager 到点触发 + Koin Worker 注入
     implementation(libs.androidx.work.runtime.ktx)
-    implementation(libs.androidx.hilt.work)
-    ksp(libs.androidx.hilt.compiler)
+    implementation(libs.koin.workmanager)
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
-    ksp(libs.androidx.room.compiler)
 
     implementation(libs.shizuku.provider)
 
@@ -222,6 +218,16 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
+    testImplementation(libs.koin.test)
+    testImplementation(libs.androidx.work.testing)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    // Robolectric on Java 25 requires the same ASM override as core:database.
+    testImplementation(libs.asm)
+    testImplementation(libs.asm.commons)
+    testImplementation(libs.asm.util)
+    testImplementation(libs.asm.tree)
+    testImplementation(libs.asm.analysis)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

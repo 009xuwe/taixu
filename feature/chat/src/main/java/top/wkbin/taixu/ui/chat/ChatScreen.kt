@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.chat
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -69,7 +70,6 @@ import androidx.compose.ui.res.stringResource
 import top.wkbin.taixu.feature.chat.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -135,7 +135,7 @@ fun ChatScreen(
     browserActivityTick: Long = 0L,
     browserBackPressed: (() -> Boolean)? = null,
     onOpenRepository: ((projectName: String) -> Unit)? = null,
-    viewModel: ChatViewModel = hiltViewModel(),
+    viewModel: ChatViewModel = koinViewModel(),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val running by viewModel.running.collectAsStateWithLifecycle()

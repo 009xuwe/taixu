@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.recovery
 
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 import top.wkbin.taixu.core.database.AgentApprovalRepository
 import top.wkbin.taixu.core.database.HarnessRuntimeRepository
@@ -23,8 +21,7 @@ sealed interface RecoveryOutcome {
 }
 
 /** Applies explicit crash policy from the last durable operation snapshot. */
-@Singleton
-class RecoveryManager @Inject constructor(
+class RecoveryManager(
     private val repository: HarnessRuntimeRepository,
     private val coordinator: OperationCoordinator,
     private val approvalRepository: AgentApprovalRepository? = null,

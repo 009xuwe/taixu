@@ -29,8 +29,6 @@ import top.wkbin.taixu.runtime.shell.ShellExecutor
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.Dispatchers
@@ -41,8 +39,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-@Singleton
-class LinuxRuntimeImpl @Inject constructor(
+class LinuxRuntimeImpl(
     private val pathManager: RuntimePathManager,
     private val prootInstaller: ProotInstaller,
     private val rootfsInstaller: RootfsInstaller,

@@ -4,7 +4,6 @@ import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.harness.mcp.McpToolApiName
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -31,7 +30,7 @@ private data class ExecutableToolCall(
 )
 
 /** 工具回合边界：参数校验、限额、执行、审批暂停和结果结算。 */
-class HarnessToolRoundRunner @Inject constructor(
+class HarnessToolRoundRunner(
     private val toolExecutor: ToolExecutor,
     private val sessionDao: HarnessSessionRepository,
     private val json: Json,

@@ -6,8 +6,6 @@ import top.wkbin.taixu.core.database.TerminalSessionRepository
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.SessionConfig
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,8 +33,7 @@ class TerminalSessionHandle internal constructor(
     val isAlive: Boolean get() = termuxSession.isRunning
 }
 
-@Singleton
-class TerminalSessionManager @Inject constructor(
+class TerminalSessionManager(
     private val linuxRuntime: LinuxRuntime,
     private val terminalSessionDao: TerminalSessionRepository,
     private val sessionClientRouter: TerminalSessionClientRouter,

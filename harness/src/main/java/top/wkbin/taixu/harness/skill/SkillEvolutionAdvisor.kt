@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.skill
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,8 +38,7 @@ import top.wkbin.taixu.harness.projection.SessionMessageProjector
  * 产出以 [SkillSuggestion] 消息进入会话转写，UI 展示可操作卡片；
  * 分析失败、开关关闭、冷却期内一律静默跳过，绝不影响主对话。
  */
-@Singleton
-class SkillEvolutionAdvisor @Inject constructor(
+class SkillEvolutionAdvisor(
     private val providerClient: ProviderClient,
     private val skillRepository: AgentSkillRepository,
     private val settingsDataStore: AgentPreferences,

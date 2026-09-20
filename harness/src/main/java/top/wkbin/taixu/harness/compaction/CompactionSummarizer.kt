@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.compaction
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -10,6 +8,7 @@ import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ContextWindowPolicy
+import top.wkbin.taixu.harness.ImagePayloadCompressor
 import top.wkbin.taixu.harness.HarnessApiMapper
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ModelConfig
@@ -244,11 +243,15 @@ internal object SummaryReplayRequests {
         previousSummaries: List<String>,
         requestContext: SummaryRequestContext,
     ): List<ApiMessage>? {
-        val converted = ApiMessageProjector.project(
-            msgs = requestContext.replayPrefix,
-            toolCallMode = requestContext.toolCallMode,
-            visionEnabled = requestContext.visionEnabled,
-            recallSuffixes = requestContext.recallBlocks,
+        val converted = ContextWindowPolicy.shrinkApiMessagesToByteBudget(
+            ImagePayloadCompressor.downscale(
+                ApiMessageProjector.project(
+                    msgs = requestContext.replayPrefix,
+                    toolCallMode = requestContext.toolCallMode,
+                    visionEnabled = requestContext.visionEnabled,
+                    recallSuffixes = requestContext.recallBlocks,
+                ),
+            ),
         )
         if (converted.isEmpty()) return null
         val request = buildList {
@@ -292,8 +295,7 @@ internal object SummaryReplayRequests {
  * 长会话压缩的输入成本比独立叙事请求低约一个量级。重放不可行或失败时回退
  * 独立叙事请求（自带 SYSTEM_PROMPT + 序列化文本），保证摘要永不因形状问题失败。
  */
-@Singleton
-class CompactionSummarizer @Inject constructor(
+class CompactionSummarizer(
     private val providerClient: ProviderClient,
 ) {
     /** 结构化摘要提示词（对齐 pi 的 Summary Format）。 */

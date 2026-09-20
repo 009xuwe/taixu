@@ -5,8 +5,6 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
 import java.io.IOException
 import java.util.Locale
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.CreateBranchCommand
@@ -48,10 +46,9 @@ sealed class GitOpResult {
  * - 显式注入空的 system/user 配置，规避 Android 上 user.home / /etc/gitconfig 缺失的问题；
  * - push/pull 走 HTTPS + Token（按 host 从 GitCredentialsStore 取）。
  */
-@Singleton
-class GitManager @Inject constructor(
+class GitManager(
     private val credentialsStore: GitCredentialsStore,
-    private val linuxRuntime: dagger.Lazy<LinuxRuntime>,
+    private val linuxRuntime: Lazy<LinuxRuntime>,
 ) {
 
     fun isRepository(hostPath: String): Boolean = runCatching {
@@ -76,7 +73,7 @@ class GitManager @Inject constructor(
     suspend fun unshallow(linuxPath: String, onProgress: (String) -> Unit): GitOpResult =
         withContext(Dispatchers.IO) {
             runCatching {
-                val result = linuxRuntime.get().execute(
+                val result = linuxRuntime.value.execute(
                     ShellCommand(
                         commandLine = "git -C ${shellEscape(linuxPath)} fetch --unshallow --progress origin",
                         timeoutMs = 10 * 60_000L,

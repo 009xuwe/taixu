@@ -97,7 +97,7 @@
 - **持久化**：启动即写 RUNNING 行，运行中按约 3 秒节流 upsert 面包屑，终态写最终快照；历史行记录 `triggerSource`（MANUAL/SCHEDULE）与 `scheduleId`。进程被杀后启动对账（`reconcileInterruptedRuns`）把非终态行标为 CANCELLED（"进程曾被系统终止"），节点状态与日志保留，可在目录页手动重新运行。断点续跑不做。
 - **前台保活**：有运行时 Application 联动拉起 `WorkflowForegroundService`（dataSync + WakeLock/WifiLock），逐运行展示进度通知；结束发终态通知后自动退出。Android 15+ dataSync 6h 硬超时后服务按 DETACH 退出前台，运行继续。
 - **审批**：后台出现待审批节点时发 IMPORTANCE_HIGH 通知，可直接「批准/拒绝」（`WorkflowApprovalReceiver`），点正文深链打开运行页（`AppNavigationTarget.WorkflowRun`）。
-- **定时计划**：`workflow_schedules` 表 + WorkManager（UniqueWork，tag=计划 id）。重复方式：每天 HH:mm（24h 周期 + initialDelay）、每 N 分钟（下限 15）、一次性延时（触发后自动停用）。WorkManager 按需初始化（`Configuration.Provider` + HiltWorkerFactory），进程被杀/设备重启后到点自动拉起执行。到点 Worker 走 `WorkflowRunManager.start(trigger=SCHEDULE)`；沙箱未就绪先等待（约 2 分钟），未安装 RootFS 不自动下载，直接落 FAILED 历史。DAILY/INTERVAL 在 Doze 下可能有分钟级顺延。
+- **定时计划**：`workflow_schedules` 表 + WorkManager（UniqueWork，tag=计划 id）。重复方式：每天 HH:mm（24h 周期 + initialDelay）、每 N 分钟（下限 15）、一次性延时（触发后自动停用）。WorkManager 按需初始化（`Configuration.Provider` + KoinWorkerFactory），进程被杀/设备重启后到点自动拉起执行。到点 Worker 走 `WorkflowRunManager.start(trigger=SCHEDULE)`；沙箱未就绪先等待（约 2 分钟），未安装 RootFS 不自动下载，直接落 FAILED 历史。DAILY/INTERVAL 在 Doze 下可能有分钟级顺延。
 - **会话恢复边界**：`workflow:<executionId>:<nodeId>` 前缀的 Harness 会话不参与 `recoverAllInterruptedSessions` 自动续跑，避免死运行的副作用重放。修复流程拒绝后续审批不会自动回滚已有修改。
 
 ## 验证范围

@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.checkpoint
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 
 /**
@@ -12,8 +10,7 @@ import top.wkbin.taixu.harness.WorkspaceFileAccess
  * - CONVERSATION/BOTH：需要可选的对话 fork 处理器（[conversationRewinder]）在目标轮处派生新会话；
  *   未配置时为 partial 结果，不阻塞代码恢复。
  */
-@Singleton
-class RewindController @Inject constructor(
+class RewindController(
     private val store: CheckpointStore,
     private val fileAccess: WorkspaceFileAccess,
     private val conversationRewinder: ConversationRewinder? = null,

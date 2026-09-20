@@ -2,7 +2,6 @@ package top.wkbin.taixu.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,11 +18,9 @@ import top.wkbin.taixu.core.tools.ToolInstallProgress
 import top.wkbin.taixu.core.tools.ToolManager
 import top.wkbin.taixu.core.tools.ToolVerification
 import top.wkbin.taixu.runtime.LinuxRuntime
-import javax.inject.Inject
 import android.net.Uri
 
-@HiltViewModel
-class ToolCenterViewModel @Inject constructor(
+class ToolCenterViewModel(
     private val toolManager: ToolManager,
     private val linuxRuntime: LinuxRuntime,
     private val firstUseGuidePreferences: FirstUseGuidePreferences,

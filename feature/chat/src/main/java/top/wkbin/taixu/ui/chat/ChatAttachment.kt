@@ -93,13 +93,14 @@ object AttachmentHelper {
                 ?: "image/jpeg"
             val base64 = if (isImage) {
                 runCatching {
+                    // 与 ImagePayloadCompressor 对齐：长边 1280、JPEG 80，避免相册原图把请求体顶到 413。
                     val boundsOptions = android.graphics.BitmapFactory.Options().apply {
                         inJustDecodeBounds = true
                     }
                     android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath, boundsOptions)
 
                     var inSampleSize = 1
-                    val maxDimension = 2048
+                    val maxDimension = 1280
                     if (boundsOptions.outHeight > maxDimension || boundsOptions.outWidth > maxDimension) {
                         val halfHeight = boundsOptions.outHeight / 2
                         val halfWidth = boundsOptions.outWidth / 2
@@ -114,7 +115,7 @@ object AttachmentHelper {
                     val bitmap = android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath, decodeOptions)
                     if (bitmap != null) {
                         val baos = java.io.ByteArrayOutputStream()
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos)
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, baos)
                         val bytes = baos.toByteArray()
                         val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                         "data:image/jpeg;base64,$encoded"

@@ -2,8 +2,6 @@ package top.wkbin.taixu.harness
 
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -26,8 +24,7 @@ import kotlinx.coroutines.sync.withPermit
  * - 取消沿结构化并发传播：外层 Job 被取消时，所有在途工具被打断并向上抛出
  *   CancellationException，由 HarnessLoop 的悬空调用修复逻辑收尾。
  */
-@Singleton
-class ToolRoundDispatcher @Inject constructor() {
+class ToolRoundDispatcher() {
     /** 工作区（或语义等价的 scope key）→ 互斥锁；blank key 兜底为全局单锁。 */
     private val mutationMutexes = ConcurrentHashMap<String, Mutex>()
 

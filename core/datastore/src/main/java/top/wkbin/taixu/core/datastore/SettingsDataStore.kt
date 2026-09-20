@@ -9,19 +9,15 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.security.SecretManager
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
-@Singleton
-class SettingsDataStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+class SettingsDataStore(
+    private val context: Context,
     private val secretManager: SecretManager,
 ) {
     // 工坊 Android/Flutter 工具链覆盖配置。空值表示使用当前套件的标准路径。
@@ -623,14 +619,13 @@ class SettingsDataStore @Inject constructor(
     suspend fun setContextBudgetTokens(value: Int) { context.settingsDataStore.edit { it[contextBudgetTokensKey] = value.coerceIn(4_000, 2_000_000) } }
 
     /**
-     * 历史折叠线比例（百分比，默认 100）。
+     * 历史折叠线比例（百分比，默认 70，必须与引擎 ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT 同步）。
      *
-     * 预算内可折叠到多少：折叠触发线按 `预算 × 比例%` 折算后再受输出/工具预留与
-     * SAFE_GENERATION_CAP 约束。100 = 只在这些预留处折叠（与旧行为一致）；
-     * 调小可让长会话更早折叠，降低单次请求的 input token 量（省费用、降首字延迟）。
+     * 预算内可折叠到多少：折叠触发线按 `预算 × 比例%` 折算后再受输出/工具预留约束。
+     * 70 = 在 75% 输入预留之前平滑进摘要，降低 HTTP 413；100 = 只在这些预留处折叠。
      */
     private val contextFoldingRatioPercentKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_folding_ratio_percent")
-    val contextFoldingRatioPercent: Flow<Int> = context.settingsDataStore.data.map { it[contextFoldingRatioPercentKey] ?: 100 }
+    val contextFoldingRatioPercent: Flow<Int> = context.settingsDataStore.data.map { it[contextFoldingRatioPercentKey] ?: 70 }
     suspend fun setContextFoldingRatioPercent(value: Int) { context.settingsDataStore.edit { it[contextFoldingRatioPercentKey] = value.coerceIn(10, 100) } }
 
     /**

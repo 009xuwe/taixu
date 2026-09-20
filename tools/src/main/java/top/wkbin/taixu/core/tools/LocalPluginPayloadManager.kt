@@ -2,8 +2,6 @@ package top.wkbin.taixu.core.tools
 
 import top.wkbin.taixu.runtime.RuntimePathManager
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -27,8 +25,7 @@ sealed interface LocalPluginPreparationEvent {
 }
 
 /** Copies an imported plugin payload into the distro-owned /opt/taixu tree. */
-@Singleton
-class LocalPluginPayloadManager @Inject constructor(
+class LocalPluginPayloadManager(
     private val registry: ToolRegistry,
     private val pathManager: RuntimePathManager,
 ) {

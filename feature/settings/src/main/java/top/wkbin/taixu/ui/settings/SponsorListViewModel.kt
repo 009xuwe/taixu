@@ -2,12 +2,10 @@ package top.wkbin.taixu.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 sealed interface SponsorListUiState {
     data object Loading : SponsorListUiState
@@ -19,8 +17,7 @@ sealed interface SponsorListUiState {
  * 赞助者/贡献者名单 ViewModel：随赞助页面创建而初始化（仅进入页面时拉取一次），
  * 支持手动刷新（顶栏刷新按钮 / 失败重试）。
  */
-@HiltViewModel
-class SponsorListViewModel @Inject constructor(
+class SponsorListViewModel(
     private val repository: SponsorListRepository,
 ) : ViewModel() {
 

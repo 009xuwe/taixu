@@ -1,7 +1,5 @@
 package top.wkbin.taixu.core.database
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 
 /** Persistence port used by the harness runtime; feature modules never depend on its DAO. */
@@ -62,8 +60,7 @@ interface HarnessRuntimeRepository {
     suspend fun deleteSessionData(sessionId: String)
 }
 
-@Singleton
-class RoomHarnessRuntimeRepository @Inject constructor(
+class RoomHarnessRuntimeRepository(
     private val dao: HarnessRuntimeDao,
     private val blobStore: HarnessBlobStore? = null,
 ) : HarnessRuntimeRepository {

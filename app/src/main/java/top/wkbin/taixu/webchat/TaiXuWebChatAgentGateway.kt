@@ -1,8 +1,6 @@
 package top.wkbin.taixu.webchat
 
 import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.serialization.json.buildJsonObject
@@ -29,8 +27,7 @@ import top.wkbin.taixu.runtime.webchat.WebChatApproval
 import top.wkbin.taixu.runtime.webchat.WebChatMessage
 import top.wkbin.taixu.runtime.webchat.WebChatSessionSnapshot
 
-@Singleton
-class TaiXuWebChatAgentGateway @Inject constructor(
+class TaiXuWebChatAgentGateway(
     private val harnessLoop: HarnessLoop,
     private val sessions: HarnessSessionRepository,
     private val models: AiModelRepository,

@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -56,7 +57,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.ToolState
@@ -88,7 +88,7 @@ fun ToolDetailScreen(
     onBack: () -> Unit,
     onLaunchTerminal: (toolId: String) -> Unit,
     onStartAiHealing: (toolId: String, toolName: String, errorLogs: List<String>) -> Unit = { _, _, _ -> },
-    viewModel: ToolDetailViewModel = hiltViewModel(),
+    viewModel: ToolDetailViewModel = koinViewModel(),
 ) {
     androidx.compose.runtime.LaunchedEffect(toolId) {
         viewModel.setToolId(toolId)

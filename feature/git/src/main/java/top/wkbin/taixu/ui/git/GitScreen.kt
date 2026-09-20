@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.git
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -49,7 +50,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.feature.git.R
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -69,7 +69,7 @@ import top.wkbin.taixu.ui.components.RuntimeTextButton
 fun GitScreen(
     projectName: String,
     onBack: () -> Unit,
-    viewModel: GitViewModel = hiltViewModel(),
+    viewModel: GitViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current

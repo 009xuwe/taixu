@@ -12,8 +12,6 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,8 +25,7 @@ import top.wkbin.taixu.harness.workflow.WorkflowRunManager
  * 后台审批通知：App 在后台时出现待审批工作流节点，发 IMPORTANCE_HIGH 通知
  * （带 批准/拒绝 按钮），点正文打开运行页。回到前台（或审批已处理）后自动撤掉通知。
  */
-@Singleton
-class WorkflowApprovalNotifier @Inject constructor(
+class WorkflowApprovalNotifier(
     private val runManager: WorkflowRunManager,
     private val foregroundTracker: AppForegroundTracker,
 ) {

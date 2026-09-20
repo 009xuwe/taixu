@@ -10,12 +10,9 @@ import top.wkbin.taixu.core.tools.AgentModelDiscovery
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.RegistryRoute
 import top.wkbin.taixu.runtime.RuntimeInstallRequest
-import dagger.hilt.android.lifecycle.HiltViewModel
 import android.content.Context
 import android.net.Uri
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,9 +30,8 @@ import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 
 data class OnboardingStatus(val loaded: Boolean = false, val completed: Boolean = false)
 
-@HiltViewModel
-class OnboardingViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+class OnboardingViewModel(
+    private val context: Context,
     private val settings: OnboardingPreferences,
     private val linuxRuntime: LinuxRuntime,
     private val providerRepository: ProviderRepository,

@@ -10,14 +10,11 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.SessionConfig
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
-@Singleton
-class CodexToolInstaller @Inject constructor(
+class CodexToolInstaller(
     private val linuxRuntime: LinuxRuntime,
     private val dependencyManager: DependencyManager,
     private val providerManager: ProviderManager,

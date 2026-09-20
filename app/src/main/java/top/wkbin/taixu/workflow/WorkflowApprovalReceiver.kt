@@ -1,18 +1,17 @@
 package top.wkbin.taixu.workflow
 
+import org.koin.core.component.inject
+import org.koin.core.component.KoinComponent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 import top.wkbin.taixu.harness.workflow.WorkflowRunManager
 
 /** 通知栏审批按钮回调：批准/拒绝后让对应工作流节点继续推进。 */
-@AndroidEntryPoint
-class WorkflowApprovalReceiver : BroadcastReceiver() {
+class WorkflowApprovalReceiver : BroadcastReceiver(), KoinComponent {
 
-    @Inject lateinit var runManager: WorkflowRunManager
+    val runManager: WorkflowRunManager by inject()
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_DECIDE) return

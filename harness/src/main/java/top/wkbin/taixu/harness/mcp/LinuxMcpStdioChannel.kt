@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.mcp
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,8 +17,7 @@ import top.wkbin.taixu.runtime.shell.SessionConfig
  * its stdout into a buffered line channel. Bounded startup timeout prevents the caller from
  * hanging when PRoot is wedged.
  */
-@Singleton
-class LinuxMcpStdioChannelFactory @Inject constructor(
+class LinuxMcpStdioChannelFactory(
     private val linuxRuntime: LinuxRuntime,
     private val commandBuilder: McpCommandBuilder,
 ) : McpStdioChannelFactory {

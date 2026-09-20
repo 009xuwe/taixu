@@ -394,7 +394,12 @@ class ContextWindowPolicyTest {
             }
         }
 
-        val base = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val base = ContextWindowPolicy.computeKeepFromIndex(
+            messages,
+            budget = 18_000,
+            systemTokens = 10,
+            foldingRatioPercent = 100,
+        )
         assertTrue(base > 0)
 
         val tightened = ContextWindowPolicy.computeKeepFromIndex(
@@ -402,6 +407,7 @@ class ContextWindowPolicyTest {
             budget = 18_000,
             systemTokens = 10,
             keepRecentTokens = 400,
+            foldingRatioPercent = 100,
         )
 
         assertTrue("tightened($tightened) should be beyond base($base)", tightened > base)
@@ -568,7 +574,7 @@ class ContextWindowPolicyTest {
             ratioOrFraction - systemTokens -
                 ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
                 ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
-            ContextWindowPolicy.SAFE_GENERATION_CAP,
+            ContextWindowPolicy.generationCapFor(engineBudget),
         )
         assertEquals(expected, engineLine)
 
@@ -603,8 +609,8 @@ class ContextWindowPolicyTest {
 
     @Test
     fun `oversized declared window is clamped before folding preview`() {
-        val engineBudget = ContextWindowPolicy.clampedBudget(1_000_000, 250_938)
-        val previewBudget = ContextWindowPolicy.clampedBudget(1_000_000, 250_938)
+        val engineBudget = ContextWindowPolicy.clampedBudget(2_000_000, 250_938)
+        val previewBudget = ContextWindowPolicy.clampedBudget(2_000_000, 250_938)
         assertEquals(ContextWindowPolicy.MAX_CONTEXT_BUDGET, engineBudget)
         assertEquals(engineBudget, previewBudget)
         assertEquals(
@@ -653,12 +659,34 @@ class ContextWindowPolicyTest {
             (budget * 0.75).toInt() - systemTokens -
                 ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
                 ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
-            ContextWindowPolicy.SAFE_GENERATION_CAP,
+            ContextWindowPolicy.generationCapFor(budget),
         )
         assertEquals(
             expected,
-            ContextWindowPolicy.foldingLimitFor(budget, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT, systemTokens),
+            ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens),
         )
+    }
+
+    @Test
+    fun `default 70 percent folds earlier than the 75 percent input cap`() {
+        val budget = 200_000
+        val atDefault = ContextWindowPolicy.foldingLimitFor(
+            budget,
+            ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT,
+            systemTokens = 0,
+        )
+        val atFull = ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens = 0)
+        assertEquals(70, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)
+        assertTrue("默认 70% 应比 100% 更早折叠：$atDefault vs $atFull", atDefault < atFull)
+        assertEquals((budget * 70 / 100) - ContextWindowPolicy.RESERVED_OUTPUT_TOKENS - ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS, atDefault)
+    }
+
+    @Test
+    fun `flagship 200k window is not pinned to the 96k flash cap`() {
+        val limit = ContextWindowPolicy.foldingLimitFor(200_000, 100, systemTokens = 0)
+        assertTrue("200k 模型折叠线应超过 96k flash 封顶，实际=$limit", limit > ContextWindowPolicy.SAFE_GENERATION_CAP)
+        assertTrue(limit <= (200_000 * 0.75).toInt())
+        assertTrue(limit <= ContextWindowPolicy.generationCapFor(200_000))
     }
 
     @Test
@@ -667,8 +695,49 @@ class ContextWindowPolicyTest {
         val budget = ContextWindowPolicy.clampedBudget(declared, 128_000)
         val limit = ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens = 1_000)
         assertTrue(limit < declared)
-        assertTrue(limit <= ContextWindowPolicy.SAFE_GENERATION_CAP)
+        assertTrue(limit <= ContextWindowPolicy.generationCapFor(budget))
         assertTrue(limit < budget)
+    }
+
+    @Test
+    fun `byte budget truncates current-round tool results before they blow the payload`() {
+        val huge = "错误日志\n".repeat(80_000)
+        val messages = listOf(
+            UserMessage("u1", 1, "请排查"),
+            ToolCall("c1", 2, HarnessTool.BASE, kotlinx.serialization.json.buildJsonObject {}),
+            ToolResult("r1", 3, "c1", true, huge),
+        )
+        assertTrue(ContextWindowPolicy.estimateHarnessPayloadBytes(messages) > 200_000)
+        val shrunk = ContextWindowPolicy.enforceRequestByteBudget(messages, maxBytes = 32_000)
+        val result = shrunk.filterIsInstance<ToolResult>().single()
+        assertTrue(result.output.length < huge.length)
+        assertTrue(result.output.contains("请求体体积限制"))
+        assertTrue(result.output.contains("history_read(message_id=\"r1\")"))
+        assertTrue(ContextWindowPolicy.estimateHarnessPayloadBytes(shrunk) <= 32_000)
+    }
+
+    @Test
+    fun `byte budget strips images when text compaction is not enough`() {
+        val image = "data:image/png;base64," + "A".repeat(80_000)
+        val messages = listOf(
+            UserMessage("u1", 1, "看图", imageUrls = listOf(image)),
+            AssistantText("a1", 2, "ok"),
+        )
+        val shrunk = ContextWindowPolicy.enforceRequestByteBudget(messages, maxBytes = 8_000)
+        val user = shrunk.filterIsInstance<UserMessage>().single()
+        assertTrue(user.imageUrls.isEmpty())
+        assertTrue(user.text.contains("请求体体积限制"))
+        assertTrue(ContextWindowPolicy.estimateHarnessPayloadBytes(shrunk) <= 8_000)
+    }
+
+    @Test
+    fun `byte budget is a no-op when payload already fits`() {
+        val messages = listOf(
+            UserMessage("u1", 1, "hello"),
+            AssistantText("a1", 2, "hi"),
+        )
+        val same = ContextWindowPolicy.enforceRequestByteBudget(messages, maxBytes = 64_000)
+        assertTrue(same === messages)
     }
 
     // ------------------------------------------------------------------

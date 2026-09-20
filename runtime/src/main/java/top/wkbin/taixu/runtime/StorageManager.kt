@@ -4,8 +4,6 @@ import android.content.Context
 import android.os.StatFs
 import android.system.Os
 import android.system.OsConstants
-import dagger.Lazy
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
 import java.nio.file.FileVisitResult
@@ -15,8 +13,6 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -75,9 +71,8 @@ data class StorageUsage(
  * 每个文件按最长路径规则只归属一次。扫描结果同时产生清理计划；执行不解析 UI ID 为路径，
  * 不递归删除目录，也不删除扫描后新增、修改或替换的文件。未知数据始终保留在所属类别。
  */
-@Singleton
-class StorageManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class StorageManager(
+    private val context: Context,
     private val pathManager: RuntimePathManager,
     private val runtime: Lazy<LinuxRuntime>,
 ) {
@@ -385,7 +380,7 @@ class StorageManager @Inject constructor(
                     var released = 0L
                     var skipped = 0
                     var failed = 0
-                    runtime.get().withStorageCleanup {
+                    runtime.value.withStorageCleanup {
                         for (plan in selected) for (target in plan.targets) {
                             currentCoroutineContext().ensureActive()
                             try {

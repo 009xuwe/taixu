@@ -16,7 +16,8 @@
 | AndroidX / Jetpack Compose Material 3 | Android UI 与系统集成 | Google Maven，版本见 `gradle/libs.versions.toml` | 按各 AndroidX/Jetpack 组件的许可证与 NOTICE 要求分发 |
 | Ktor Client | HTTP 客户端（Agent 流式）与下载 | Maven Central，版本见 `gradle/libs.versions.toml` | Apache License 2.0 |
 | Kotlin / Kotlinx Serialization / Coroutines | 应用基础运行库 | Maven Central，版本见 `gradle/libs.versions.toml` | 按各组件上游许可证与 NOTICE 要求分发 |
-| Hilt / Room | 依赖注入与本地数据库 | Google Maven，版本见 `gradle/libs.versions.toml` | 按各组件上游许可证与 NOTICE 要求分发 |
+| Koin | 依赖注入 | Maven Central，版本见 `gradle/libs.versions.toml` | Apache-2.0 |
+| Room | 本地数据库 | Google Maven，版本见 `gradle/libs.versions.toml` | 按上游许可证与 NOTICE 要求分发 |
 | Agency Agents（软件研发精选目录） | 内置子智能体人格与专业工作流；按 9 个研发部门提供 136 个角色 | `msitarzewski/agency-agents`，固定提交 `3c9588880b7cafaec325a104899fd8bbe27e7d72` | MIT；原始 Markdown 与完整许可证随 APK 置于 `agency_agents/` assets，应用仅精选软件研发相关角色 |
 
 ## 工具安装器的上游来源

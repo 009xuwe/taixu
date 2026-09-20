@@ -2,10 +2,6 @@ package top.wkbin.taixu.harness.browser
 
 import android.content.Context
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
-import dagger.Lazy
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import top.wkbin.taixu.harness.mcp.server.BuiltinBrowserMcpAccess
@@ -28,16 +24,15 @@ import top.wkbin.taixu.core.browser.BrowserFamily
  * [McpServerRuntime] 经 [Lazy] 注入：其构造图（含 BrowserMcpTools 的 DataStore 快照读取）
  * 推迟到 bootstrap() 的 IO 协程内才展开，不阻塞主线程。
  */
-@Singleton
-class BrowserMcpBootstrap @Inject constructor(
-    @ApplicationContext private val context: Context,
+class BrowserMcpBootstrap(
+    private val context: Context,
     private val runtime: Lazy<McpServerRuntime>,
     private val registry: BrowserRegistry,
     private val browserPrefs: top.wkbin.taixu.core.datastore.BrowserPreferences,
 ) {
     /** 注册引擎并启动 HTTP server；幂等。按用户偏好（#4）决定绑定面：allowRemote 时绑定 0.0.0.0。 */
     suspend fun bootstrap(): Boolean {
-        val server = runtime.get()
+        val server = runtime.value
         if (server.isRunning) return true
         val regImpl = registry as? BrowserRegistryImpl ?: return false
         val prefs = readPrefs()
@@ -98,7 +93,7 @@ class BrowserMcpBootstrap @Inject constructor(
 
     fun stop() {
         try {
-            runtime.get().stop()
+            runtime.value.stop()
             BuiltinBrowserMcpAccess.token = null
         } catch (t: Throwable) { Log.w(TAG, "stop: ${t.message}") }
     }

@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings
 
+import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -55,7 +55,7 @@ fun LinuxEnvironmentSettingsScreen(
     onOpenEnvironmentVariables: () -> Unit,
     onOpenSshSettings: () -> Unit,
     onOpenFtpSettings: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel(),
+    viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val executionMode by viewModel.executionMode.collectAsStateWithLifecycle()
     val effectiveExecutionMode by viewModel.effectiveExecutionMode.collectAsStateWithLifecycle()

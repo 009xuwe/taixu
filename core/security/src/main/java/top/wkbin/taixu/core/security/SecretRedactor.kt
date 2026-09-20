@@ -1,11 +1,8 @@
 ﻿package top.wkbin.taixu.core.security
 
 import top.wkbin.taixu.core.common.logging.SensitiveDataRedactor
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class SecretRedactor @Inject constructor() : SensitiveDataRedactor {
+class SecretRedactor() : SensitiveDataRedactor {
     override fun redact(value: String): String {
         // Learn only within this entry so echoes of a labelled secret are also removed.
         // Do not retain credentials in a process-wide cache.

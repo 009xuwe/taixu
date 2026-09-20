@@ -1,11 +1,5 @@
 package top.wkbin.taixu.core.database.task
 
-import dagger.Binds
-import dagger.Module
-import dagger.hilt.InstallIn
-import dagger.hilt.components.SingletonComponent
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 
 /** Stable persistence port for durable Agent runs. Harness never talks to the Room DAO directly. */
@@ -45,8 +39,7 @@ data class AgentTaskCheckpoint(
     val updatedAt: Long,
 )
 
-@Singleton
-class RoomAgentTaskRepository @Inject constructor(
+class RoomAgentTaskRepository(
     private val dao: AgentTaskDao,
 ) : AgentTaskRepository {
     override fun observeAll() = dao.observeAllTasks()
@@ -85,11 +78,4 @@ class RoomAgentTaskRepository @Inject constructor(
 
     override suspend fun deleteForSession(sessionId: String) = dao.deleteTasksForSession(sessionId)
     override suspend fun delete(id: String) = dao.deleteTask(id)
-}
-
-@Module
-@InstallIn(SingletonComponent::class)
-abstract class AgentTaskRepositoryModule {
-    @Binds
-    abstract fun bindAgentTaskRepository(impl: RoomAgentTaskRepository): AgentTaskRepository
 }

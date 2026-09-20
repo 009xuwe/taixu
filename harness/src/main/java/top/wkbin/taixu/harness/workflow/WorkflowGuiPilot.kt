@@ -1,8 +1,6 @@
 package top.wkbin.taixu.harness.workflow
 
 import android.util.Log
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -28,8 +26,7 @@ import kotlin.coroutines.coroutineContext
  * Workflow-native GUI loop: observe → LLM returns one JSON action → execute.
  * Avoids SubagentLaneRunner (MCP discovery + approval dead-ends) so progress shows in the workflow UI.
  */
-@Singleton
-class WorkflowGuiPilot @Inject constructor(
+class WorkflowGuiPilot(
     private val gui: HostGuiController,
     private val privilegeManager: PrivilegeManager,
     private val providerClient: ProviderClient,

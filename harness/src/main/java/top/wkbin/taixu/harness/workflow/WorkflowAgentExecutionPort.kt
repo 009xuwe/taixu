@@ -1,7 +1,5 @@
 package top.wkbin.taixu.harness.workflow
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -46,8 +44,7 @@ interface WorkflowAgentExecutionPort {
  * foreground session. Coroutine cancellation is propagated into the lane runner, which
  * records an aborted operation before unwinding.
  */
-@Singleton
-class HarnessWorkflowAgentExecutionPort @Inject constructor(
+class HarnessWorkflowAgentExecutionPort(
     private val sessions: HarnessSessionRepository,
     private val models: AiModelRepository,
     private val laneRunner: SubagentLaneRunner,

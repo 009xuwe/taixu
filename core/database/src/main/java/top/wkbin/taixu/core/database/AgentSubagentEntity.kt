@@ -13,8 +13,6 @@ import kotlinx.coroutines.flow.map
 import top.wkbin.taixu.core.model.AgentSubagent
 import top.wkbin.taixu.core.model.AgentDepartmentCount
 import top.wkbin.taixu.core.model.AgentSubagentIndexEntry
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Entity(tableName = "agent_subagents")
 data class AgentSubagentEntity(
@@ -124,8 +122,7 @@ interface AgentSubagentDao {
     }
 }
 
-@Singleton
-class AgentSubagentRepository @Inject constructor(
+class AgentSubagentRepository(
     private val dao: AgentSubagentDao,
     private val catalogLoader: AgencyAgentCatalogLoader,
 ) {

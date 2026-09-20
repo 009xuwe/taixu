@@ -10,7 +10,6 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
 import top.wkbin.taixu.core.model.ToolManifest
 import top.wkbin.taixu.core.model.ToolRegistryDocument
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.BufferedInputStream
@@ -24,8 +23,6 @@ import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -66,9 +63,8 @@ private class CountingInputStream(input: InputStream) : FilterInputStream(input)
         super.read(buffer, offset, length).also { if (it > 0) bytesRead += it }
 }
 
-@Singleton
-class ToolRegistry @Inject constructor(
-    @ApplicationContext private val context: Context,
+class ToolRegistry(
+    private val context: Context,
     private val httpClient: OkHttpClient,
     private val logger: AppLogger,
 ) {

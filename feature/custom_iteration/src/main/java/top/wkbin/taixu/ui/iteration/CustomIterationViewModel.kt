@@ -4,9 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,8 +12,7 @@ import kotlinx.coroutines.launch
 import top.wkbin.taixu.feature.custom_iteration.R
 import top.wkbin.taixu.iteration.engine.CustomIterationBootstrap
 
-@HiltViewModel
-class CustomIterationViewModel @Inject constructor(
+class CustomIterationViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 

@@ -1,12 +1,9 @@
 package top.wkbin.taixu.core.datastore
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 
 /** Narrow preference views keep consumers from depending on the complete settings schema. */
-@Singleton
-class AppearancePreferences @Inject constructor(private val store: SettingsDataStore) {
+class AppearancePreferences(private val store: SettingsDataStore) {
     val themeMode get() = store.themeMode
     val themeStyle get() = store.themeStyle
     val chengmingBackgroundUri get() = store.chengmingBackgroundUri
@@ -21,8 +18,7 @@ class AppearancePreferences @Inject constructor(private val store: SettingsDataS
     suspend fun setDeveloperMode(value: Boolean) = store.setDeveloperMode(value)
 }
 
-@Singleton
-class TerminalPreferences @Inject constructor(private val store: SettingsDataStore) {
+class TerminalPreferences(private val store: SettingsDataStore) {
     val terminalFontSize get() = store.terminalFontSize
     val terminalColorScheme get() = store.terminalColorScheme
     val terminalHapticsEnabled get() = store.terminalHapticsEnabled
@@ -31,8 +27,7 @@ class TerminalPreferences @Inject constructor(private val store: SettingsDataSto
     suspend fun setTerminalHapticsEnabled(value: Boolean) = store.setTerminalHapticsEnabled(value)
 }
 
-@Singleton
-class RuntimePreferences @Inject constructor(private val store: SettingsDataStore) {
+class RuntimePreferences(private val store: SettingsDataStore) {
     val selectedDistribution get() = store.selectedDistribution
     val mirrorPolicy get() = store.mirrorPolicy
     val mountDownloadEnabled get() = store.mountDownloadEnabled
@@ -65,8 +60,7 @@ class RuntimePreferences @Inject constructor(private val store: SettingsDataStor
     suspend fun setMountSharedStorageEnabled(value: Boolean) = store.setMountSharedStorageEnabled(value)
 }
 
-@Singleton
-class WorkshopPreferences @Inject constructor(private val store: SettingsDataStore) {
+class WorkshopPreferences(private val store: SettingsDataStore) {
     val androidSdkPath get() = store.workshopAndroidSdkPath
     val ndkPath get() = store.workshopNdkPath
     val flutterSdkPath get() = store.workshopFlutterSdkPath
@@ -100,8 +94,7 @@ class WorkshopPreferences @Inject constructor(private val store: SettingsDataSto
 }
 
 /** Per-distro SSH settings exposed only to the runtime service and its settings UI. */
-@Singleton
-class SshPreferences @Inject constructor(private val store: SettingsDataStore) {
+class SshPreferences(private val store: SettingsDataStore) {
     fun enabled(distroId: String) = store.sshEnabled(distroId)
     fun port(distroId: String) = store.sshPort(distroId)
     fun authorizedKeys(distroId: String) = store.sshAuthorizedKeys(distroId)
@@ -117,8 +110,7 @@ class SshPreferences @Inject constructor(private val store: SettingsDataStore) {
 }
 
 /** Per-distro FTP settings exposed to the runtime FTP service and settings UI. */
-@Singleton
-class FtpPreferences @Inject constructor(private val store: SettingsDataStore) {
+class FtpPreferences(private val store: SettingsDataStore) {
     fun enabled(distroId: String) = store.ftpEnabled(distroId)
     fun port(distroId: String) = store.ftpPort(distroId)
     fun username(distroId: String) = store.ftpUsername(distroId)
@@ -140,8 +132,11 @@ data class LegacyEnvironmentVariable(
     val value: String,
 )
 
-@Singleton
-class AgentPreferences @Inject constructor(private val store: SettingsDataStore) {
+class AgentPreferences(private val store: SettingsDataStore) {
+    companion object {
+        const val DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS = SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS
+    }
+
     /** 对话结束后自动建议沉淀/进化技能（默认开启） */
     val skillEvolutionSuggestions: Flow<Boolean> = store.skillEvolutionSuggestions
 
@@ -169,7 +164,7 @@ class AgentPreferences @Inject constructor(private val store: SettingsDataStore)
     val environmentPrivacyMode get() = store.environmentPrivacyMode
     val allPlugins get() = store.allPlugins
     val defaultRoundLimitAutoContinuations get() = SettingsDataStore.DEFAULT_ROUND_LIMIT_AUTO_CONTINUATIONS
-    val defaultBaseCommandTimeoutSeconds get() = SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS
+    val defaultBaseCommandTimeoutSeconds get() = DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS
     suspend fun setThinkingExpanded(value: Boolean) = store.setThinkingExpanded(value)
     suspend fun setCommandOutputCompressionEnabled(value: Boolean) = store.setCommandOutputCompressionEnabled(value)
     suspend fun removeModelApiKey(secretRef: String) = store.removeModelApiKey(secretRef)
@@ -192,8 +187,7 @@ class AgentPreferences @Inject constructor(private val store: SettingsDataStore)
     suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) = store.setPluginEnabled(pluginId, enabled)
 }
 
-@Singleton
-class OnboardingPreferences @Inject constructor(private val store: SettingsDataStore) {
+class OnboardingPreferences(private val store: SettingsDataStore) {
     val onboardingCompleted get() = store.onboardingCompleted
     val selectedDistribution get() = store.selectedDistribution
     val mirrorPolicy get() = store.mirrorPolicy
@@ -205,24 +199,21 @@ class OnboardingPreferences @Inject constructor(private val store: SettingsDataS
     suspend fun setOnboardingCompleted(value: Boolean) = store.setOnboardingCompleted(value)
 }
 
-@Singleton
-class ToolPreferences @Inject constructor(private val store: SettingsDataStore) {
+class ToolPreferences(private val store: SettingsDataStore) {
     fun toolAccessToken(distroId: String, toolId: String) = store.toolAccessToken(distroId, toolId)
     suspend fun setToolAccessToken(distroId: String, toolId: String, token: String?) =
         store.setToolAccessToken(distroId, toolId, token)
 }
 
 /** 首次使用引导（插件中心 / 工作坊 / 多会话终端等页面级遮罩），设置页可整体清空重看。 */
-@Singleton
-class FirstUseGuidePreferences @Inject constructor(private val store: SettingsDataStore) {
+class FirstUseGuidePreferences(private val store: SettingsDataStore) {
     val firstUseGuidesShown get() = store.firstUseGuidesShown
     suspend fun markFirstUseGuideShown(id: String) = store.markFirstUseGuideShown(id)
     suspend fun clearFirstUseGuides() = store.clearFirstUseGuides()
 }
 
 /** 插件仓库（Registry）签名清单配置，开发者页与工具中心使用。 */
-@Singleton
-class RegistryPreferences @Inject constructor(private val store: SettingsDataStore) {
+class RegistryPreferences(private val store: SettingsDataStore) {
     val manifestUrl get() = store.registryManifestUrl
     val signatureUrl get() = store.registrySignatureUrl
     val publicKey get() = store.registryPublicKey
@@ -231,15 +222,13 @@ class RegistryPreferences @Inject constructor(private val store: SettingsDataSto
 }
 
 /** 应用级启动计数（数据统计页快照 / Application onCreate 递增）。 */
-@Singleton
-class AppStatsPreferences @Inject constructor(private val store: SettingsDataStore) {
+class AppStatsPreferences(private val store: SettingsDataStore) {
     val appLaunchCount get() = store.appLaunchCount
     suspend fun incrementLaunchCount() = store.incrementLaunchCount()
 }
 
 /** AI Provider 端点与密钥偏好（经 ProviderRepository 收口后供 Settings UI 与工具适配层使用）。 */
-@Singleton
-class ProviderPreferences @Inject constructor(private val store: SettingsDataStore) {
+class ProviderPreferences(private val store: SettingsDataStore) {
     val provider get() = store.provider
     val baseUrl get() = store.providerBaseUrl
     val model get() = store.providerModel
@@ -256,8 +245,7 @@ class ProviderPreferences @Inject constructor(private val store: SettingsDataSto
     suspend fun removeModelApiKey(secretRef: String) = store.removeModelApiKey(secretRef)
 }
 
-@Singleton
-class BrowserPreferences @Inject constructor(private val store: SettingsDataStore) {
+class BrowserPreferences(private val store: SettingsDataStore) {
     fun defaultFamily() = store.browserDefaultFamily
     fun homeUrl() = store.browserHomeUrl
     fun coBrowsingEnabled() = store.browserCoBrowsingEnabled

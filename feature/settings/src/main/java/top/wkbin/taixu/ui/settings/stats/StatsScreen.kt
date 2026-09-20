@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.settings.stats
 
+import org.koin.compose.viewmodel.koinViewModel
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,7 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.StatsDateRangePreset
 import top.wkbin.taixu.ui.components.RuntimeCard
@@ -40,7 +40,7 @@ import top.wkbin.taixu.ui.settings.stats.widgets.StatsUsageChart
 @Composable
 fun StatsScreen(
     onBack: () -> Unit,
-    viewModel: StatsViewModel = hiltViewModel(),
+    viewModel: StatsViewModel = koinViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 

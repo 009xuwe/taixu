@@ -68,23 +68,13 @@ import top.wkbin.taixu.runtime.service.LocalServiceLauncher
 import top.wkbin.taixu.runtime.service.LocalServiceLauncherImpl
 import top.wkbin.taixu.service.AgentForegroundLauncherImpl
 import top.wkbin.taixu.harness.AgentForegroundLauncher
-import dagger.Module
-import dagger.Provides
-import dagger.hilt.InstallIn
-import dagger.hilt.android.qualifiers.ApplicationContext
-import dagger.hilt.components.SingletonComponent
 import io.ktor.client.HttpClient
-import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 
 
-@Module
-@InstallIn(SingletonComponent::class)
 object AppModule {
 
-    @Provides
-    @Singleton
     fun provideJson(): Json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -92,122 +82,66 @@ object AppModule {
         explicitNulls = false
     }
 
-    @Provides
-    @Singleton
-    fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
+    fun provideDatabase(context: Context): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
             .addMigrations(MIGRATION_27_28, MIGRATION_28_29, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41, MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45, MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48, MIGRATION_48_49, MIGRATION_49_50, MIGRATION_50_51)
             .build()
     }
 
-    @Provides
-    @Singleton
     fun provideToolDao(database: AppDatabase): ToolDao = database.toolDao()
 
-    @Provides
-    @Singleton
     fun provideInstallLogDao(database: AppDatabase): InstallLogDao = database.installLogDao()
 
-    @Provides
-    @Singleton
     fun provideInstallTaskDao(database: AppDatabase): InstallTaskDao = database.installTaskDao()
 
-    @Provides
-    @Singleton
     fun provideWorkflowDao(database: AppDatabase): WorkflowDao = database.workflowDao()
 
-    @Provides
-    @Singleton
     fun provideWorkflowScheduleDao(database: AppDatabase): WorkflowScheduleDao = database.workflowScheduleDao()
 
-    @Provides
-    @Singleton
     fun provideWorkflowScheduleStore(store: top.wkbin.taixu.core.database.RoomWorkflowScheduleStore): top.wkbin.taixu.core.database.WorkflowScheduleStore = store
 
-    @Provides
-    @Singleton
     fun provideRuntimeDao(database: AppDatabase): RuntimeDao = database.runtimeDao()
 
-    @Provides
-    @Singleton
     fun provideHarnessSessionDao(database: AppDatabase): HarnessSessionDao = database.harnessSessionDao()
 
-    @Provides
-    @Singleton
     fun provideAiModelDao(database: AppDatabase): AiModelDao = database.aiModelDao()
 
-    @Provides
-    @Singleton
     fun provideWorkspaceDao(database: AppDatabase): WorkspaceDao = database.workspaceDao()
 
-    @Provides
-    @Singleton
     fun provideTerminalSessionDao(database: AppDatabase): TerminalSessionDao = database.terminalSessionDao()
 
-    @Provides
-    @Singleton
     fun provideAgentContextDao(database: AppDatabase): top.wkbin.taixu.core.database.AgentContextDao = database.agentContextDao()
 
-    @Provides
-    @Singleton
     fun provideAgentSubagentDao(database: AppDatabase): AgentSubagentDao = database.agentSubagentDao()
 
-    @Provides
-    @Singleton
     fun provideMcpServerDao(database: AppDatabase): McpServerDao = database.mcpServerDao()
 
-    @Provides
-    @Singleton
     fun provideMcpOAuthCredentialDao(database: AppDatabase): McpOAuthCredentialDao = database.mcpOAuthCredentialDao()
 
-    @Provides
-    @Singleton
     fun provideMcpOAuthTransactionDao(database: AppDatabase): McpOAuthTransactionDao = database.mcpOAuthTransactionDao()
 
-    @Provides
-    @Singleton
     fun provideAgentSkillDao(database: AppDatabase): AgentSkillDao = database.agentSkillDao()
 
-    @Provides
-    @Singleton
     fun provideStorageMountBindingDao(database: AppDatabase): StorageMountBindingDao = database.storageMountBindingDao()
 
-    @Provides
-    @Singleton
     fun provideToolSettingsDao(database: AppDatabase): ToolSettingsDao = database.toolSettingsDao()
 
-    @Provides
-    @Singleton
     fun provideAgentApprovalDao(database: AppDatabase): AgentApprovalDao = database.agentApprovalDao()
 
-    @Provides
-    @Singleton
     fun provideQuickPhraseDao(database: AppDatabase): QuickPhraseDao = database.quickPhraseDao()
 
-    @Provides
-    @Singleton
     fun provideHarnessRuntimeDao(database: AppDatabase): HarnessRuntimeDao = database.harnessRuntimeDao()
 
-    @Provides
-    @Singleton
     fun provideAndroidAppDao(database: AppDatabase): AndroidAppDao = database.androidAppDao()
 
-    @Provides
-    @Singleton
     fun provideBuildScriptDao(database: AppDatabase): BuildScriptDao = database.buildScriptDao()
 
-    @Provides
-    @Singleton
     fun provideAgentTaskDao(database: AppDatabase): AgentTaskDao = database.agentTaskDao()
 
-    @Provides
-    @Singleton
     fun provideWorkspaceFileAccess(pathManager: top.wkbin.taixu.runtime.RuntimePathManager): WorkspaceFileAccess =
         WorkspaceFileAccess(pathManager.workspaceDir)
 
     /** checkpoint 快照落盘到应用私有目录（linux-runtime/checkpoints/<sessionId>/），模型不可见。 */
-    @Provides
-    @Singleton
     fun provideCheckpointStore(
         pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
     ): top.wkbin.taixu.harness.checkpoint.CheckpointStore =
@@ -217,51 +151,29 @@ object AppModule {
             )
         }
 
-    @Provides
-    @Singleton
     fun provideRuntimeManager(impl: RuntimeManagerImpl): RuntimeManager = impl
 
-    @Provides
-    @Singleton
     fun provideDependencyManager(impl: DependencyManagerImpl): DependencyManager = impl
 
-    @Provides
-    @Singleton
     fun provideProcessRegistry(impl: ProcessRegistryImpl): ProcessRegistry = impl
 
-    @Provides
-    @Singleton
     fun provideOkHttpClient(provider: HttpClientProvider): OkHttpClient = provider.create()
 
-    @Provides
-    @Singleton
     fun provideKtorHttpClient(
         provider: HttpClientProvider,
         okHttpClient: OkHttpClient,
     ): HttpClient = provider.createKtorClient(okHttpClient)
 
-    @Provides
-    @Singleton
     fun provideFileDownloader(impl: ResumableFileDownloader): FileDownloader = impl
 
-    @Provides
-    @Singleton
     fun provideShellExecutor(impl: ProcessShellExecutor): ShellExecutor = impl
 
-    @Provides
-    @Singleton
     fun providePtyManager(impl: NativePtyManager): PtyManager = impl
 
-    @Provides
-    @Singleton
     fun provideLinuxRuntime(impl: LinuxRuntimeImpl): LinuxRuntime = impl
 
-    @Provides
-    @Singleton
     fun provideLocalServiceLauncher(impl: LocalServiceLauncherImpl): LocalServiceLauncher = impl
 
-    @Provides
-    @Singleton
     fun provideAgentForegroundLauncher(impl: AgentForegroundLauncherImpl): AgentForegroundLauncher = impl
 }
 

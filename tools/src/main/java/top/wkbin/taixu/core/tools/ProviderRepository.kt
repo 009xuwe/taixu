@@ -1,13 +1,10 @@
 package top.wkbin.taixu.core.tools
 
 import top.wkbin.taixu.core.datastore.ProviderPreferences
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 
 /** Provider persistence boundary used by Settings UI and tool adapters. */
-@Singleton
-class ProviderRepository @Inject constructor(
+class ProviderRepository(
     private val providerPreferences: ProviderPreferences,
 ) {
     val provider: Flow<String> = providerPreferences.provider

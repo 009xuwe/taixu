@@ -4,8 +4,6 @@ import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -49,8 +47,7 @@ import kotlin.coroutines.resumeWithException
  * - initialize/tools-list 等只读发现请求遇到传输故障时允许重建并重试一次；
  * - tools/call 永不自动重试，响应丢失时返回不确定结果，避免重复执行副作用。
  */
-@Singleton
-class McpHttpTransport @Inject constructor(
+class McpHttpTransport(
     client: OkHttpClient,
     private val json: Json,
     private val logger: AppLogger,
