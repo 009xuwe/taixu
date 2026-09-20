@@ -2,6 +2,9 @@ package top.wkbin.taixu.harness.prompt
 
 import android.content.Context
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AgentContextRepository
 import top.wkbin.taixu.core.database.AgentSkillRepository
@@ -15,6 +18,8 @@ import top.wkbin.taixu.harness.MentionExtractor
 import top.wkbin.taixu.harness.R
 import top.wkbin.taixu.harness.SubagentDepartmentIndexRenderer
 import top.wkbin.taixu.harness.ToolCallMode
+import top.wkbin.taixu.harness.ContextWindowPolicy
+import top.wkbin.taixu.harness.ProviderClient
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 
 /**
@@ -37,6 +42,19 @@ class SystemPromptBuilder(
     private val privilegeRenderer: PrivilegeSectionRenderer,
     private val promptRouter: PromptRouter,
 ) {
+    data class PromptUsageSnapshot(
+        val toolCallMode: ToolCallMode,
+        val systemTokens: Int,
+        val rulesTokens: Int,
+        val skillsTokens: Int,
+        val mcpTokens: Int,
+        val subagentTokens: Int,
+        val toolDefinitionTokens: Int,
+    )
+
+    private val _usageSnapshots = MutableStateFlow<Map<String, PromptUsageSnapshot>>(emptyMap())
+    val usageSnapshots: StateFlow<Map<String, PromptUsageSnapshot>> = _usageSnapshots
+
     private data class WorkspacePromptParts(
         val stamp: Long,
         val projectType: String,
@@ -254,7 +272,7 @@ class SystemPromptBuilder(
             .distinct()
             .joinToString("\n\n") { block -> promptAssets.read(block.assetPath) }
 
-        return listOf(
+        val sections = listOf(
             basePrompt,
             skillSectionFallback,
             toolsSection,
@@ -270,7 +288,37 @@ class SystemPromptBuilder(
             workspaceGuidance,
             workspaceParts?.projectContext.orEmpty(),
             thinkingLanguageSection,
-        ).filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
+        )
+        val prompt = sections.filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
+        if (sessionId.isNotBlank()) {
+            val tokens: (String) -> Int = { ContextWindowPolicy.estimateTokens(it) }
+            val skillsTokens = tokens(skillSection)
+            val rulesTokens = tokens(prootSection) + tokens(privilegeSection) + tokens(routedBlocks) +
+                tokens(workspaceGuidance) + tokens(workspaceParts?.projectContext.orEmpty())
+            val mcpTokens = tokens(mcpCapabilitySection)
+            val subagentTokens = tokens(subagentSection)
+            val promptTokens = tokens(prompt)
+            val toolDefinitionTokens = if (toolCallMode == ToolCallMode.NATIVE) {
+                ProviderClient.TOOLS.sumOf { tool ->
+                    tokens(tool.function.name) + tokens(tool.function.description) +
+                        tokens(tool.function.parameters.toString()) + 4
+                }
+            } else 0
+            val snapshot = PromptUsageSnapshot(
+                toolCallMode = toolCallMode,
+                systemTokens = (promptTokens - skillsTokens - rulesTokens - mcpTokens - subagentTokens).coerceAtLeast(0),
+                rulesTokens = rulesTokens,
+                skillsTokens = skillsTokens,
+                mcpTokens = mcpTokens,
+                subagentTokens = subagentTokens,
+                toolDefinitionTokens = toolDefinitionTokens,
+            )
+            _usageSnapshots.update { previous ->
+                ((previous - sessionId) + (sessionId to snapshot)).entries.toList().takeLast(16)
+                    .associate { it.toPair() }
+            }
+        }
+        return prompt
     }
 
     private suspend fun workspacePromptParts(

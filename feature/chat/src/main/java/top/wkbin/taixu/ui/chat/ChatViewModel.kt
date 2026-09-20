@@ -26,6 +26,8 @@ import top.wkbin.taixu.harness.PendingMessage
 import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.ContextUsageBreakdown
+import top.wkbin.taixu.harness.ToolCallMode
+import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
 import top.wkbin.taixu.harness.events.HarnessEvent
 import top.wkbin.taixu.harness.events.HarnessEventBus
 import top.wkbin.taixu.harness.workflow.ProactiveWorkflowAdvisor
@@ -94,6 +96,7 @@ class ChatViewModel(
     private val context: Context,
     private val savedStateHandle: SavedStateHandle,
     private val harnessLoop: HarnessLoop,
+    private val systemPromptBuilder: SystemPromptBuilder,
     private val sessionDao: HarnessSessionRepository,
     private val aiModelDao: AiModelRepository,
     private val workspaceManager: WorkspaceManager,
@@ -513,35 +516,40 @@ class ChatViewModel(
             ) to list
         }.distinctUntilChanged { a, b -> a.first == b.first },
         sessionBoundModel,
-        allSkills,
-        mcpServers,
         settingsDataStore.contextBudgetTokens,
-    ) { revisionAndMessages, boundModel, skills, mcps, defaultBudget ->
+    ) { revisionAndMessages, boundModel, defaultBudget ->
         ContextUsageInputs(
             currentMessages = revisionAndMessages.second,
             // 与顶栏同源：会话绑定模型优先，回退全局 isActive（详见 sessionBoundModel）。
             activeModel = boundModel,
-            skills = skills,
-            mcps = mcps,
             defaultBudget = defaultBudget,
         )
-    }.combine(settingsDataStore.contextCompactionEnabled) { inputs, compactionEnabled ->
-        inputs to compactionEnabled
-    }.combine(settingsDataStore.contextFoldingRatioPercent) { (inputs, compactionEnabled), foldingRatioPercent ->
+    }.combine(currentSessionId) { inputs, sessionId ->
+        inputs to sessionId
+    }.combine(settingsDataStore.contextCompactionEnabled) { (inputs, sessionId), compactionEnabled ->
+        Triple(inputs, sessionId, compactionEnabled)
+    }.combine(settingsDataStore.contextFoldingRatioPercent) { (inputs, sessionId, compactionEnabled), foldingRatioPercent ->
+        ContextUsageCalculation(inputs, sessionId, compactionEnabled, foldingRatioPercent)
+    }.combine(systemPromptBuilder.usageSnapshots) { calculation, snapshots ->
+        val (inputs, sessionId, compactionEnabled, foldingRatioPercent) = calculation
         val activeModel = inputs.activeModel
         val pureChat = activeModel?.pureChatMode == true
         val toolDisabled = pureChat || activeModel?.toolCallMode.equals("disabled", ignoreCase = true)
+        val toolCallMode = when {
+            toolDisabled -> ToolCallMode.DISABLED
+            activeModel?.toolCallMode.equals("json", ignoreCase = true) -> ToolCallMode.JSON_TEXT
+            else -> ToolCallMode.NATIVE
+        }
+        val snapshot = snapshots[sessionId]?.takeIf { it.toolCallMode == toolCallMode }
 
-        val systemPromptTokens = if (pureChat) 0 else ContextWindowPolicy.DEFAULT_SYSTEM_PROMPT_TOKENS
-        val toolDefinitionTokens = if (toolDisabled) 0 else ContextWindowPolicy.DEFAULT_NATIVE_TOOL_TOKENS
-        val rulesTokens = if (pureChat) 0 else ContextWindowPolicy.DEFAULT_RULES_TOKENS
-        val skillTokens = if (pureChat) 0 else inputs.skills.filter { it.isEnabled }.sumOf {
-            ContextWindowPolicy.estimateTokens(it.systemPrompt)
-        }
-        val mcpTokens = if (pureChat) 0 else inputs.mcps.filter { it.isEnabled }.sumOf {
-            ContextWindowPolicy.estimateTokens("${it.name}\n${it.description}\n${it.command}\n${it.args.joinToString(" ")}")
-        }
-        val subagentTokens = if (toolDisabled) 0 else ContextWindowPolicy.DEFAULT_SUBAGENT_TOKENS
+        val systemPromptTokens = if (pureChat) 0 else snapshot?.systemTokens ?: ContextWindowPolicy.DEFAULT_SYSTEM_PROMPT_TOKENS
+        val toolDefinitionTokens = if (toolCallMode != ToolCallMode.NATIVE) 0 else
+            snapshot?.toolDefinitionTokens ?: ContextWindowPolicy.DEFAULT_NATIVE_TOOL_TOKENS
+        val rulesTokens = if (pureChat) 0 else snapshot?.rulesTokens ?: ContextWindowPolicy.DEFAULT_RULES_TOKENS
+        // 技能正文仅在被 @ 提及后注入。尚无请求快照时不把所有已启用技能误算为常驻正文。
+        val skillTokens = if (pureChat) 0 else snapshot?.skillsTokens ?: 0
+        val mcpTokens = if (pureChat) 0 else snapshot?.mcpTokens ?: 0
+        val subagentTokens = if (toolDisabled) 0 else snapshot?.subagentTokens ?: ContextWindowPolicy.DEFAULT_SUBAGENT_TOKENS
 
         val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
         // 折叠线只扣除持续占据上下文且不在 messages 内的真实提示开销；
@@ -1397,9 +1405,14 @@ enum class ComposerSendMode(val queue: PromptQueue) {
 private data class ContextUsageInputs(
     val currentMessages: List<HarnessMessage>,
     val activeModel: AiModelEntity?,
-    val skills: List<top.wkbin.taixu.core.model.AgentSkill>,
-    val mcps: List<top.wkbin.taixu.core.model.McpServerConfig>,
     val defaultBudget: Int,
+)
+
+private data class ContextUsageCalculation(
+    val inputs: ContextUsageInputs,
+    val sessionId: String,
+    val compactionEnabled: Boolean,
+    val foldingRatioPercent: Int,
 )
 
 data class ContextUsage(
