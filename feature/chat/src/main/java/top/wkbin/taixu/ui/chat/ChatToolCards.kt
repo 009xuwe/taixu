@@ -531,6 +531,7 @@ internal fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
         HarnessTool.LOAD_RULE -> "load_rule"
+        HarnessTool.LOAD_SKILL -> "load_skill"
         HarnessTool.COMPRESS -> "compress"
         HarnessTool.ASK_USER -> "ask_user"
     }

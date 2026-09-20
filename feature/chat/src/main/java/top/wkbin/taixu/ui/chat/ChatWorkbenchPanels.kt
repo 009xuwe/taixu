@@ -553,6 +553,7 @@ internal fun SubagentResultSheet(
                                 liveStatus = null,
                             )
                             is CapabilityEvent -> Unit
+                            is SkillSuggestion -> Unit
                             is ModelSwitchEvent -> Unit
                             is ToolResult -> Unit
                         }

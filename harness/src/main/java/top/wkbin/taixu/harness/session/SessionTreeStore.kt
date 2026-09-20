@@ -200,11 +200,13 @@ class SessionTreeStore @Inject constructor(
         is ToolCall -> "tool_call"
         is ToolResult -> "tool_result"
         is CapabilityEvent -> "capability_event"
+        is SkillSuggestion -> "skill_suggestion"
         is ModelSwitchEvent -> "model_switch"
     }
 
     private fun searchableText(message: HarnessMessage): String = when (message) {
         is CapabilityEvent -> "${message.kind} ${message.name} ${message.details}"
+        is SkillSuggestion -> "${message.skillName} ${message.description}"
         is ModelSwitchEvent -> "${message.fromLabel} ${message.toLabel}"
         is UserMessage -> message.text
         is AssistantText -> "${message.text}\n${message.reasoning.orEmpty()}"

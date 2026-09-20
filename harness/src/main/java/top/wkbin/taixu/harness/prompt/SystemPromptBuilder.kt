@@ -72,13 +72,68 @@ class SystemPromptBuilder @Inject constructor(
         val providerModelId = runCatching { settingsDataStore.providerModel.first() }.getOrDefault("")
 
         val allSkills = runCatching { skillRepository.allSkills.first() }.getOrDefault(emptyList())
-        val selectedSkills = selectSkills(allSkills, mentionedNames)
 
-        val skillSection = if (selectedSkills.isNotEmpty()) {
-            "## 当前生效的专精技能指导规则 (Active Skills)\n\n" + selectedSkills.joinToString("\n\n") { skill ->
-                "### [专精技能] " + skill.name + " (" + skill.category + ")\n" + skill.systemPrompt.trim()
+        // @提及 二次解析：MentionExtractor.parse 只传文本时无法识别含空格的技能名
+        // （如「Git 敏捷工作流」会被截成「Git」而静默失配）。此处以已启用技能的
+        // name/id/triggerCommand 作为已知名单重解析并合并，确保空格名与全角输入都能命中。
+        val knownSkillNames = allSkills
+            .filter { it.isEnabled }
+            .flatMap { listOf(it.name, it.id, it.triggerCommand?.removePrefix("/").orEmpty()) }
+            .filter { it.isNotBlank() }
+        val effectiveMentions = if (userMessageTexts.isEmpty()) {
+            mentionedNames
+        } else {
+            mentionedNames + MentionExtractor.parse(userMessageTexts.last(), knownSkillNames)
+        }
+        val selectedSkills = selectSkills(allSkills, effectiveMentions)
+        val missedMentions = selectUnmatchedMentions(allSkills, effectiveMentions)
+        val skippedSkills = mutableListOf<String>()
+
+        val skillSection = buildString {
+            if (selectedSkills.isNotEmpty()) {
+                append("## 当前生效的专精技能指导规则 (Active Skills)\n\n")
+                var used = 0
+                val rendered = selectedSkills.mapNotNull { skill ->
+                    val body = skill.systemPrompt.trim()
+                    // 正文护栏：单技能超限则截断并标注；累计超预算则跳过并登记，避免少数巨型技能
+                    // 把系统提示顶到上下文上限后从尾部砍掉 recall/workspace 等必备段落。
+                    if (used >= MAX_SKILL_BODY_TOTAL_CHARS) {
+                        skippedSkills += skill.name
+                        return@mapNotNull null
+                    }
+                    val budget = minOf(MAX_SKILL_BODY_CHARS, MAX_SKILL_BODY_TOTAL_CHARS - used)
+                    val clipped = if (body.length > budget) {
+                        body.take(budget) + "\n…（该技能正文较长已截断，如需完整内容请调用 load_skill）"
+                    } else {
+                        body
+                    }
+                    used += clipped.length
+                    "### [专精技能] " + skill.name + " (" + skill.category + ")\n" + clipped
+                }
+                append(rendered.joinToString("\n\n"))
+                if (skippedSkills.isNotEmpty()) {
+                    append("\n\n（因上下文预算，以下被 @提及 的技能正文未注入：" +
+                        skippedSkills.joinToString("、") +
+                        "；如需请单独 @ 或调用 load_skill）")
+                }
             }
-        } else ""
+            // 未命中提示：@ 了但没有对应技能（拼写错误/大小写/全角），显式告知而非静默丢弃。
+            if (missedMentions.isNotEmpty()) {
+                if (isNotEmpty()) append("\n\n")
+                append("## 未匹配的 @提及\n")
+                append("以下提及未匹配到任何已启用技能，请确认技能名是否正确（拼写/大小写/全角）：")
+                append(missedMentions.joinToString("、") { "`$it`" })
+            }
+            // 技能元数据（名称+一句话描述）常驻上下文供模型自主匹配，正文经 load_skill
+            // 工具按需加载——不再要求用户必须 @提及。
+            if (toolCallMode != ToolCallMode.DISABLED) {
+                val catalog = renderSkillCatalog(allSkills, excludeIds = selectedSkills.mapTo(mutableSetOf()) { it.id })
+                if (catalog.isNotEmpty()) {
+                    if (isNotEmpty()) append("\n\n")
+                    append(catalog)
+                }
+            }
+        }
 
         val installedTools =
             runCatching {
@@ -178,6 +233,15 @@ class SystemPromptBuilder @Inject constructor(
             )
         }
 
+        // 技能目录兜底注入：自定义系统提示（customSystemPrompt）通常不含 {{ACTIVE_SKILLS}} 占位符，
+        // 这会让整份技能目录凭空消失 —— 而目录是模型自主匹配技能的唯一入口，丢失后
+        // 模型「完全看不见任何技能」。此处仅在缺失占位符时补注入，不改动用户提示内容。
+        val skillSectionFallback = resolveSkillCatalogFallback(
+            customPromptEnabled = customPromptEnabled,
+            customPrompt = customPrompt,
+            skillSection = skillSection,
+        )
+
         // L0 常驻工具说明 + L1 PRoot 约束（工具禁用时跳过工具说明）。
         val toolsSection = if (toolCallMode != ToolCallMode.DISABLED) {
             promptAssets.render("prompts/system/tools.md", mapOf("PKG_MANAGER" to pkgManager))
@@ -195,6 +259,7 @@ class SystemPromptBuilder @Inject constructor(
 
         return listOf(
             basePrompt,
+            skillSectionFallback,
             toolsSection,
             prootSection,
             privilegeSection,
@@ -296,13 +361,38 @@ class SystemPromptBuilder @Inject constructor(
         if (mentionedNames.isEmpty()) {
             return emptyList()
         }
+        // 只考虑已启用技能：与 load_skill 的门禁口径保持一致。此前不过滤 isEnabled，
+        // 会出现「用户显式关闭了某技能，@ 一下正文照样被注入」的矛盾行为。
         return allSkills.filter { skill ->
-            val nameLower = skill.name.lowercase()
-            val idLower = skill.id.lowercase()
-            val cmdLower = skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty()
-            nameLower in mentionedNames || idLower in mentionedNames || (cmdLower.isNotEmpty() && cmdLower in mentionedNames)
+            // 归一化比较：全角字符（如 ＠ 后输入的技能名）经 NFKC 归一后仍应命中。
+            val nameLower = normalizeMentionToken(skill.name)
+            val idLower = normalizeMentionToken(skill.id)
+            val cmdLower = normalizeMentionToken(skill.triggerCommand?.removePrefix("/").orEmpty())
+            skill.isEnabled &&
+                (nameLower in mentionedNames || idLower in mentionedNames ||
+                    (cmdLower.isNotEmpty() && cmdLower in mentionedNames))
         }
     }
+
+    /**
+     * 未命中的 @提及：@ 了但没有对应已启用技能（拼写错误 / 大小写 / 全角 / 已禁用），
+     * 显式返回让模型知道"这个提及没生效"，而不是静默丢弃后让模型误以为已加载。
+     */
+    internal fun selectUnmatchedMentions(
+        allSkills: List<AgentSkill>,
+        mentionedNames: Set<String>,
+    ): List<String> {
+        if (mentionedNames.isEmpty()) return emptyList()
+        val known = allSkills
+            .filter { it.isEnabled }
+            .flatMap { listOf(it.name, it.id, it.triggerCommand?.removePrefix("/").orEmpty()) }
+            .filter { it.isNotBlank() }
+            .mapTo(mutableSetOf()) { normalizeMentionToken(it) }
+        return mentionedNames.filter { it.isNotBlank() && normalizeMentionToken(it) !in known }
+    }
+
+    private fun normalizeMentionToken(raw: String): String =
+        java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFKC).trim().lowercase()
 
     private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {
         if (toolCallMode == ToolCallMode.DISABLED) return ""
@@ -440,4 +530,71 @@ class SystemPromptBuilder @Inject constructor(
             else -> "通用工程"
         }
     }
+}
+
+
+/**
+ * 可用技能目录：
+ * 启用技能的「名称 + 一句话描述」以极低成本常驻系统提示，模型自主判断当前请求
+ * 是否命中某个技能，命中后调用 load_skill 拉取完整指导规则——正文不再要求
+ * 用户显式 @提及 才进入上下文。
+ *
+ * @param excludeIds 已通过 @提及注入正文的技能，不再进目录
+ */
+internal fun renderSkillCatalog(
+    allSkills: List<AgentSkill>,
+    excludeIds: Set<String>,
+): String {
+    val eligible = allSkills
+        .filter { it.isEnabled && it.id !in excludeIds && it.systemPrompt.isNotBlank() }
+    val candidates = eligible.take(MAX_CATALOG_ENTRIES)
+    if (candidates.isEmpty()) return ""
+    val lines = candidates.joinToString("\n") { skill ->
+        val desc = skill.description.replace(Regex("\\s+"), " ").trim()
+        val brief = if (desc.length > CATALOG_DESCRIPTION_CHARS) desc.take(CATALOG_DESCRIPTION_CHARS - 1) + "…" else desc
+        val trigger = skill.triggerCommand?.removePrefix("/")?.takeIf { it.isNotBlank() }?.let { "（/$it）" } ?: ""
+        "- ${skill.name}$trigger：$brief"
+    }
+    // 截断必须可见：超出的技能模型完全看不到，静默丢弃会让用户以为技能"没用"。
+    val overflow = eligible.size - candidates.size
+    val overflowNote = if (overflow > 0) {
+        "\n（另有 $overflow 个技能因目录条目上限未列出，如需使用请直接 @技能名）"
+    } else {
+        ""
+    }
+    return "## 可用技能（按需加载）\n" +
+        "以下技能的完整说明未注入。当用户请求与某条描述匹配时，先调用 load_skill 工具（参数 name=技能名）" +
+        "获取完整指导规则与资源路径，再按说明执行。\n" +
+        lines + overflowNote
+}
+
+private const val MAX_CATALOG_ENTRIES = 24
+private const val CATALOG_DESCRIPTION_CHARS = 100
+
+/** 单个技能正文注入上限（字符）：约 8K 字符 ≈ 3K tokens，足够覆盖绝大多数技能。 */
+private const val MAX_SKILL_BODY_CHARS = 8_000
+
+/** 所有 @提及 技能正文的累计上限（字符）：防止多技能 @ 撑爆系统提示预算。 */
+private const val MAX_SKILL_BODY_TOTAL_CHARS = 24_000
+
+/**
+ * 决定技能目录段（skillSection）是否需要作为兜底补注入。
+ *
+ * 背景：技能目录原本只经由 basePrompt 的 `{{ACTIVE_SKILLS}}` 占位符注入。内置 core.md 含该占位符，
+ * 而用户自定义系统提示（customSystemPrompt）普遍不含——导致 basePrompt 走自定义分支时技能目录
+ * 整体丢失，模型"看不见"任何技能（含技能进化产出的新技能），load_skill 的自主匹配入口随之失效。
+ *
+ * 规则：
+ * - 未启用自定义提示（走内置 core.md）→ core.md 已承载占位符，兜底返回 ""（避免重复注入）。
+ * - 启用自定义提示且其中含 `{{ACTIVE_SKILLS}}` → 用户已显式指定注入位置，兜底返回 ""（尊重用户意图并避免重复）。
+ * - 启用自定义提示但不含占位符 → 返回 skillSection 作为兜底（技能目录得以保留）。
+ */
+internal fun resolveSkillCatalogFallback(
+    customPromptEnabled: Boolean,
+    customPrompt: String,
+    skillSection: String,
+): String {
+    if (!customPromptEnabled || customPrompt.isBlank()) return ""
+    if (customPrompt.contains("{{ACTIVE_SKILLS}}")) return ""
+    return skillSection
 }

@@ -53,6 +53,7 @@ import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ModelSwitchEvent
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.checkpoint.RewindScope
 import top.wkbin.taixu.harness.ToolResult
@@ -118,6 +119,9 @@ internal fun ChatMessageList(
     onViewSubagentLanes: () -> Unit = {},
     subagentBranches: List<top.wkbin.taixu.harness.session.ConversationBranch> = emptyList(),
     onOpenSubagent: (top.wkbin.taixu.harness.session.ConversationBranch) -> Unit = {},
+    hiddenSkillSuggestions: Set<String> = emptySet(),
+    onApplySkillSuggestion: (SkillSuggestion, Boolean) -> Unit = { _, _ -> },
+    onDismissSkillSuggestion: (String) -> Unit = {},
 ) {
     // 折叠状态用自定义 Saver：Map 不能直接存入 Bundle（会抛 IllegalArgumentException）
     var expandedOverrides by rememberSaveable(stateSaver = ExpandedOverridesSaver) { mutableStateOf(mapOf<String, Boolean>()) }
@@ -214,6 +218,14 @@ internal fun ChatMessageList(
                     is ChatRenderItem.MessageItem -> {
                         when (val message = item.message) {
                             is CapabilityEvent -> CapabilityEventCard(message)
+                            is SkillSuggestion -> if (message.id !in hiddenSkillSuggestions) {
+                                SkillSuggestionCard(
+                                    suggestion = message,
+                                    onCreate = { onApplySkillSuggestion(message, true) },
+                                    onUpdate = { onApplySkillSuggestion(message, false) },
+                                    onDismiss = { onDismissSkillSuggestion(message.id) },
+                                )
+                            }
                             is ModelSwitchEvent -> ModelSwitchCard(message)
                             is UserMessage -> UserBubble(
                                 message = message,

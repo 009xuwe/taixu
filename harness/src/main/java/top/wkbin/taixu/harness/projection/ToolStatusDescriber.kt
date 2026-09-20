@@ -49,6 +49,7 @@ object ToolStatusDescriber {
         HarnessTool.SUBAGENT -> "正在派发并执行子智能体协同任务…"
         HarnessTool.MCP -> "正在调用 MCP 插件工具：${rawToolName ?: "mcp"}…"
         HarnessTool.LOAD_RULE -> "正在加载规则块：${arg(args, "rule") ?: "load_rule"}…"
+        HarnessTool.LOAD_SKILL -> "正在加载技能：${arg(args, "name") ?: "load_skill"}…"
         HarnessTool.COMPRESS -> "正在压缩会话历史…"
         HarnessTool.ASK_USER -> "正在向你提问…"
     }

@@ -23,6 +23,7 @@ enum class HarnessTool {
     @SerialName("invoke_subagent") SUBAGENT,
     @SerialName("mcp") MCP,
     @SerialName("load_rule") LOAD_RULE,
+    @SerialName("load_skill") LOAD_SKILL,
     @SerialName("compress") COMPRESS,
     @SerialName("ask_user") ASK_USER,
 }
@@ -36,6 +37,24 @@ sealed interface HarnessMessage {
     val id: String
     val createdAt: Long
 }
+
+@Serializable
+@SerialName("skill_suggestion")
+data class SkillSuggestion(
+    override val id: String,
+    override val createdAt: Long,
+    /** create = 沉淀为新技能；update = 修复既有技能的指导规则 */
+    val action: String,
+    val skillName: String,
+    val description: String,
+    val systemPrompt: String,
+    val triggerCommand: String? = null,
+    /** action=update 时的目标技能 id */
+    val targetSkillId: String? = null,
+    val reason: String = "",
+    /** pending = 待处理；applied / dismissed 由 UI 内存态过滤（转写里保留原样） */
+    val status: String = "pending",
+) : HarnessMessage
 
 /** UI-only capability activation event. It is persisted for the transcript but never sent to the model. */
 @Serializable

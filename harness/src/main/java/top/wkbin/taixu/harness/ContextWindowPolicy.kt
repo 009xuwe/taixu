@@ -327,7 +327,7 @@ object ContextWindowPolicy {
         var toolTokens = 0
         messages.drop(keepFrom).forEach { message ->
             when (message) {
-                is CapabilityEvent, is ModelSwitchEvent -> Unit
+                is CapabilityEvent, is ModelSwitchEvent, is SkillSuggestion -> Unit
                 is UserMessage -> {
                     conversationTokens += estimateTokens(message.text) + message.imageUrls.size * ESTIMATED_IMAGE_TOKENS
                 }
@@ -463,7 +463,7 @@ object ContextWindowPolicy {
     }
 
     private fun tokensOf(message: HarnessMessage): Int = when (message) {
-        is CapabilityEvent, is ModelSwitchEvent -> 0
+        is CapabilityEvent, is ModelSwitchEvent, is SkillSuggestion -> 0
         is UserMessage -> estimateTokens(message.text) + message.imageUrls.size * ESTIMATED_IMAGE_TOKENS
         is AssistantText -> estimateTokens(assistantTextForContext(message.text)) +
             estimateTokens(message.reasoning.orEmpty())
