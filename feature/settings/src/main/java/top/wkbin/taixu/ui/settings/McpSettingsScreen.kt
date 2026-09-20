@@ -92,6 +92,7 @@ fun McpSettingsScreen(
     viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val servers by viewModel.mcpServers.collectAsStateWithLifecycle()
+    val toggleOverrides by viewModel.mcpToggleOverrides.collectAsStateWithLifecycle()
     val connectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
     val mcpAuthStates by viewModel.mcpAuthStates.collectAsStateWithLifecycle()
     val browserGates by viewModel.browserGates.collectAsStateWithLifecycle()
@@ -212,6 +213,7 @@ fun McpSettingsScreen(
                     McpServerItemCard(
                         server = server,
                         connectionState = connectionStates[server.id] ?: McpConnectionState.UNKNOWN,
+                        togglePending = server.id in toggleOverrides,
                         onToggle = { enabled -> viewModel.toggleMcpServer(server.id, enabled) },
                         onClickDetail = { viewingDetailServer = server },
                     )
@@ -230,6 +232,7 @@ fun McpSettingsScreen(
                     McpServerItemCard(
                         server = server,
                         connectionState = connectionStates[server.id] ?: McpConnectionState.UNKNOWN,
+                        togglePending = server.id in toggleOverrides,
                         onToggle = { enabled -> viewModel.toggleMcpServer(server.id, enabled) },
                         onClickDetail = { viewingDetailServer = server },
                     )
@@ -538,6 +541,7 @@ private fun McpSectionHeader(title: String, subtitle: String, count: Int) {
 private fun McpServerItemCard(
     server: McpServerConfig,
     connectionState: McpConnectionState,
+    togglePending: Boolean,
     onToggle: (Boolean) -> Unit,
     onClickDetail: () -> Unit,
 ) {
@@ -599,6 +603,7 @@ private fun McpServerItemCard(
             Switch(
                 checked = server.isEnabled,
                 onCheckedChange = onToggle,
+                enabled = !togglePending,
             )
         }
     }

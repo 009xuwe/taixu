@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -127,8 +128,21 @@ fun WorkspaceExplorerScreen(
     val newFolderNameError = entryNameError(newFolderName)
     val renameNameError = renameTarget?.let { entryNameError(renameInput) }
 
+    var savedCurrentPath by rememberSaveable { mutableStateOf(initialPath) }
+
+    LaunchedEffect(currentPath) {
+        if (viewModel.selectedProject.value == projectName) {
+            savedCurrentPath = currentPath
+        }
+    }
+
     LaunchedEffect(projectName, initialPath) {
-        viewModel.loadExplorer(projectName, initialPath)
+        val resumePath = if (savedCurrentPath.isNotBlank()) savedCurrentPath else initialPath
+        viewModel.loadExplorer(projectName, resumePath)
+    }
+
+    BackHandler(enabled = currentPath.isNotBlank()) {
+        viewModel.navigateUp()
     }
 
     Scaffold(

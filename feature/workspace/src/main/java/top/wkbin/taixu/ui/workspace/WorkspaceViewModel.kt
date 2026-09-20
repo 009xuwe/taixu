@@ -296,7 +296,12 @@ class WorkspaceViewModel(
     private val _fileContent = MutableStateFlow("")
     val fileContent: StateFlow<String> = _fileContent.asStateFlow()
 
+    private val _contentRevision = MutableStateFlow(0L)
+    /** 文件内容整文加载/重置版本号：仅在 openFile 或 resetContent 时递增，打字过程中不变化 */
+    val contentRevision: StateFlow<Long> = _contentRevision.asStateFlow()
+
     private var originalContent: String = ""
+    private var currentDraftContent: String = ""
 
     private val _isDirty = MutableStateFlow(false)
     val isDirty: StateFlow<Boolean> = _isDirty.asStateFlow()
@@ -470,8 +475,14 @@ class WorkspaceViewModel(
     // ==================== 文件浏览器操作 ====================
 
     fun loadExplorer(projectName: String, relativePath: String = "") {
+        val nextPath = computeExplorerPath(
+            currentProject = _selectedProject.value,
+            currentPath = _currentPath.value,
+            targetProject = projectName,
+            targetPath = relativePath,
+        )
         _selectedProject.value = projectName
-        _currentPath.value = relativePath.trim().removePrefix("/")
+        _currentPath.value = nextPath
         refreshDirectory()
     }
 
@@ -613,8 +624,10 @@ class WorkspaceViewModel(
             if (result.isSuccess) {
                 val content = result.getOrNull().orEmpty()
                 originalContent = content
+                currentDraftContent = content
                 _fileContent.value = content
                 _isDirty.value = false
+                _contentRevision.value++
             } else {
                 notify(result.errorOrNull()?.message ?: context.getString(R.string.workspace_open_file_failed), isError = true)
             }
@@ -623,24 +636,28 @@ class WorkspaceViewModel(
     }
 
     fun onContentChanged(newText: String) {
-        _fileContent.value = newText
+        currentDraftContent = newText
         _isDirty.value = newText != originalContent
     }
 
     fun resetContent() {
+        currentDraftContent = originalContent
         _fileContent.value = originalContent
         _isDirty.value = false
+        _contentRevision.value++
     }
 
-    fun saveFile(onSuccess: (() -> Unit)? = null) {
+    fun saveFile(content: String? = null, onSuccess: (() -> Unit)? = null) {
         val proj = _selectedProject.value ?: return
         val path = _openedFilePath.value ?: return
-        val text = _fileContent.value
+        val text = content ?: currentDraftContent.ifEmpty { _fileContent.value }
         viewModelScope.launch {
             _isSaving.value = true
             val result = workspaceManager.writeFile(proj, path, text)
             if (result.isSuccess) {
                 originalContent = text
+                currentDraftContent = text
+                _fileContent.value = text
                 _isDirty.value = false
                 notify(context.getString(R.string.workspace_file_saved))
                 onSuccess?.invoke()
@@ -655,6 +672,7 @@ class WorkspaceViewModel(
         _openedFilePath.value = null
         _fileContent.value = ""
         originalContent = ""
+        currentDraftContent = ""
         _isDirty.value = false
     }
 }
@@ -670,6 +688,30 @@ internal fun isValidWorkspaceEntryName(name: String): Boolean {
     if (name == "." || name == "..") return false
     if (name.contains('/') || name.contains('\\')) return false
     return true
+}
+
+/**
+ * 计算文件浏览器跳转或重入时的目标路径：
+ * - 切换到不同项目：使用目标路径（未指定时为根目录 ""）；
+ * - 同一项目重入且未显式指定子目录（targetPath 为空）：保留已有子目录，避免打开代码编辑等页面返回后被重置到根目录；
+ * - 同一项目显式传入非空子目录：跳转到该目标路径；
+ * - 同一项目当前处于根目录且 targetPath 为空：保持根目录。
+ */
+internal fun computeExplorerPath(
+    currentProject: String?,
+    currentPath: String,
+    targetProject: String,
+    targetPath: String,
+): String {
+    val cleanTarget = targetPath.trim().removePrefix("/")
+    val isSameProject = currentProject == targetProject
+    return if (!isSameProject) {
+        cleanTarget
+    } else if (cleanTarget.isNotBlank() || currentPath.isBlank()) {
+        cleanTarget
+    } else {
+        currentPath
+    }
 }
 
 /** 从 git 克隆进度行提取百分比，如 "Receiving objects: 45% (50/110), 1.2 MiB"。 */

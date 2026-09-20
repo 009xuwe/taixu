@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -387,8 +388,18 @@ class SettingsViewModel(
         }
     }
 
-    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = mcpServerRepository.servers
+    private val persistedMcpServers = mcpServerRepository.servers
         .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.model.BuiltinMcpPresets.presets)
+
+    private val _mcpToggleOverrides = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val mcpToggleOverrides: StateFlow<Map<String, Boolean>> = _mcpToggleOverrides.asStateFlow()
+    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = combine(
+        persistedMcpServers, _mcpToggleOverrides,
+    ) { servers, overrides ->
+        servers.map { server ->
+            overrides[server.id]?.let { server.copy(isEnabled = it) } ?: server
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.model.BuiltinMcpPresets.presets)
 
     /** 各 MCP 服务的实时连通性状态（与 McpManager 共享，设置页与聊天页联动）。 */
     val mcpConnectionStates: StateFlow<Map<String, McpConnectionState>> = mcpManager.connectionStates
@@ -439,9 +450,17 @@ class SettingsViewModel(
     }
 
     fun toggleMcpServer(serverId: String, enabled: Boolean) {
+        _mcpToggleOverrides.value = _mcpToggleOverrides.value + (serverId to enabled)
         viewModelScope.launch {
-            mcpServerRepository.setEnabled(serverId, enabled)
-            mcpManager.refreshConnections()
+            try {
+                mcpServerRepository.setEnabled(serverId, enabled)
+                persistedMcpServers.first { servers -> servers.any { it.id == serverId && it.isEnabled == enabled } }
+                _mcpToggleOverrides.value = _mcpToggleOverrides.value - serverId
+                mcpManager.refreshConnection(serverId)
+            } catch (error: Exception) {
+                _mcpToggleOverrides.value = _mcpToggleOverrides.value - serverId
+                logger.e("MCP 开关切换失败: $serverId", error)
+            }
         }
     }
 

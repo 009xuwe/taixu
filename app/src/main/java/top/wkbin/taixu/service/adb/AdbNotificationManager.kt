@@ -71,6 +71,7 @@ class AdbNotificationManager(
     /** 开启与 EmbeddedAdbManager 状态的自动同步。进入无线 ADB 页面或需要配对时调用。 */
     fun startSync() {
         isManuallyDismissed = false
+        embeddedAdbManager.startDiscovery(EmbeddedAdbManager.TAG_NOTIFICATION)
         if (syncJob?.isActive == true) return
         syncJob = scope.launch {
             combine(
@@ -106,6 +107,7 @@ class AdbNotificationManager(
     fun stopSync() {
         syncJob?.cancel()
         syncJob = null
+        embeddedAdbManager.stopDiscovery(EmbeddedAdbManager.TAG_NOTIFICATION)
         dismiss()
     }
 

@@ -99,6 +99,9 @@ class EmbeddedAdbManager(
     private val pairingEndpointMap = ConcurrentHashMap<String, Endpoint>()
     private val connectEndpointMap = ConcurrentHashMap<String, Endpoint>()
 
+    // 活跃发现消费者标记集合；当集合非空时启动 mDNS，集合为空时释放系统资源
+    private val discoveryConsumers = ConcurrentHashMap.newKeySet<String>()
+
     // NSD 监听器引用，stop 时需要注销
     private var pairingDiscoveryListener: NsdManager.DiscoveryListener? = null
     private var connectDiscoveryListener: NsdManager.DiscoveryListener? = null
@@ -110,12 +113,43 @@ class EmbeddedAdbManager(
     init {
         KadbCert.configure(OkioFilePrivateKeyStore(privateKeyFile.absolutePath.toPath()))
         KadbCert.ensureReady()
-        startDiscovery()
+        // 按需发现：不再在冷启动构造时无条件开启 mDNS 发现，
+        // 彻底规避 Android 17 (API 37) 未授权触发系统 NSD_PICKER 弹窗与空闲耗电。
     }
 
     // ── 发现 ────────────────────────────────────────────────────────────────
 
-    fun startDiscovery() {
+    /**
+     * 按需开启 mDNS 发现。
+     * 支持多组件基于 [consumerTag] 注册引用；只有在至少存在一个活跃消费者时才真正占用系统资源。
+     */
+    fun startDiscovery(consumerTag: String = TAG_MANUAL) {
+        discoveryConsumers.add(consumerTag)
+        startDiscoveryInternal()
+    }
+
+    /**
+     * 注销指定消费者的发现需求；当所有消费者都释放时，立即注销系统监听并释放 MulticastLock。
+     */
+    fun stopDiscovery(consumerTag: String = TAG_MANUAL) {
+        discoveryConsumers.remove(consumerTag)
+        if (discoveryConsumers.isEmpty()) {
+            stopDiscoveryInternal()
+        }
+    }
+
+    /**
+     * 显式强制刷新发现端点（如用户在界面点击“重新扫描”按钮）。
+     */
+    fun restartDiscovery() {
+        stopDiscoveryInternal()
+        pairingEndpointMap.clear()
+        connectEndpointMap.clear()
+        publishDiscoveryState()
+        startDiscoveryInternal()
+    }
+
+    private fun startDiscoveryInternal() {
         if (discoveryStarted.getAndSet(true)) return
         runCatching {
             if (!multicastLock.isHeld) multicastLock.acquire()
@@ -142,7 +176,7 @@ class EmbeddedAdbManager(
         }
     }
 
-    fun stopDiscovery() {
+    private fun stopDiscoveryInternal() {
         if (!discoveryStarted.getAndSet(false)) return
         runCatching { pairingDiscoveryListener?.let { nsdManager.stopServiceDiscovery(it) } }
         runCatching { connectDiscoveryListener?.let { nsdManager.stopServiceDiscovery(it) } }
@@ -521,9 +555,13 @@ class EmbeddedAdbManager(
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
-    private companion object {
-        const val TAG = "EmbeddedAdb"
-        const val LOOPBACK = "127.0.0.1"
+    companion object {
+        const val TAG_MANUAL = "manual"
+        const val TAG_NOTIFICATION = "adb_notification"
+        const val TAG_DEVELOPER_UI = "developer_ui"
+
+        private const val TAG = "EmbeddedAdb"
+        private const val LOOPBACK = "127.0.0.1"
         const val CONNECT_TIMEOUT_MS = 5_000
         const val SHELL_TIMEOUT_MS = 30_000
         const val CONNECT_DISCOVERY_TIMEOUT_MS = 10_000L

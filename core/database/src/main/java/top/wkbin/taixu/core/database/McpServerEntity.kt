@@ -6,7 +6,12 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -86,35 +91,42 @@ class McpServerRepository(
     private val secretManager: SecretManager,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val initializationMutex = Mutex()
+    @Volatile private var initialized = false
 
-    val servers: Flow<List<McpServerConfig>> = dao.observeAll().map { rows -> rows.map { it.toModel(json, secretManager) } }
+    val servers: Flow<List<McpServerConfig>> = dao.observeAll()
+        .map { rows -> rows.map { it.toModel(json, secretManager) } }
+        .flowOn(Dispatchers.Default)
 
-    suspend fun ensureInitialized() {
-        BuiltinMcpPresets.presets.forEach { preset ->
-            val entity = preset.toEntity(json, secretManager)
-            if (dao.findById(preset.id) == null) {
-                dao.upsert(entity)
-            } else {
-                // 更新内置服务的启动定义（例如从失效 npx 包迁移到 APK 自带脚本）。
-                dao.updateBuiltinDefinition(
-                    id = entity.id,
-                    name = entity.name,
-                    description = entity.description,
-                    transportType = entity.transportType,
-                    command = entity.command,
-                    argsCiphertext = entity.argsCiphertext,
-                    envCiphertext = entity.envCiphertext,
-                    serverUrl = entity.serverUrl,
-                )
-                // 用户从未手动切换过启停的行跟随当前预设默认值
-                // （默认值从关闭改为开启后，存量安装也能自动启用，无需手动开启）。
-                dao.syncBuiltinDefault(entity.id, entity.isEnabled)
+    suspend fun ensureInitialized() = withContext(Dispatchers.IO) {
+        if (initialized) return@withContext
+        initializationMutex.withLock {
+            if (initialized) return@withLock
+            BuiltinMcpPresets.presets.forEach { preset ->
+                val entity = preset.toEntity(json, secretManager)
+                if (dao.findById(preset.id) == null) {
+                    dao.upsert(entity)
+                } else {
+                    // 更新内置服务的启动定义（例如从失效 npx 包迁移到 APK 自带脚本）。
+                    dao.updateBuiltinDefinition(
+                        id = entity.id,
+                        name = entity.name,
+                        description = entity.description,
+                        transportType = entity.transportType,
+                        command = entity.command,
+                        argsCiphertext = entity.argsCiphertext,
+                        envCiphertext = entity.envCiphertext,
+                        serverUrl = entity.serverUrl,
+                    )
+                    // 用户从未手动切换过启停的行跟随当前预设默认值。
+                    dao.syncBuiltinDefault(entity.id, entity.isEnabled)
+                }
             }
+            // 清理已被移除的内置预设，避免升级后残留幽灵服务。
+            val activeBuiltinIds = BuiltinMcpPresets.presets.map { it.id }.toSet()
+            dao.findAllBuiltinIds().filterNot { it in activeBuiltinIds }.forEach { dao.deleteBuiltin(it) }
+            initialized = true
         }
-        // 清理已被移除的内置预设：代码不再提供的系统核心 MCP 从库中移除，
-        // 避免升级后残留幽灵服务（内置定义以当前代码为准）。
-        val activeBuiltinIds = BuiltinMcpPresets.presets.map { it.id }.toSet()
-        dao.findAllBuiltinIds().filterNot { it in activeBuiltinIds }.forEach { dao.deleteBuiltin(it) }
     }
 
     suspend fun setEnabled(id: String, enabled: Boolean) {

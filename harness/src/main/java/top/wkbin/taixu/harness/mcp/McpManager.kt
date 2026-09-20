@@ -110,6 +110,27 @@ class McpManager(
         }
     }
 
+    /** 开关仅影响当前服务，避免重新启动和探测列表里的其他 MCP 服务。 */
+    suspend fun refreshConnection(serverId: String) = withContext(Dispatchers.IO) {
+        val server = repository.servers.first().firstOrNull { it.id == serverId } ?: return@withContext
+        if (!server.isEnabled) {
+            cache.remove(serverId)
+            lastErrors.remove(serverId)
+            lastBoundWorkspaces.remove(serverId)
+            clearDiscoveryCooldown(serverId)
+            _connectionStates.update { it + (serverId to McpConnectionState.UNKNOWN) }
+            closeTransportConnection(server)
+            return@withContext
+        }
+        clearDiscoveryCooldown(serverId)
+        _connectionStates.update { it + (serverId to McpConnectionState.CHECKING) }
+        val online = checkConnection(server)
+        if (online) lastErrors.remove(serverId)
+        _connectionStates.update {
+            it + (serverId to if (online) McpConnectionState.ONLINE else McpConnectionState.OFFLINE)
+        }
+    }
+
     /**
      * 按需发现单个启用服务的工具清单（use_capability inspect 的兜底路径）：
      * 缓存为空时才真正连接并发现——这是 inspect 唯一会拉起进程的场景

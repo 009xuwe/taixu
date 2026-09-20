@@ -42,6 +42,15 @@ class DeveloperViewModel(
     private val embeddedAdbManager: EmbeddedAdbManager,
 ) : ViewModel() {
 
+    init {
+        embeddedAdbManager.startDiscovery(EmbeddedAdbManager.TAG_DEVELOPER_UI)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        embeddedAdbManager.stopDiscovery(EmbeddedAdbManager.TAG_DEVELOPER_UI)
+    }
+
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
 
     private val _commandInput = MutableStateFlow("cat /etc/os-release")
@@ -124,8 +133,7 @@ class DeveloperViewModel(
     }
 
     fun restartAdbDiscovery() {
-        embeddedAdbManager.stopDiscovery()
-        embeddedAdbManager.startDiscovery()
+        embeddedAdbManager.restartDiscovery()
         _adbMessage.value = "已重新启动 mDNS 端口探测。"
     }
 

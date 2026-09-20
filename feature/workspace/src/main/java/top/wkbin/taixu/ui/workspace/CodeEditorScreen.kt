@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +76,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.ui.components.NoticeBanner
@@ -101,6 +103,7 @@ fun CodeEditorScreen(
     viewModel: WorkspaceViewModel = koinViewModel(),
 ) {
     val fileContent by viewModel.fileContent.collectAsStateWithLifecycle()
+    val contentRevision by viewModel.contentRevision.collectAsStateWithLifecycle()
     val isDirty by viewModel.isDirty.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val loading by viewModel.loadingFiles.collectAsStateWithLifecycle()
@@ -113,6 +116,19 @@ fun CodeEditorScreen(
     var wordWrap by rememberSaveable { mutableStateOf(false) }
     var editorFontSizeSp by rememberSaveable { mutableStateOf(13f) }
     val editorState = remember { TextFieldState() }
+    val lineCount by remember(editorState) {
+        derivedStateOf {
+            val text = editorState.text
+            var count = 1
+            for (i in 0 until text.length) {
+                if (text[i] == '\n') count++
+            }
+            count
+        }
+    }
+    val charCount by remember(editorState) {
+        derivedStateOf { editorState.text.length }
+    }
 
     val fileName = relativePath.substringAfterLast('/')
     val extension = relativePath.substringAfterLast('.', "")
@@ -124,20 +140,33 @@ fun CodeEditorScreen(
         viewModel.openFile(projectName, relativePath)
     }
 
-    LaunchedEffect(fileContent) {
-        if (editorState.text.toString() != fileContent) {
-            editorState.setTextAndPlaceCursorAtEnd(fileContent)
+    // 仅在整文加载或重置时同步文本，避免打字期间因异步流转导致光标重置和软键盘闪烁
+    LaunchedEffect(contentRevision) {
+        if (contentRevision > 0L) {
+            val target = viewModel.fileContent.value
+            if (editorState.text.toString() != target) {
+                editorState.setTextAndPlaceCursorAtEnd(target)
+            }
         }
     }
 
     LaunchedEffect(editorState) {
         snapshotFlow { editorState.text.toString() }.collect { editedText ->
-            if (editedText != fileContent) viewModel.onContentChanged(editedText)
+            viewModel.onContentChanged(editedText)
         }
     }
 
+    // 语法高亮防抖：首次载入立即高亮，打字输入期间防抖 500ms，输入停顿/完毕后再统一着色
+    var isInitialHighlight by remember(projectName, relativePath) { mutableStateOf(true) }
     LaunchedEffect(editorState, extension) {
         snapshotFlow { editorState.text.toString() }.collectLatest { text ->
+            if (isInitialHighlight) {
+                if (text.isNotEmpty()) {
+                    isInitialHighlight = false
+                }
+            } else {
+                delay(500)
+            }
             highlightedRanges = withContext(Dispatchers.Default) {
                 SyntaxHighlighter.highlight(text, extension).spanStyles
             }
@@ -157,7 +186,7 @@ fun CodeEditorScreen(
 
     val copyAll = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(fileName, fileContent))
+        clipboard.setPrimaryClip(ClipData.newPlainText(fileName, editorState.text.toString()))
         Toast.makeText(context, context.getString(R.string.workspace_code_copied), Toast.LENGTH_SHORT).show()
     }
 
@@ -181,7 +210,7 @@ fun CodeEditorScreen(
                         }
                     }
                     IconButton(
-                        onClick = { viewModel.saveFile() },
+                        onClick = { viewModel.saveFile(content = editorState.text.toString()) },
                         enabled = isDirty && !isSaving,
                         contentDescription = stringResource(R.string.workspace_cd_save),
                     ) {
@@ -211,16 +240,17 @@ fun CodeEditorScreen(
                 }
             } else {
                 // 代码编辑核心区域
-                val lines = remember(fileContent) { fileContent.split('\n') }
-                val lineCount = lines.size
                 val scrollState = rememberScrollState()
                 val horizontalScrollState = rememberScrollState()
 
-                // 高亮语法生成
-                val syntaxTransformation = remember(extension, highlightedRanges) {
+                // 高亮语法生成：key 仅依赖 extension，避免每次高亮区间更新都生成新的 OutputTransformation 实例
+                // 导致 BasicTextField 重置 InputConnection 和软键盘闪烁
+                val syntaxTransformation = remember(extension) {
                     OutputTransformation {
-                        val currentLength = toString().length
-                        highlightedRanges.forEach { range ->
+                        val currentLength = length
+                        val ranges = highlightedRanges
+                        for (i in ranges.indices) {
+                            val range = ranges[i]
                             if (range.start < currentLength && range.end <= currentLength) {
                                 addStyle(range.item, range.start, range.end)
                             }
@@ -264,7 +294,12 @@ fun CodeEditorScreen(
                         },
                 ) {
                     // 行号列
-                    val gutterWidth = (lineCount.toString().length * 10 + 24).dp.coerceAtLeast(42.dp)
+                    val gutterWidth = remember(lineCount) {
+                        (lineCount.toString().length * 10 + 24).dp.coerceAtLeast(42.dp)
+                    }
+                    val lineNumbersText = remember(lineCount) {
+                        (1..lineCount).joinToString("\n")
+                    }
                     val editorLineHeight = (editorFontSizeSp * 1.54f).sp
                     val editorPlatformStyle = PlatformTextStyle(includeFontPadding = false)
                     Column(
@@ -275,7 +310,7 @@ fun CodeEditorScreen(
                         horizontalAlignment = Alignment.End,
                     ) {
                         Text(
-                            text = (1..lineCount).joinToString("\n"),
+                            text = lineNumbersText,
                             style = TextStyle(
                                 color = EditorGutterText,
                                 fontSize = editorFontSizeSp.sp,
@@ -339,8 +374,8 @@ fun CodeEditorScreen(
             // 底部状态栏
             EditorStatusBar(
                 extension = extension,
-                lineCount = remember(fileContent) { fileContent.count { it == '\n' } + 1 },
-                charCount = fileContent.length,
+                lineCount = lineCount,
+                charCount = charCount,
                 isDirty = isDirty,
                 wordWrap = wordWrap,
                 onToggleWrap = { wordWrap = !wordWrap },
@@ -357,11 +392,14 @@ fun CodeEditorScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.saveFile(onSuccess = {
-                            showUnsavedDialog = false
-                            viewModel.closeFile()
-                            onBack()
-                        })
+                        viewModel.saveFile(
+                            content = editorState.text.toString(),
+                            onSuccess = {
+                                showUnsavedDialog = false
+                                viewModel.closeFile()
+                                onBack()
+                            },
+                        )
                     },
                 ) { Text(stringResource(R.string.workspace_save_and_exit)) }
             },
