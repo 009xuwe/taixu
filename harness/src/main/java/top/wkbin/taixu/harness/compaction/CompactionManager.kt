@@ -142,12 +142,20 @@ class CompactionManager(
         } else {
             null
         }
-        val summary = if (llmSummary != null) {
+        val baseSummary = if (llmSummary != null) {
             llmSummary
         } else {
             val incrementalSummary = ContextWindowPolicy.buildHistorySummary(collapsedForSummary)
             mergeRollingSummary(previousSummaries.joinToString("\n\n"), incrementalSummary)
         }
+        // 累计文件足迹与摘要生成器解耦：LLM 摘要已在 finalizeSummary 里附加 tags，
+        // 机械回退（无 summarizer / 紧急压缩）也必须程序化补上，否则模型失忆后
+        // 不知道改过哪些文件，会重复 read 甚至覆盖自己的改动。
+        val summary = ensureFileTags(
+            baseSummary,
+            FileOperations.parseFromSummary(previousSummaries.joinToString("\n\n"))
+                .mergedWith(FileOperations.extractFrom(collapsedForSummary)),
+        )
 
         // "重读-对账-落库"在 laneLock 内原子完成：调用方传入的 context 是锁外快照，若期间有
         // 消息落库而直接折叠旧快照，新消息的 sequence 会小于压缩 entry、被投影的 afterMessages
@@ -240,6 +248,14 @@ class CompactionManager(
         .toList()
 
     private fun messageTokens(message: HarnessMessage): Int = ContextWindowPolicy.estimateTokens(message.toString())
+
+    /** 摘要未携带文件足迹 tags 时补上（机械回退路径）；已有则原样返回避免重复。 */
+    private fun ensureFileTags(summary: String, files: FileOperations): String {
+        val tags = files.renderTags()
+        if (tags.isEmpty()) return summary
+        if (summary.contains("<read-files>") || summary.contains("<modified-files>")) return summary
+        return "$summary\n\n$tags"
+    }
 
     /** Preserve both durable early context and the newest folded state after the cap is reached. */
     private fun mergeRollingSummary(previous: String?, incremental: String): String {

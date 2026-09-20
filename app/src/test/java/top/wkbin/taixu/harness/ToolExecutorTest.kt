@@ -9,6 +9,7 @@ import top.wkbin.taixu.runtime.shell.CommandResult
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
@@ -20,12 +21,16 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import top.wkbin.taixu.core.database.AgentSkillDao
+import top.wkbin.taixu.core.database.AgentSkillEntity
+import top.wkbin.taixu.core.database.AgentSkillRepository
 
 class ToolExecutorTest {
 
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
+    private lateinit var workspaceRoot: File
     private lateinit var runtime: FakeLinuxRuntime
     private lateinit var executor: ToolExecutor
     private lateinit var downloader: RecordingDownloader
@@ -35,13 +40,13 @@ class ToolExecutorTest {
 
     @Before
     fun setUp() {
-        val root = temporaryFolder.newFolder("workspace")
+        workspaceRoot = temporaryFolder.newFolder("workspace")
         runtime = FakeLinuxRuntime()
         downloader = RecordingDownloader()
         val pathResolver = HarnessPathResolver()
         val approvalPolicyEngine = ApprovalPolicyEngine(pathResolver)
         executor = ToolExecutor(
-            fileAccess = WorkspaceFileAccess(root),
+            fileAccess = WorkspaceFileAccess(workspaceRoot),
             linuxRuntime = runtime,
             pathResolver = pathResolver,
             approvalPolicyEngine = approvalPolicyEngine,
@@ -223,6 +228,100 @@ class ToolExecutorTest {
         assertTrue(progress.any { it.contains("100%") })
     }
 
+    @Test
+    fun `read tool bridges image files as multimodal payload`() = runBlocking {
+        workspaceRoot.resolve("chart.png").writeBytes(
+            byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A),
+        )
+
+        val result = executor.execute(toolCall(HarnessTool.READ, buildJsonObject { put("path", "chart.png") }))
+
+        assertTrue(result.success)
+        val payload = result.imageDataUrl
+        assertTrue(payload != null && payload.startsWith("data:image/png;base64,"))
+        assertTrue(result.metadata.isEmpty())
+    }
+
+    @Test
+    fun `load skill reads sub resource and strips root frontmatter`() = runBlocking {
+        val skillDir = temporaryFolder.newFolder("skill")
+        File(skillDir, "references").mkdirs()
+        File(skillDir, "references/spec.md").writeText("SPEC-CONTENT")
+        val skillExecutor = executorWithSkill(skillDir, systemPrompt = "---\nname: demo\n---\nBODY")
+
+        val sub = skillExecutor.execute(
+            toolCall(
+                HarnessTool.LOAD_SKILL,
+                buildJsonObject {
+                    put("name", "demo")
+                    put("path", "references/spec.md")
+                },
+            ),
+        )
+        assertTrue(sub.success)
+        assertTrue(sub.output.contains("SPEC-CONTENT"))
+
+        val root = skillExecutor.execute(toolCall(HarnessTool.LOAD_SKILL, buildJsonObject { put("name", "demo") }))
+        assertTrue(root.success)
+        assertTrue(root.output.contains("BODY"))
+        assertFalse(root.output.contains("name: demo"))
+    }
+
+    @Test
+    fun `load skill rejects path traversal`() = runBlocking {
+        val skillDir = temporaryFolder.newFolder("skill-traversal")
+        val skillExecutor = executorWithSkill(skillDir, systemPrompt = "BODY")
+
+        val result = skillExecutor.execute(
+            toolCall(
+                HarnessTool.LOAD_SKILL,
+                buildJsonObject {
+                    put("name", "demo")
+                    put("path", "../../etc/passwd")
+                },
+            ),
+        )
+
+        assertFalse(result.success)
+    }
+
+    private fun executorWithSkill(skillDir: File, systemPrompt: String): ToolExecutor {
+        val dao = FakeSkillDao(
+            listOf(
+                AgentSkillEntity(
+                    id = "s1",
+                    name = "demo",
+                    description = "demo skill",
+                    systemPrompt = systemPrompt,
+                    triggerCommand = null,
+                    iconName = "",
+                    isEnabled = true,
+                    isBuiltin = false,
+                    isImmutable = false,
+                    category = "自定义",
+                    resourcePath = skillDir.absolutePath,
+                ),
+            ),
+        )
+        return ToolExecutor(
+            fileAccess = WorkspaceFileAccess(workspaceRoot),
+            linuxRuntime = runtime,
+            pathResolver = HarnessPathResolver(),
+            approvalPolicyEngine = ApprovalPolicyEngine(HarnessPathResolver()),
+            secretRedactor = SecretRedactor(),
+            fileDownloader = downloader,
+            skillRepository = AgentSkillRepository(dao),
+        )
+    }
+
+    private class FakeSkillDao(rows: List<AgentSkillEntity>) : AgentSkillDao {
+        private val flow = MutableStateFlow(rows)
+        override fun observeAll() = flow
+        override suspend fun insertAll(skills: List<AgentSkillEntity>) = Unit
+        override suspend fun upsert(skill: AgentSkillEntity) = Unit
+        override suspend fun setEnabled(id: String, enabled: Boolean) = Unit
+        override suspend fun deleteCustom(id: String) = Unit
+    }
     private class RecordingDownloader : FileDownloader {
         lateinit var request: DownloadRequest
 

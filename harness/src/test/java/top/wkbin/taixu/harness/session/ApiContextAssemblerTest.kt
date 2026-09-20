@@ -419,4 +419,26 @@ class ApiContextAssemblerTest {
         val systemPrompt = out.first { it.role == "system" }.content.orEmpty()
         assertTrue(systemPrompt.contains("REVIEWER_MARKER_PROMPT"))
     }
+
+    @Test
+    fun `split turn compaction bridges retained suffix with a leading user message`() = runBlocking {
+        val session = "s-split-turn"
+        push(session, UserMessage("u1", 1L, "超长任务：连续很多步"))
+        repeat(40) { index ->
+            store.append(
+                session,
+                AssistantText("a-$index", 2L + index, "步骤 $index " + "x".repeat(4_000)),
+            )
+        }
+
+        // 小上下文窗口强制触发压缩；CompactionManager 无 summarizer → 机械摘要，无 LLM 调用。
+        val out = assembler.assemble(session, nativeModel(tokens = 40_000), workspacePath = "")
+
+        val firstNonSystem = out.first { it.role != "system" }
+        assertEquals("user", firstNonSystem.role)
+        assertTrue(
+            "split-turn 保留段应从合成 user 桥接开始，而非直接以 assistant 开头",
+            firstNonSystem.content.orEmpty().contains("中途继续"),
+        )
+    }
 }

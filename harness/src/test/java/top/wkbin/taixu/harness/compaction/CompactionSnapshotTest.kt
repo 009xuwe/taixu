@@ -17,7 +17,13 @@ import org.robolectric.annotation.Config
 import top.wkbin.taixu.core.database.AppDatabase
 import top.wkbin.taixu.core.database.HarnessEntryEntity
 import top.wkbin.taixu.core.database.RoomHarnessRuntimeRepository
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.HarnessTool
+import top.wkbin.taixu.harness.ToolCall
+import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
 
 /** latestSnapshot 快照 API：UI 折叠透明度横幅的数据源契约（真实 Room）。 */
@@ -150,5 +156,42 @@ class CompactionSnapshotTest {
 
         assertTrue(compacted.summary.orEmpty().contains(latestMarker))
         assertTrue(compacted.summary.orEmpty().length <= 16_000)
+    }
+
+    @Test
+    fun `mechanical compaction accumulates programmatic file footprints`() = runBlocking {
+        val sessionId = "s-file-footprints"
+        repository.ensureLane(sessionId, "main")
+        suspend fun append(message: HarnessMessage) {
+            repository.appendToLane(
+                sessionId,
+                "main",
+                HarnessEntryEntity(
+                    id = message.id,
+                    sessionId = sessionId,
+                    parentId = repository.findLane(sessionId, "main")!!.leafId,
+                    createdAt = message.createdAt,
+                    entryType = "message",
+                    customType = null,
+                    payloadJson = Json.encodeToString(HarnessMessage.serializer(), message),
+                ),
+            )
+        }
+        append(UserMessage("u1", 1L, "改一下网络层"))
+        append(ToolCall("c-read", 2L, HarnessTool.READ, buildJsonObject { put("path", "core/network/A.kt") }, rawToolName = "read"))
+        append(ToolResult("r-read", 3L, "c-read", success = true, output = "ok"))
+        append(ToolCall("c-write", 4L, HarnessTool.WRITE, buildJsonObject { put("path", "core/network/B.kt") }, rawToolName = "write"))
+        append(ToolResult("r-write", 5L, "c-write", success = true, output = "ok"))
+        append(AssistantText("a1", 6L, "完成"))
+
+        val context = compaction.project(sessionId)
+        val compacted = compaction.compact(sessionId, context, keepFromIndex = context.messages.size - 1)
+
+        // 无 summarizer → 机械摘要路径，也必须程序化携带累计文件足迹
+        val summary = compacted.summary.orEmpty()
+        assertTrue(summary.contains("<read-files>"))
+        assertTrue(summary.contains("core/network/A.kt"))
+        assertTrue(summary.contains("<modified-files>"))
+        assertTrue(summary.contains("core/network/B.kt"))
     }
 }

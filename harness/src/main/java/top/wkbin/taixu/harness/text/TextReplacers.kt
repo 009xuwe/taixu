@@ -36,13 +36,15 @@ interface TextReplacer {
     )
 }
 
-/** 文本替换结果；供 `WorkspaceFileAccess.edit` 生成 Unified Diff 与结果提示。 */
+/**
+ * 文本替换结果；供 `WorkspaceFileAccess.editDetailed` 生成结果提示与 Unified Diff。
+ * diff 由 `UnifiedDiffGenerator` 单独生成（需要文件路径作头部），不在此重复持有。
+ */
 data class ReplaceTextResult(
     val updated: String,
     val replacements: Int,
     val occurrences: Int,
     val strategy: String,
-    val diff: String? = null,
 )
 
 /** 文本替换失败（未找到 / 匹配多处）。调用方应把 message 原样回给模型自我纠正。 */

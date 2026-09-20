@@ -16,3 +16,22 @@ object ToolOutputRetention {
         else -> OutputRetention.HEAD
     }
 }
+
+/**
+ * 头部截断并对齐完整行：优先在字符预算内最后一个换行处切分，避免把一行切成两半；
+ * 单行超过预算时退化为硬截断（无法按行对齐）。
+ */
+internal fun keepHeadWholeLines(text: String, maxChars: Int): String {
+    if (text.length <= maxChars) return text
+    val cut = text.lastIndexOf('\n', maxChars).let { if (it <= 0) maxChars else it }
+    return text.substring(0, cut)
+}
+
+/** 尾部截断并对齐完整行：从末尾往前取整行，保证不切在行中。 */
+internal fun keepTailWholeLines(text: String, maxChars: Int): String {
+    if (text.length <= maxChars) return text
+    val from = (text.length - maxChars).coerceAtLeast(0)
+    val newline = text.indexOf('\n', from)
+    val cut = if (newline < 0) text.length - maxChars else newline + 1
+    return text.substring(cut.coerceIn(0, text.length))
+}

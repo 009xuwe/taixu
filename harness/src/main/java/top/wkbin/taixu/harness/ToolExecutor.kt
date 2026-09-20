@@ -16,6 +16,8 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.harness.checkpoint.CheckpointStore
 import top.wkbin.taixu.harness.effects.OutputRetention
 import top.wkbin.taixu.harness.effects.ToolOutputRetention
+import top.wkbin.taixu.harness.effects.keepHeadWholeLines
+import top.wkbin.taixu.harness.effects.keepTailWholeLines
 import top.wkbin.taixu.harness.compaction.CompressAnchorResult
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.privilege.BinderOutcome
@@ -218,8 +220,8 @@ class ToolExecutor(
         // 差异化截断：命令/构建/日志保留尾部（报错在末尾），读取/搜索保留头部。
         val retention = ToolOutputRetention.forTool(toolName)
         val kept = when (retention) {
-            OutputRetention.TAIL -> output.takeLast(TRUNCATE_KEEP_LENGTH)
-            OutputRetention.HEAD -> output.take(TRUNCATE_KEEP_LENGTH)
+            OutputRetention.TAIL -> keepTailWholeLines(output, TRUNCATE_KEEP_LENGTH)
+            OutputRetention.HEAD -> keepHeadWholeLines(output, TRUNCATE_KEEP_LENGTH)
         }
         val totalLines = output.count { it == '\n' } + 1
         val keptLines = kept.count { it == '\n' } + 1

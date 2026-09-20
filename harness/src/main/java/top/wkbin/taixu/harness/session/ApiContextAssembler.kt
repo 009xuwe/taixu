@@ -200,16 +200,21 @@ class ApiContextAssembler(
                     ),
                 )
             }
+            val projectedMessages = ApiMessageProjector.project(
+                msgs = msgs,
+                toolCallMode = toolCallMode,
+                visionEnabled = model.visionEnabled,
+                recallSuffixes = compactedContext.recallBlocks,
+            )
+            // Split-Turn 压缩后保留段可能从 assistant / tool_call 中途开始。补一条合成 user
+            // 消息作为角色桥接，满足 provider 的角色交替与「首条消息必须是 user」约束
+            // （Anthropic 尤其严格），并提示模型不要重复已折叠的步骤。
+            if (summaryLayer.isNotBlank() && projectedMessages.isNotEmpty() && projectedMessages.first().role != "user") {
+                add(ApiMessage(role = "user", content = SPLIT_TURN_BRIDGE_MESSAGE))
+            }
             addAll(
                 ContextWindowPolicy.shrinkApiMessagesToByteBudget(
-                    ImagePayloadCompressor.downscale(
-                        ApiMessageProjector.project(
-                            msgs = msgs,
-                            toolCallMode = toolCallMode,
-                            visionEnabled = model.visionEnabled,
-                            recallSuffixes = compactedContext.recallBlocks,
-                        ),
-                    ),
+                    ImagePayloadCompressor.downscale(projectedMessages),
                 ),
             )
         }
@@ -220,3 +225,7 @@ class ApiContextAssembler(
             it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
         }
 }
+
+/** Split-Turn 压缩后的角色桥接消息：当保留段从 assistant / tool_call 中途开始时插入。 */
+private const val SPLIT_TURN_BRIDGE_MESSAGE =
+    "[系统说明] 为避免单个超长任务轮次撑爆上下文，更早的步骤已折叠为上方摘要。以下从当前任务中途继续，请勿重复已完成的工作。"
