@@ -31,7 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -314,17 +313,36 @@ fun ContextUsageSegmentedBar(
     ) {
         val w = size.width
         val h = size.height
-        val cornerRadius = CornerRadius(h / 2f, h / 2f)
 
         // 1. Draw track (empty budget background)
-        drawRoundRect(
+        drawRect(
             color = Color(0xFF27272A),
             topLeft = Offset.Zero,
             size = size,
-            cornerRadius = cornerRadius,
         )
 
-        // Compaction threshold marker: ring/bar still shows model-window usage,
+        // 2. Draw segments seamlessly without gaps and without rounded corners
+        if (items.isNotEmpty() && animatedRatio > 0f) {
+            val totalUsedW = w * animatedRatio
+            val sumTokens = items.sumOf { it.tokens }.coerceAtLeast(1)
+
+            var cursorX = 0f
+            for (item in items) {
+                val proportionalW = (item.tokens.toFloat() / sumTokens) * totalUsedW
+                val segmentW = minOf(proportionalW, (w - cursorX).coerceAtLeast(0f))
+                if (segmentW > 0f) {
+                    drawRect(
+                        color = item.color,
+                        topLeft = Offset(cursorX, 0f),
+                        size = Size(segmentW, h),
+                    )
+                    cursorX += segmentW
+                }
+                if (cursorX >= w) break
+            }
+        }
+
+        // 3. Compaction threshold marker: ring/bar still shows model-window usage,
         // while this line tells the user when the next request will fold history.
         val thresholdRatio = (usage.compactionThresholdTokens.toFloat() / limit).coerceIn(0f, 1f)
         if (thresholdRatio in 0.01f..0.99f) {
@@ -335,33 +353,6 @@ fun ContextUsageSegmentedBar(
                 end = Offset(markerX, h),
                 strokeWidth = 2.dp.toPx(),
             )
-        }
-
-        if (items.isEmpty() || animatedRatio <= 0f) return@Canvas
-
-        val gapPx = 2.dp.toPx()
-        val minPillPx = 4.dp.toPx()
-
-        // Total pixel width available for used tokens
-        val totalUsedW = w * animatedRatio
-        val sumTokens = items.sumOf { it.tokens }.coerceAtLeast(1)
-        val gapsCount = (items.size - 1).coerceAtLeast(0)
-        val netWidth = (totalUsedW - gapsCount * gapPx).coerceAtLeast(0f)
-
-        var cursorX = 0f
-        for (item in items) {
-            val proportionalW = (item.tokens.toFloat() / sumTokens) * netWidth
-            val segmentW = minOf(maxOf(minPillPx, proportionalW), (w - cursorX).coerceAtLeast(0f))
-            if (segmentW > 0f) {
-                drawRoundRect(
-                    color = item.color,
-                    topLeft = Offset(cursorX, 0f),
-                    size = Size(segmentW, h),
-                    cornerRadius = CornerRadius(h / 2f, h / 2f),
-                )
-                cursorX += segmentW + gapPx
-            }
-            if (cursorX >= w) break
         }
     }
 }
