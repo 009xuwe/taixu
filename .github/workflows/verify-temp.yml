@@ -47,6 +47,22 @@ jobs:
           set -o pipefail
           ./gradlew testDebugUnitTest --no-daemon --stacktrace --continue 2>&1 | tee /tmp/unit-test.log
 
+      - name: 输出各模块测试统计（证明新测试确实执行）
+        if: always()
+        run: |
+          echo "=== 各模块 test-results 汇总 ==="
+          find . -path "*/test-results/*" -name "TEST-*.xml" 2>/dev/null | sort | while read -r f; do
+            mod=$(echo "$f" | sed -E 's|^\./([^/]+)/.*|\1|')
+            cls=$(basename "$f" | sed -E 's/^TEST-(.*)\.xml$/\1/')
+            tests=$(grep -o 'tests="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+            fails=$(grep -o 'failures="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+            printf "  [%s] %-60s tests=%s failures=%s\n" "$mod" "$cls" "${tests:-?}" "${fails:-?}"
+          done | grep -iE "skill|mention|frontmatter|\[app\]|\[harness\]|\[runtime\]|\[core" | head -60
+          echo "=== 技能相关测试专项确认 ==="
+          find . -path "*/test-results/*" -name "TEST-*Skill*.xml" -o -path "*/test-results/*" -name "TEST-*Mention*.xml" -o -path "*/test-results/*" -name "TEST-*Frontmatter*.xml" 2>/dev/null | while read -r f; do
+            echo "  ✓ $(basename "$f"): $(grep -o 'tests="[0-9]*"' "$f" | head -1)"
+          done
+
       - name: Publish failure summary
         if: failure()
         run: |
