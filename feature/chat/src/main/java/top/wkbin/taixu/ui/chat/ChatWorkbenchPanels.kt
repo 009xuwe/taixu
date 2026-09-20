@@ -70,6 +70,7 @@ import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ModelSwitchEvent
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
@@ -553,6 +554,7 @@ internal fun SubagentResultSheet(
                                 liveStatus = null,
                             )
                             is CapabilityEvent -> Unit
+                            is SkillSuggestion -> Unit
                             is ModelSwitchEvent -> Unit
                             is ToolResult -> Unit
                         }

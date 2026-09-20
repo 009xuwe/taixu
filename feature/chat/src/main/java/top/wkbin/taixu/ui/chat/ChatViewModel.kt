@@ -17,6 +17,7 @@ import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.ToolCall
@@ -211,6 +212,49 @@ class ChatViewModel @Inject constructor(
     fun dismissMcpRecommendation(presetId: String) = harnessLoop.dismissMcpRecommendation(presetId)
     fun dismissWorkflowSuggestion(workflowId: String) {
         _workflowSuggestions.update { suggestions -> suggestions.filterNot { it.workflowId == workflowId } }
+    }
+
+    private val _hiddenSkillSuggestions = MutableStateFlow<Set<String>>(emptySet())
+    /** 已应用或忽略的技能进化建议 id；卡片从列表隐藏，转写消息本身保留。 */
+    val hiddenSkillSuggestions: StateFlow<Set<String>> = _hiddenSkillSuggestions.asStateFlow()
+
+    fun dismissSkillSuggestion(id: String) {
+        val suggestionId = id.trim()
+        if (suggestionId.isEmpty()) return
+        _hiddenSkillSuggestions.update { it + suggestionId }
+    }
+
+    /**
+     * 应用技能进化建议：创建新技能或更新既有自定义技能（内置技能不可覆盖，降级为新建）。
+     * [createNew] 为 true 时始终新建（对应卡片「创建技能 / 另存为新技能」）。
+     */
+    fun applySkillSuggestion(suggestion: SkillSuggestion, createNew: Boolean) {
+        val trimmedName = suggestion.skillName.trim()
+        val trimmedPrompt = suggestion.systemPrompt.trim()
+        if (trimmedName.isBlank() || trimmedPrompt.isBlank()) {
+            dismissSkillSuggestion(suggestion.id)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val skills = agentSkillRepository.allSkills.first()
+                val existing = SkillSuggestionActions.resolveExisting(suggestion, createNew, skills)
+                val skill = SkillSuggestionActions.toCustomSkill(suggestion, existing)
+                agentSkillRepository.addCustom(skill)
+                dismissSkillSuggestion(suggestion.id)
+                _notice.value = if (existing != null) {
+                    context.getString(R.string.chat_skill_suggestion_updated, skill.name)
+                } else {
+                    context.getString(R.string.chat_skill_suggestion_created, skill.name)
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "applySkillSuggestion failed", t)
+                _notice.value = context.getString(
+                    R.string.chat_skill_suggestion_apply_failed,
+                    t.message ?: "unknown",
+                )
+            }
+        }
     }
 
     fun launchWorkflowSuggestion(suggestion: ProactiveWorkflowSuggestion) {

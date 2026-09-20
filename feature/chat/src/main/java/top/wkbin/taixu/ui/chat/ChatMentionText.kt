@@ -1,6 +1,5 @@
 package top.wkbin.taixu.ui.chat
 
-import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -8,18 +7,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import top.wkbin.taixu.harness.MentionExtractor
 
 /** 构建精准匹配技能与插件实体的正则表达式（优先长词带空格全称匹配） */
 
 internal fun buildMentionRegex(knownNames: List<String>): Regex {
     val sorted = knownNames.filter { it.isNotBlank() }.sortedByDescending { it.length }
     val escaped = sorted.map { Regex.escape(it) }
-    val pattern = if (escaped.isNotEmpty()) {
-        """@(${escaped.joinToString("|")}|[^\s@,，:：\n]+)"""
+    val generic = """[^${MentionExtractor.MENTION_HARD_BOUNDARY}]+"""
+    // 与 MentionExtractor 同一套：已知名单最长优先 + 邮箱/词边界保护 + 硬终止符。
+    val body = if (escaped.isNotEmpty()) {
+        """${escaped.joinToString("|")}|$generic"""
     } else {
-        """@([^\s@,，:：\n]+)"""
+        generic
     }
-    return Regex(pattern)
+    return Regex("""(?<![\w.+-])@($body)""")
 }
 
 /** 为文本中的 @能力 实体添加自适应半透明高亮样式（支持带空格全称） */

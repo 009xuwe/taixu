@@ -5,6 +5,7 @@ import javax.inject.Singleton
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
@@ -54,7 +55,7 @@ object ConversationText {
         while (index < messages.size) {
             val message = messages[index]
             when (message) {
-                is CapabilityEvent, is ModelSwitchEvent -> Unit
+                is CapabilityEvent, is ModelSwitchEvent, is SkillSuggestion -> Unit
                 is UserMessage -> lines += "[User]: ${message.text.trim()}"
                 is AssistantText -> {
                     message.reasoning?.takeIf { it.isNotBlank() }?.let {

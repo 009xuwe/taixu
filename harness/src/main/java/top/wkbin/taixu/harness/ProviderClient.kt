@@ -1300,6 +1300,17 @@ class ProviderClient @Inject constructor(
             ),
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
+                    name = "load_skill",
+                    description = "按需加载技能（Skill）的完整说明。系统提示末尾的「可用技能」目录只列出名称与适用场景；" +
+                        "当用户请求与某个技能的描述匹配时，先用本工具加载其完整指导规则与资源路径，再按说明执行。" +
+                        "用户已 @提及 的技能会自动生效，无需重复加载。只读。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"name":{"type":"string","description":"技能名称或触发命令（不含 / 前缀），须与目录中列出的一致"}},"required":["name"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
                     name = "load_rule",
                     description = "按需加载系统提示词的详细规则块（workflow / code-navigation / security / memory / environment-proot / tools）。当当前任务需要某块规则但系统提示词中未注入时调用；只读，无副作用。",
                     parameters = Json.parseToJsonElement(

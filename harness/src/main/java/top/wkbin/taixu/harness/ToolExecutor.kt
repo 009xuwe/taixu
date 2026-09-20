@@ -72,6 +72,7 @@ class ToolExecutor @Inject constructor(
     private val sessionApprovalGrants: top.wkbin.taixu.harness.approval.SessionApprovalGrants? = null,
     private val compactionManager: top.wkbin.taixu.harness.compaction.CompactionManager? = null,
     private val providerClient: ProviderClient? = null,
+    private val skillRepository: top.wkbin.taixu.core.database.AgentSkillRepository? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -301,6 +302,48 @@ class ToolExecutor @Inject constructor(
             } else {
                 // 兼容路径：对话历史/模型习惯中仍可能出现直接 mcp__ 调用（schema 已不再宣告）
                 mcpManager?.executeTool(rawToolName ?: "mcp", args, workspace) ?: (false to "未初始化 MCP 管理器")
+            }
+            HarnessTool.LOAD_SKILL -> {
+                // 按需技能加载：目录（元数据）常驻系统提示，命中后由模型主动拉取
+                // 完整指导规则，避免全部正文常驻撑爆上下文。
+                val query = requireString(args, "name").trim().trimStart('/')
+                val skills = skillRepository?.activeSkills?.first().orEmpty()
+                if (skills.isEmpty()) {
+                    false to "当前没有已启用的技能。请提示用户到「设置 → 智能体」启用技能后重试。"
+                } else {
+                    val queryLower = query.lowercase()
+                    // 精确匹配（name / id / 去斜杠 triggerCommand）：大小写无关。
+                    val exact = skills.filter { skill ->
+                        val candidates = setOf(
+                            skill.name.lowercase(),
+                            skill.id.lowercase(),
+                            skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty(),
+                        )
+                        queryLower in candidates
+                    }
+                    // 模糊匹配仅作兜底，且必须唯一命中——若命中多条还静默取第一条，
+                    // 会出现「load_skill("Git") 却加载了 Git 敏捷工作流」这类选错技能的问题。
+                    val fuzzy = if (exact.isEmpty()) {
+                        skills.filter { skill ->
+                            skill.name.lowercase().contains(queryLower) ||
+                                (skill.triggerCommand?.removePrefix("/")?.lowercase()?.contains(queryLower) == true)
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    val pool = if (exact.isNotEmpty()) exact else fuzzy
+                    when {
+                        pool.isEmpty() -> false to "未找到匹配的技能：$query。可用技能：" +
+                            skills.joinToString("、") { it.name }
+                        pool.size > 1 -> false to "技能名 $query 匹配到多个技能：" +
+                            pool.joinToString("、") { it.name } + "。请使用完整技能名或 id 重试。"
+                        else -> {
+                            val matched = pool.first()
+                            true to "【技能已加载：${matched.name}】(category=${matched.category})\n" +
+                                matched.systemPrompt.trim()
+                        }
+                    }
+                }
             }
             HarnessTool.LOAD_RULE -> {
                 val rule = requireString(args, "rule")
@@ -897,6 +940,7 @@ class ToolExecutor @Inject constructor(
 
     private fun historyLabel(message: HarnessMessage, full: Boolean = false): String = when (message) {
         is CapabilityEvent -> "能力事件 ${message.name}: ${message.details}"
+        is SkillSuggestion -> "技能建议 ${message.skillName}: ${message.description}"
         is ModelSwitchEvent -> "切换模型 ${message.fromLabel} → ${message.toLabel}"
         is UserMessage -> "用户：${message.text.take(if (full) MAX_HISTORY_READ_OUTPUT else 240)}"
         is AssistantText -> "助手：${message.text.take(if (full) MAX_HISTORY_READ_OUTPUT else 240)}" +
