@@ -752,6 +752,13 @@ class SettingsViewModel @Inject constructor(
     val allPlugins: StateFlow<List<top.wkbin.taixu.core.model.AgentPlugin>> = agentPreferences.allPlugins
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val skillEvolutionSuggestions: StateFlow<Boolean> = agentPreferences.skillEvolutionSuggestions
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setSkillEvolutionSuggestions(enabled: Boolean) {
+        viewModelScope.launch { agentPreferences.setSkillEvolutionSuggestions(enabled) }
+    }
+
     fun setThinkingExpanded(value: Boolean) {
         viewModelScope.launch { agentPreferences.setThinkingExpanded(value) }
     }

@@ -20,10 +20,15 @@ object MentionExtractor {
      * 显式终止符：中英文标点、括号、引号、命令分隔等，出现即截断。
      * 注意 `[` `]` 必须转义——未转义的 `]` 会提前终结正则字符类，使后续终止符全部失效。
      */
-    private const val HARD_BOUNDARY =
+    /**
+     * 显式终止符：中英文标点、括号、引号、命令分隔等，出现即截断。
+     * 注意 `[` `]` 必须转义——未转义的 `]` 会提前终结正则字符类，使后续终止符全部失效。
+     * 聊天 UI 的 @提及 高亮必须复用同一字符类，避免「高亮了但后端没解析」的口径漂移。
+     */
+    const val MENTION_HARD_BOUNDARY =
         "\\s@,，:：;；!！?？。、()（）\\[\\]【】{}<>《》\"'“”‘’`|/\\\\"
 
-    private val GENERIC_REGEX = Regex("""@([^$HARD_BOUNDARY]+)""")
+    private val GENERIC_REGEX = Regex("""@([^$MENTION_HARD_BOUNDARY]+)""")
 
     /**
      * @param text 用户原始消息
@@ -53,7 +58,7 @@ object MentionExtractor {
             // 边界保护：@ 之后必须是「终止符或文本结束」，避免 "Git" 误吞 "GitHub" 的前缀；
             // @ 之前必须不是词字符，避免邮箱 user@host.com 里的 @host 被当成提及。
             val pattern = Regex(
-                """(?<![\w.+-])@${Regex.escape(candidate)}(?=$|[$HARD_BOUNDARY])""",
+                """(?<![\w.+-])@${Regex.escape(candidate)}(?=$|[$MENTION_HARD_BOUNDARY])""",
                 RegexOption.IGNORE_CASE,
             )
             var match = pattern.find(buffer)

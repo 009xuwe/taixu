@@ -109,6 +109,7 @@ fun AgentSettingsScreen(
     val plugins by viewModel.allPlugins.collectAsStateWithLifecycle()
     val skillArchiveMessage by viewModel.skillArchiveMessage.collectAsStateWithLifecycle()
     val skillArchiveMessageIsError by viewModel.skillArchiveMessageIsError.collectAsStateWithLifecycle()
+    val skillEvolutionSuggestions by viewModel.skillEvolutionSuggestions.collectAsStateWithLifecycle()
 
     var showAddSkillDialog by remember { mutableStateOf(false) }
     var viewingSkillPrompt by remember { mutableStateOf<AgentSkill?>(null) }
@@ -411,6 +412,24 @@ fun AgentSettingsScreen(
                     SectionHeader(
                         title = "Skill 专精技能库 (${skills.count { it.isEnabled }}/${skills.size} 已启用)",
                         subtitle = "向 Agent 系统提示词注入领域专业规范与操作指导",
+                    )
+                }
+            }
+            item {
+                AgentBlockTitle("技能进化")
+            }
+            item {
+                AgentSettingsGroup {
+                    AgentToggleRow(
+                        icon = RuntimeIconName.Sparkles,
+                        title = "对话后建议沉淀或修复技能",
+                        subtitle = if (skillEvolutionSuggestions) {
+                            "成功完成一轮含工具调用的工作后，可建议创建新技能或修复既有自定义技能"
+                        } else {
+                            "已关闭：对话结束后不再弹出技能进化建议卡片"
+                        },
+                        checked = skillEvolutionSuggestions,
+                        onCheckedChange = viewModel::setSkillEvolutionSuggestions,
                     )
                 }
             }

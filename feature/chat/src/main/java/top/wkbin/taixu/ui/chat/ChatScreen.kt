@@ -155,6 +155,7 @@ fun ChatScreen(
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val mcpRecommendations by viewModel.mcpRecommendations.collectAsStateWithLifecycle()
     val workflowSuggestions by viewModel.workflowSuggestions.collectAsStateWithLifecycle()
+    val hiddenSkillSuggestions by viewModel.hiddenSkillSuggestions.collectAsStateWithLifecycle()
     val sessionProjectType by viewModel.projectType.collectAsStateWithLifecycle()
     val matchingCommands by viewModel.matchingCommands.collectAsStateWithLifecycle()
     val matchingMentions by viewModel.matchingMentions.collectAsStateWithLifecycle()
@@ -423,8 +424,9 @@ fun ChatScreen(
             val isDualPane = maxWidth >= 720.dp
 
             val knownMentionNames = remember(allSkills, mcpServers) {
-                (allSkills.filter { it.isEnabled }.flatMap { listOf(it.name, it.id) } +
-                    mcpServers.filter { it.isEnabled }.flatMap { listOf(it.name, it.id) })
+                (allSkills.filter { it.isEnabled }.flatMap { skill ->
+                    listOfNotNull(skill.name, skill.id, skill.triggerCommand?.removePrefix("/"))
+                } + mcpServers.filter { it.isEnabled }.flatMap { listOf(it.name, it.id) })
                     .filter { it.isNotBlank() }
                     .distinct()
             }
@@ -496,6 +498,9 @@ fun ChatScreen(
                     workflowSuggestions = workflowSuggestions,
                     onLaunchWorkflowSuggestion = viewModel::launchWorkflowSuggestion,
                     onDismissWorkflowSuggestion = viewModel::dismissWorkflowSuggestion,
+                    hiddenSkillSuggestions = hiddenSkillSuggestions,
+                    onApplySkillSuggestion = viewModel::applySkillSuggestion,
+                    onDismissSkillSuggestion = viewModel::dismissSkillSuggestion,
                     onViewSubagentLanes = { showBranches = true },
                     subagentBranches = branches,
                     onOpenSubagentBranch = viewModel::openSubagentResult,
@@ -961,6 +966,9 @@ private fun ChatPaneContent(
     onViewSubagentLanes: () -> Unit = {},
     subagentBranches: List<top.wkbin.taixu.harness.session.ConversationBranch> = emptyList(),
     onOpenSubagentBranch: (top.wkbin.taixu.harness.session.ConversationBranch) -> Unit = {},
+    hiddenSkillSuggestions: Set<String> = emptySet(),
+    onApplySkillSuggestion: (top.wkbin.taixu.harness.SkillSuggestion, Boolean) -> Unit = { _, _ -> },
+    onDismissSkillSuggestion: (String) -> Unit = {},
 ) {
     Column(modifier = modifier) {
         ChatMessageList(
@@ -998,6 +1006,9 @@ private fun ChatPaneContent(
             onViewSubagentLanes = onViewSubagentLanes,
             subagentBranches = subagentBranches,
             onOpenSubagent = onOpenSubagentBranch,
+            hiddenSkillSuggestions = hiddenSkillSuggestions,
+            onApplySkillSuggestion = onApplySkillSuggestion,
+            onDismissSkillSuggestion = onDismissSkillSuggestion,
         )
 
         activePlan?.let { plan ->
