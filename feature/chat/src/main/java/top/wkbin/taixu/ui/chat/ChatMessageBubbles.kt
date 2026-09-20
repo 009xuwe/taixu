@@ -145,12 +145,14 @@ internal fun UserBubble(
                     val annotatedText = remember(message.text, knownMentionNames, mentionColor, mentionBg) {
                         formatMentionText(message.text, knownMentionNames, mentionColor, mentionBg)
                     }
-                    Text(
-                        text = annotatedText,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
+                    SelectionContainer {
+                        Text(
+                            text = annotatedText,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
                 }
             } else if (message.imageUrls.isNotEmpty()) {
                 // 纯图片消息：显示小菜单按钮

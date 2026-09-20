@@ -136,29 +136,31 @@ fun MarkdownText(
     val blocks = remember(contentCacheKey, markdown) {
         resolveMarkdownBlocks(markdown, contentCacheKey)
     }
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        blocks.forEachIndexed { index, block ->
-            when (block) {
-                is MdParagraph -> InlineText(block.text, MaterialTheme.typography.bodyMedium)
-                is MdHeading -> InlineText(
-                    block.text,
-                    when (block.level) {
-                        1 -> MaterialTheme.typography.headlineSmall
-                        2 -> MaterialTheme.typography.titleLarge
-                        3 -> MaterialTheme.typography.titleMedium
-                        else -> MaterialTheme.typography.titleSmall
-                    },
-                    bold = true,
-                )
-                is MdCodeBlock -> CodeBlock(block)
-                is MdList -> ListBlock(block)
-                is MdQuote -> QuoteBlock(block)
-                is MdTable -> TableBlock(block)
-                is MdRemoteMedia -> RemoteMediaBlock(
-                    block = block,
-                    cacheKey = contentCacheKey?.let { "$it:media:$index" },
-                )
-                is MdHr -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    SelectionContainer {
+        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            blocks.forEachIndexed { index, block ->
+                when (block) {
+                    is MdParagraph -> InlineText(block.text, MaterialTheme.typography.bodyMedium)
+                    is MdHeading -> InlineText(
+                        block.text,
+                        when (block.level) {
+                            1 -> MaterialTheme.typography.headlineSmall
+                            2 -> MaterialTheme.typography.titleLarge
+                            3 -> MaterialTheme.typography.titleMedium
+                            else -> MaterialTheme.typography.titleSmall
+                        },
+                        bold = true,
+                    )
+                    is MdCodeBlock -> CodeBlock(block)
+                    is MdList -> ListBlock(block)
+                    is MdQuote -> QuoteBlock(block)
+                    is MdTable -> TableBlock(block)
+                    is MdRemoteMedia -> RemoteMediaBlock(
+                        block = block,
+                        cacheKey = contentCacheKey?.let { "$it:media:$index" },
+                    )
+                    is MdHr -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
             }
         }
     }
