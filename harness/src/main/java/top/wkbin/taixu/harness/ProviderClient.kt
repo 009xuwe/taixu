@@ -1205,9 +1205,9 @@ class ProviderClient(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "history_read",
-                    description = "读取当前会话某条历史消息的原文。使用 history_search 返回的 message_id，或使用稳定的历史 index。单条返回有大小上限。只读。",
+                    description = "读取当前会话某条历史消息的原文。必须提供 history_search 返回的 message_id 或稳定的历史 index，至少提供一个；两者都提供时优先使用 message_id。单条返回有大小上限。只读。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"message_id":{"type":"string","description":"history_search 返回的消息 ID"},"index":{"type":"integer","minimum":0,"description":"历史消息的 0 起始索引；与 message_id 二选一"}},"anyOf":[{"required":["message_id"]},{"required":["index"]}]}""",
+                        """{"type":"object","properties":{"message_id":{"type":"string","description":"history_search 返回的消息 ID；与 index 至少提供一个"},"index":{"type":"integer","minimum":0,"description":"历史消息的 0 起始索引；与 message_id 至少提供一个"}}}""",
                     ).jsonObject,
                 ),
             ),

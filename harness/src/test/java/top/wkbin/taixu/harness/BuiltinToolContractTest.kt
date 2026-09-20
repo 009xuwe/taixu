@@ -48,8 +48,13 @@ class BuiltinToolContractTest {
         val search = ProviderClient.TOOLS.single { it.function.name == "history_search" }
         val read = ProviderClient.TOOLS.single { it.function.name == "history_read" }
         assertTrue(search.function.parameters.toString().contains("query"))
-        assertTrue(read.function.parameters.toString().contains("message_id"))
-        assertTrue(read.function.parameters.toString().contains("index"))
+        val parameters = read.function.parameters
+        assertEquals("object", parameters["type"]?.jsonPrimitive?.content)
+        assertFalse(parameters.containsKey("anyOf"))
+        assertFalse(parameters.containsKey("oneOf"))
+        assertTrue(parameters["properties"]!!.jsonObject.containsKey("message_id"))
+        assertTrue(parameters["properties"]!!.jsonObject.containsKey("index"))
+        assertTrue(read.function.description.contains("至少提供一个"))
     }
 
     @Test
