@@ -62,6 +62,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.AiModelProfileExport
+import top.wkbin.taixu.harness.ModelContextWindows
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.ProviderBadge
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
@@ -469,12 +470,17 @@ private fun ModelProfileCard(
         }
 
         // 元数据摘要
-        val ctxTokens = model.contextTokens
+        // 元数据摘要：显式配置优先，否则展示主流模型自动适配值。
+        val explicitCtxTokens = model.contextTokens
+        val autoCtxTokens = if (explicitCtxTokens == null) {
+            ModelContextWindows.resolve(model.model, model.provider)
+        } else null
         val metadataSummary = buildList {
             if (model.baseUrl.isNotBlank()) add(model.baseUrl)
             if (model.apiKeyCount > 0) add("${model.apiKeyCount} Key")
             if (model.requestsPerMinutePerKey > 0) add("${model.requestsPerMinutePerKey} RPM/Key")
-            if (ctxTokens != null) add("${ctxTokens / 1000}k 上下文")
+            explicitCtxTokens?.let { add("${formatProfileContextWindow(it)} 上下文") }
+            autoCtxTokens?.let { add("自动 ${formatProfileContextWindow(it)} 上下文") }
         }.joinToString(" • ")
 
         if (metadataSummary.isNotBlank()) {
@@ -775,4 +781,12 @@ fun ModelExportDialog(
             }
         },
     )
+}
+
+private fun formatProfileContextWindow(tokens: Int): String = when {
+    tokens <= 0 -> "0"
+    tokens % 1_000_000 == 0 -> "${tokens / 1_000_000}M"
+    tokens >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", tokens / 1_000_000.0)
+    tokens % 1_000 == 0 -> "${tokens / 1_000}k"
+    else -> String.format(java.util.Locale.US, "%.1fk", tokens / 1_000.0)
 }

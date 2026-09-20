@@ -264,7 +264,12 @@ internal object SummaryReplayRequests {
             addAll(converted)
             add(ApiMessage(role = "user", content = buildReplayInstruction(previousSummaries.isNotEmpty())))
         }
-        val budgetTokens = ContextWindowPolicy.clampedBudget(model.contextTokens, DEFAULT_COMPACTION_BUDGET_TOKENS)
+        val budgetTokens = ContextWindowPolicy.clampedBudget(
+            model.contextTokens,
+            DEFAULT_COMPACTION_BUDGET_TOKENS,
+            modelId = model.model,
+            providerId = model.provider,
+        )
         val estimated = estimateRequestTokens(request) + DEFAULT_SUMMARY_MAX_TOKENS
         return if (estimated <= budgetTokens) request else null
     }

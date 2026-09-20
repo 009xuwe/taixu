@@ -159,6 +159,19 @@ fun ContextUsageDialog(
                             ),
                         )
                     }
+                    if (usage.compactionThresholdTokens in 1 until usage.limitTokens) {
+                        Text(
+                            text = stringResource(
+                                R.string.chat_context_compaction_threshold,
+                                formatLimitTokens(usage.compactionThresholdTokens),
+                                usage.foldingRatioPercent,
+                            ),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = if (isDark) Color(0xFF9CA3AF) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
+
 
                     // 3. Segmented multi-color progress bar
                     ContextUsageSegmentedBar(
@@ -310,6 +323,19 @@ fun ContextUsageSegmentedBar(
             size = size,
             cornerRadius = cornerRadius,
         )
+
+        // Compaction threshold marker: ring/bar still shows model-window usage,
+        // while this line tells the user when the next request will fold history.
+        val thresholdRatio = (usage.compactionThresholdTokens.toFloat() / limit).coerceIn(0f, 1f)
+        if (thresholdRatio in 0.01f..0.99f) {
+            val markerX = w * thresholdRatio
+            drawLine(
+                color = Color.White.copy(alpha = 0.72f),
+                start = Offset(markerX, 0f),
+                end = Offset(markerX, h),
+                strokeWidth = 2.dp.toPx(),
+            )
+        }
 
         if (items.isEmpty() || animatedRatio <= 0f) return@Canvas
 

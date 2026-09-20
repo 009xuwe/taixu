@@ -53,6 +53,8 @@ class SessionModelSwitcher(
                 toContextTokens = ContextWindowPolicy.resolveBudget(
                     profile.contextTokens,
                     defaultBudget(),
+                    modelId = profile.model,
+                    providerId = profile.provider,
                 ),
             )
         }
@@ -64,11 +66,26 @@ class SessionModelSwitcher(
         // 触发压缩——压缩时机与所用模型都偏离预期。toContextTokens 仅作 UI 展示，
         // 保留标称窗口值。
         val defaultBudget = defaultBudget()
-        val toBudget = ContextWindowPolicy.clampedBudget(profile.contextTokens, defaultBudget)
-        val fromBudget = previousProfile?.contextTokens?.let {
-            ContextWindowPolicy.resolveBudget(it, defaultBudget)
+        val toBudget = ContextWindowPolicy.clampedBudget(
+            profile.contextTokens,
+            defaultBudget,
+            modelId = profile.model,
+            providerId = profile.provider,
+        )
+        val fromBudget = previousProfile?.let { previous ->
+            ContextWindowPolicy.resolveBudget(
+                previous.contextTokens,
+                defaultBudget,
+                modelId = previous.model,
+                providerId = previous.provider,
+            )
         }
-        val toContextTokensDisplay = ContextWindowPolicy.resolveBudget(profile.contextTokens, defaultBudget)
+        val toContextTokensDisplay = ContextWindowPolicy.resolveBudget(
+            profile.contextTokens,
+            defaultBudget,
+            modelId = profile.model,
+            providerId = profile.provider,
+        )
 
         val compactionEnabled = runCatching {
             settingsDataStore.contextCompactionEnabled.first()

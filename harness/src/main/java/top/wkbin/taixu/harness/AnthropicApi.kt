@@ -334,6 +334,8 @@ internal class AnthropicApi(
                 DEFAULT_MAX_TOKENS,
                 messages,
                 model.contextTokens,
+                model.model,
+                model.provider,
             )
             put("max_tokens", effectiveMaxTokens)
             // 推理开关/强度：thinking enabled 时 Anthropic 强制要求 temperature=1（省略即默认），

@@ -6,9 +6,6 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /** Pure context-budget and historical-folding policy used by the provider mapper and UI. */
 object ContextWindowPolicy {
-    // Input budget reserves headroom for system prompt, tool/MCP schemas, completion
-    // tokens and provider overhead instead of spending the whole model window on history.
-    private const val INPUT_BUDGET_FRACTION = 0.75
     internal const val RESERVED_OUTPUT_TOKENS = 8_192
     internal const val TOOL_SCHEMA_RESERVE_TOKENS = 4_096
     private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
@@ -18,17 +15,9 @@ object ContextWindowPolicy {
     /** 巨型用户消息截断后至少保留的头部 token 数。 */
     private const val MIN_KEPT_USER_TURN_TOKENS = 800
     /**
-     * Flash 级历史参考线（token）。不再作为所有模型的硬封顶——7B/Flash 靠自身较小的
-     * `contextTokens` 与 [INPUT_BUDGET_FRACTION] 约束；200k/1M 旗舰模型走 [generationCapFor]。
+     * 引擎预算上限。与设置页滑块对齐，并为 Gemini/Claude 等 1M+ 标称窗口保留余量。
      */
-    const val SAFE_GENERATION_CAP = 96_000
-    /**
-     * 引擎预算上限。与设置页滑块（最高 1M）对齐，避免把 Gemini/Claude 的标称窗口
-     * 先钳到 200k、再被 96k 折叠线二次截断。
-     */
-    const val MAX_CONTEXT_BUDGET = 1_000_000
-    /** 大窗口历史占用相对模型预算的上限比例；与 75% 输入预留取小。 */
-    private const val MODEL_WINDOW_GENERATION_FRACTION = 0.80
+    const val MAX_CONTEXT_BUDGET = 2_000_000
     /**
      * 发给 Provider 的 JSON 请求体物理上限（字节）。Token 预算看不见 UTF-8/JSON 转义膨胀，
      * 中转 Nginx 默认 `client_max_body_size` 往往只有 1–10MB，超限即 HTTP 413。
@@ -38,8 +27,12 @@ object ContextWindowPolicy {
     private const val ACTIVE_TOOL_KEEP_HEAD_CHARS = 6_000
     private const val ACTIVE_TOOL_KEEP_TAIL_CHARS = 1_500
     private const val JSON_FRAMING_PER_MESSAGE = 64
-    /** 历史折叠线比例默认值（%）。70 = 在 75% 输入预留之前平滑进摘要，降低 413；100 = 只在预留处折叠。 */
-    const val DEFAULT_FOLDING_RATIO_PERCENT = 70
+    /**
+     * 历史折叠线比例默认值（%）。默认 100，对齐主流 harness：
+     * `contextWindow - reserveTokens - toolSchemaReserve - systemTokens`。
+     * 调低该值可让长会话更早折叠以节省 input token 成本。
+     */
+    const val DEFAULT_FOLDING_RATIO_PERCENT = 100
     /** 折叠线比例下限：低于此值会频繁折叠，历史几乎留不住。 */
     const val MIN_FOLDING_RATIO_PERCENT = 10
     /** 折叠线比例上限。 */
@@ -54,10 +47,9 @@ object ContextWindowPolicy {
     /**
      * 历史折叠触发线（token），供 UI 预览与 [computeKeepFromIndex] 共用。
      *
-     * 口径与引擎一致：先取 `min(预算 × 比例%, 预算 × INPUT_BUDGET_FRACTION)`，
-     * 再减去 [systemTokens]、输出预留与工具 schema 预留，最后钳到 [generationCapFor]。
-     * `ratioPercent = 100` 时 128k 默认预算与旧引擎一致（75% 线再减预留）；
-     * 默认 70% 会比这条线更早折叠。200k/1M 窗口不再被 96k 二次封顶。
+     * 对齐主流 harness（Pi 等）：在完整模型窗口基础上减去输出预留、工具 schema 预留与
+     * 已注入的 system tokens，得到历史可用预算；不再额外乘 75% 输入比例，也不再用 96K
+     * 硬顶。ratioPercent 仅用于用户主动想更早折叠省成本的场景。
      *
      * 返回值可能为负（小预算被预留吃光）——引擎据此走最小保留兜底；UI 预览应 `coerceAtLeast(0)`。
      */
@@ -69,24 +61,11 @@ object ContextWindowPolicy {
     ): Int {
         if (budget <= 0) return 0
         val safeRatio = ratioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
-        val fractionCap = (budget * INPUT_BUDGET_FRACTION).toInt()
-        val ratioScaled = (budget.toLong() * safeRatio / 100L).toInt()
-        val rawLimit = minOf(ratioScaled, fractionCap) -
+        val scaledBudget = (budget.toLong() * safeRatio / 100L).toInt()
+        return scaledBudget -
             systemTokens.coerceAtLeast(0) -
             (reserveTokens ?: RESERVED_OUTPUT_TOKENS) -
             TOOL_SCHEMA_RESERVE_TOKENS
-        return minOf(rawLimit, generationCapFor(budget))
-    }
-
-    /**
-     * 历史折叠的模型相关上限：小窗口沿用 [SAFE_GENERATION_CAP] 参考线，
-     * 大窗口允许用到预算的 [MODEL_WINDOW_GENERATION_FRACTION]（通常仍宽于 75% 输入预留，
-     * 因此 200k+ 模型的实际约束是输入预留而不是 96k 硬顶）。
-     */
-    fun generationCapFor(budget: Int): Int {
-        if (budget <= 0) return 0
-        val modelRelative = (budget * MODEL_WINDOW_GENERATION_FRACTION).toInt()
-        return maxOf(SAFE_GENERATION_CAP, modelRelative).coerceAtMost(MAX_CONTEXT_BUDGET)
     }
 
     /**
@@ -280,16 +259,18 @@ object ContextWindowPolicy {
     /** Runtime-safe profile value: null and non-positive values mean provider default. */
     fun normalizeOutputTokens(value: Int?, providerDefault: Int): Int =
         (value?.takeIf { it > 0 } ?: providerDefault).coerceAtLeast(1)
-
     /** One output budget calculation used by all provider request builders. */
     fun outputBudget(
         configured: Int?,
         providerDefault: Int,
         messages: List<ApiMessage>,
         contextTokens: Int?,
+        modelId: String? = null,
+        providerId: String? = null,
     ): Int {
         val requested = normalizeOutputTokens(configured, providerDefault)
-        val context = contextTokens?.takeIf { it > 0 }?.coerceIn(1, MAX_CONTEXT_BUDGET)
+        val resolvedContext = contextTokens ?: ModelContextWindows.resolve(modelId, providerId)
+        val context = resolvedContext?.takeIf { it > 0 }?.coerceIn(1, MAX_CONTEXT_BUDGET)
             ?: return requested
         val available = (context - estimateApiMessages(messages)).coerceAtLeast(1)
         return minOf(requested, available).coerceAtLeast(1)
@@ -299,18 +280,41 @@ object ContextWindowPolicy {
     const val DEFAULT_NATIVE_TOOL_TOKENS = 3_600
     const val DEFAULT_RULES_TOKENS = 1_400
     const val DEFAULT_SUBAGENT_TOKENS = 1_100
+    /**
+     * Resolve the model context window. Explicit model-profile `contextTokens` wins;
+     * otherwise mainstream model metadata is used. Null means the caller should fall
+     * back to the global budget.
+     */
+    fun resolveContextWindow(
+        declaredContextTokens: Int?,
+        modelId: String?,
+        providerId: String? = null,
+    ): Int? = declaredContextTokens ?: ModelContextWindows.resolve(modelId, providerId)
 
-    /** Session occupancy and compaction must share the same budget: current model, then the global fallback. */
-    fun resolveBudget(profileContextTokens: Int?, defaultBudget: Int): Int =
-        (profileContextTokens ?: defaultBudget).coerceAtLeast(1)
+    /**
+     * Resolve the effective context budget for occupancy and compaction.
+     * The final fallback is the user-configured global budget.
+     */
+    fun resolveBudget(
+        profileContextTokens: Int?,
+        defaultBudget: Int,
+        modelId: String? = null,
+        providerId: String? = null,
+    ): Int = (resolveContextWindow(profileContextTokens, modelId, providerId) ?: defaultBudget)
+        .coerceAtLeast(1)
 
     /**
      * 会话占用判定（SessionModelSwitcher）与实际请求组装（ApiContextAssembler）共用的
-     * 预算钳制：先按当前模型/全局回退取值，再统一钳制到 [1, MAX_CONTEXT_BUDGET]。
+     * 预算钳制：先按当前模型元数据/全局回退取值，再统一钳制到 [1, MAX_CONTEXT_BUDGET]。
      * 两处必须走同一口径，否则会出现"切换模型判定无需压缩、实际请求又压缩"。
      */
-    fun clampedBudget(profileContextTokens: Int?, defaultBudget: Int): Int =
-        resolveBudget(profileContextTokens, defaultBudget).coerceIn(1, MAX_CONTEXT_BUDGET)
+    fun clampedBudget(
+        profileContextTokens: Int?,
+        defaultBudget: Int,
+        modelId: String? = null,
+        providerId: String? = null,
+    ): Int = resolveBudget(profileContextTokens, defaultBudget, modelId, providerId)
+        .coerceIn(1, MAX_CONTEXT_BUDGET)
 
     fun estimateReservedPromptTokens(
         pureChat: Boolean,
@@ -320,8 +324,10 @@ object ContextWindowPolicy {
         summaryTokens: Int = 0,
     ): Int {
         if (pureChat) return summaryTokens
-        val toolTokens = if (toolDisabled) 0 else DEFAULT_NATIVE_TOOL_TOKENS + DEFAULT_SUBAGENT_TOKENS
-        return DEFAULT_SYSTEM_PROMPT_TOKENS + DEFAULT_RULES_TOKENS + toolTokens + skillTokens + mcpTokens + summaryTokens
+        // Native tool schema is reserved separately inside [foldingLimitFor]; do not
+        // double-count it here, otherwise model switches and settings previews fold too early.
+        val extraToolTokens = if (toolDisabled) 0 else DEFAULT_SUBAGENT_TOKENS
+        return DEFAULT_SYSTEM_PROMPT_TOKENS + DEFAULT_RULES_TOKENS + extraToolTokens + skillTokens + mcpTokens + summaryTokens
     }
 
     /** Estimate the payload after the same token-budget compaction used by [HarnessLoop]. */
@@ -416,12 +422,9 @@ object ContextWindowPolicy {
         reserveTokens: Int? = null,
         /**
          * 历史折叠线比例（%，默认 [DEFAULT_FOLDING_RATIO_PERCENT]）。
-         *
-         * 用户设置「折叠线比例」后，折叠触发线在原有 `INPUT_BUDGET_FRACTION` 硬上限**之下**
-         * 按此比例进一步收窄：`min(budget × 比例%, budget × INPUT_BUDGET_FRACTION)`。
-         * 之所以取 min（而非直接替换）：比例只是「提前折叠」的手段，绝不能把线抬到超过
-         * [INPUT_BUDGET_FRACTION] 的预留——那会让历史挤占 completion 与工具 schema 空间。
-         * 70–74% 才会比 75% 预留线更早折叠；75–100% 与旧行为等价。
+         * 用户设置「折叠线比例」后，折叠触发线按 `预算 × 比例%` 收窄；默认 100% 时
+         * 等价于主流 harness 的 `contextWindow - reserveTokens - toolSchemaReserve - systemTokens`。
+         * 比例仅用于主动提前折叠省 token，不会再被额外的 75% 输入比例或 96K 硬顶二次截断。
          */
         foldingRatioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
     ): Int {
@@ -430,8 +433,7 @@ object ContextWindowPolicy {
             return alignKeepFromIndex(messages, minimalKeepFromIndex(messages))
         }
         val safeRatio = foldingRatioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
-        // 与 [foldingLimitFor] 同一条线：比例线与 75% 硬上限取小，再减 system/输出/工具 schema，
-        // 并按 [generationCapFor] 钳制。ratio=100 时 128k 默认预算与旧行为一致。
+        // 与 [foldingLimitFor] 同一条线：按模型窗口和用户比例计算，再减 system/输出/工具 schema 预留。
         val limit = foldingLimitFor(
             budget = budget,
             ratioPercent = safeRatio,

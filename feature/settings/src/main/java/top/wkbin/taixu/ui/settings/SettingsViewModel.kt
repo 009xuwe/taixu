@@ -690,15 +690,14 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
 
     /**
-     * 当前「全局激活模型」在档案里声明的上下文上限（`contextTokens`）；无激活模型或未配置时为 null。
-     *
-     * 为什么设置页需要它：真正决定折叠的预算以「模型档案的 contextTokens」优先，全局预算
-     * （[contextBudgetTokens]）只在模型未配置时兜底。设置页此前用全局值算预览，而引擎按模型
-     * 档案值折叠 —— 两者不同源，导致「设置页显示 100K、实际按 400K 折叠」的单一真相源缺失。
-     * 本流与 Harness 引擎同源（同样取 `isActive` 模型）。
+     * 当前全局激活模型的生效上下文上限：显式 `contextTokens` 优先；
+     * 未填写时自动适配主流模型元数据（DeepSeek V4 / Gemini / GPT-4.1 等）；
+     * 都识别不到时返回 null，由全局预算兜底。
      */
     val activeModelDeclaredTokens: StateFlow<Int?> = models.map { list ->
-        list.firstOrNull { it.isActive }?.contextTokens
+        list.firstOrNull { it.isActive }?.let { model ->
+            ContextWindowPolicy.resolveContextWindow(model.contextTokens, model.model, model.provider)
+        }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
@@ -715,8 +714,8 @@ class SettingsViewModel(
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
 
     /**
-     * 历史折叠线比例（%，默认 70）：历史在预算的百分之几处开始折叠。
-     * 低于 75% 才会比引擎输入预留更早摘要。
+     * 历史折叠线比例（%，默认 100）：100 对齐主流 harness 的 contextWindow - reserveTokens；
+     * 调低可让历史更早进入摘要，节省 input token 成本。
      */
     val contextFoldingRatioPercent: StateFlow<Int> = agentPreferences.contextFoldingRatioPercent
         .stateIn(viewModelScope, SharingStarted.Eagerly, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)

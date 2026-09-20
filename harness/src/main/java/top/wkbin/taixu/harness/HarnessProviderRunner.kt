@@ -433,8 +433,12 @@ class HarnessProviderRunner(
         private const val DEFAULT_CONTEXT_BUDGET_TOKENS = 128_000
 
         internal fun emergencyFoldBudget(model: ModelConfig): Int =
-            (ContextWindowPolicy.clampedBudget(model.contextTokens, DEFAULT_CONTEXT_BUDGET_TOKENS) *
-                EMERGENCY_FOLD_RATIO_PERCENT / 100)
+            (ContextWindowPolicy.clampedBudget(
+                model.contextTokens,
+                DEFAULT_CONTEXT_BUDGET_TOKENS,
+                modelId = model.model,
+                providerId = model.provider,
+            ) * EMERGENCY_FOLD_RATIO_PERCENT / 100)
                 .coerceAtLeast(EMERGENCY_FOLD_MIN_BUDGET)
 
         internal fun maxNetworkRetriesFor(estimatedRequestTokens: Int, configuredRetries: Int): Int =

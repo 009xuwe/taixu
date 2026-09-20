@@ -28,7 +28,7 @@ class ContextWindowPolicyTest {
         )
 
         // Budget must leave room after the input-fraction + output/schema reserves.
-        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10, foldingRatioPercent = 70)
 
         assertEquals(2, keepFrom)
         assertTrue(messages[keepFrom] is UserMessage)
@@ -208,7 +208,7 @@ class ContextWindowPolicyTest {
             UserMessage("latest", 4, "now"),
         )
 
-        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10, foldingRatioPercent = 70)
 
         assertEquals(3, keepFrom)
         assertTrue(messages[keepFrom] is UserMessage)
@@ -234,7 +234,7 @@ class ContextWindowPolicyTest {
             UserMessage("latest-user", 7, "latest request"),
         )
 
-        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10, foldingRatioPercent = 70)
         val kept = messages.drop(keepFrom)
         val keptCallIds = kept.filterIsInstance<ToolCall>().mapTo(mutableSetOf()) { it.id }
 
@@ -330,6 +330,19 @@ class ContextWindowPolicyTest {
     }
 
     @Test
+    fun `mainstream model metadata adapts context window before global fallback`() {
+        assertEquals(
+            1_000_000,
+            ContextWindowPolicy.resolveBudget(null, 128_000, modelId = "deepseek-v4-pro", providerId = "deepseek"),
+        )
+        assertEquals(1_048_576, ContextWindowPolicy.resolveContextWindow(null, "gemini-3-pro", "gemini"))
+        assertEquals(128_000, ContextWindowPolicy.resolveBudget(null, 128_000, modelId = "deepseek-chat", providerId = "deepseek"))
+        assertEquals(128_000, ContextWindowPolicy.resolveBudget(null, 128_000, modelId = "unknown-model", providerId = "unknown"))
+        // 显式模型配置永远优先于自动适配。
+        assertEquals(200_000, ContextWindowPolicy.resolveBudget(200_000, 128_000, modelId = "deepseek-v4-pro"))
+    }
+
+    @Test
     fun `oversized single turn is split inside the turn instead of kept whole`() {
         // 单个用户轮次自身超预算：最后一个用户轮次包含 10 条大 assistant 消息
         val messages = buildList<HarnessMessage> {
@@ -341,7 +354,7 @@ class ContextWindowPolicyTest {
             }
         }
 
-        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10, foldingRatioPercent = 70)
 
         // 旧行为会把整个巨型轮次保留（keepFrom == 2 起点且 kept 超限）；split-turn 必须切在轮内
         assertTrue(keepFrom > 2)
@@ -374,7 +387,7 @@ class ContextWindowPolicyTest {
             }
         }
 
-        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10, foldingRatioPercent = 70)
         val kept = messages.drop(keepFrom)
 
         if (keepFrom > 0) {
@@ -388,7 +401,7 @@ class ContextWindowPolicyTest {
     @Test
     fun `keepRecentTokens override tightens the retained window`() {
         val messages = buildList<HarnessMessage> {
-            repeat(20) { index ->
+            repeat(100) { index ->
                 add(UserMessage("u-$index", index * 2L, "request $index " + "a".repeat(300)))
                 add(AssistantText("a-$index", index * 2L + 1, "answer $index " + "b".repeat(300)))
             }
@@ -460,9 +473,9 @@ class ContextWindowPolicyTest {
             messages,
             budget = 128_000,
             systemTokens = 10,
-            reserveTokens = 90_000,
+            reserveTokens = 120_000,
         )
-        assertTrue(withHugeReserve > 0)
+        assertTrue("withHugeReserve should trigger compaction, actual=$withHugeReserve", withHugeReserve > 0)
     }
 
     @Test
@@ -569,16 +582,13 @@ class ContextWindowPolicyTest {
         assertEquals(declared, engineBudget)
         assertEquals(engineLine, previewLine)
 
-        val ratioOrFraction = minOf((engineBudget * 0.75).toInt(), engineBudget * ratio / 100)
-        val expected = minOf(
-            ratioOrFraction - systemTokens -
-                ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
-                ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
-            ContextWindowPolicy.generationCapFor(engineBudget),
-        )
+        val ratioScaled = engineBudget * ratio / 100
+        val expected = ratioScaled - systemTokens -
+            ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
+            ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS
         assertEquals(expected, engineLine)
 
-        val withoutReserves = ratioOrFraction
+        val withoutReserves = ratioScaled
         assertTrue(
             "漏扣 system/输出/工具 schema 会让预览高于真实折叠线",
             withoutReserves > engineLine,
@@ -625,9 +635,9 @@ class ContextWindowPolicyTest {
         val ratio = 80
         val systemTokens = 200
         val limit = ContextWindowPolicy.foldingLimitFor(budget, ratio, systemTokens)
-        val ratioOrFraction = minOf((budget * 0.75).toInt(), budget * ratio / 100)
+        val scaledBudget = budget * ratio / 100
         assertEquals(
-            ratioOrFraction - systemTokens -
+            scaledBudget - systemTokens -
                 ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
                 ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
             limit,
@@ -652,51 +662,50 @@ class ContextWindowPolicyTest {
     }
 
     @Test
-    fun `default ratio 100 folding line matches previous engine formula`() {
+    fun `default ratio 100 folding line matches mainstream formula`() {
         val budget = 128_000
         val systemTokens = 10
-        val expected = minOf(
-            (budget * 0.75).toInt() - systemTokens -
-                ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
-                ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
-            ContextWindowPolicy.generationCapFor(budget),
-        )
-        assertEquals(
-            expected,
-            ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens),
-        )
+        val expected = budget - systemTokens -
+            ContextWindowPolicy.RESERVED_OUTPUT_TOKENS -
+            ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS
+        assertEquals(expected, ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens))
     }
 
     @Test
-    fun `default 70 percent folds earlier than the 75 percent input cap`() {
+    fun `default ratio is 100 and folds later than 70 percent`() {
         val budget = 200_000
         val atDefault = ContextWindowPolicy.foldingLimitFor(
             budget,
             ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT,
             systemTokens = 0,
         )
-        val atFull = ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens = 0)
-        assertEquals(70, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)
-        assertTrue("默认 70% 应比 100% 更早折叠：$atDefault vs $atFull", atDefault < atFull)
-        assertEquals((budget * 70 / 100) - ContextWindowPolicy.RESERVED_OUTPUT_TOKENS - ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS, atDefault)
+        val at70 = ContextWindowPolicy.foldingLimitFor(budget, 70, systemTokens = 0)
+        assertEquals(100, ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT)
+        assertTrue("默认 100% 应比 70% 更充分使用模型窗口：$atDefault vs $at70", atDefault > at70)
+        assertEquals((budget * 70 / 100) - ContextWindowPolicy.RESERVED_OUTPUT_TOKENS - ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS, at70)
     }
 
     @Test
-    fun `flagship 200k window is not pinned to the 96k flash cap`() {
+    fun `flagship 200k window uses the full window minus reserves`() {
         val limit = ContextWindowPolicy.foldingLimitFor(200_000, 100, systemTokens = 0)
-        assertTrue("200k 模型折叠线应超过 96k flash 封顶，实际=$limit", limit > ContextWindowPolicy.SAFE_GENERATION_CAP)
-        assertTrue(limit <= (200_000 * 0.75).toInt())
-        assertTrue(limit <= ContextWindowPolicy.generationCapFor(200_000))
+        assertEquals(
+            200_000 - ContextWindowPolicy.RESERVED_OUTPUT_TOKENS - ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
+            limit,
+        )
+        assertTrue("200k 模型折叠线应超过 96k 旧封顶，实际=$limit", limit > 96_000)
     }
 
     @Test
-    fun `panel denominator is the fold line not the declared window`() {
+    fun `panel denominator is model window while compaction threshold stays lower`() {
         val declared = 1_000_000
         val budget = ContextWindowPolicy.clampedBudget(declared, 128_000)
-        val limit = ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens = 1_000)
-        assertTrue(limit < declared)
-        assertTrue(limit <= ContextWindowPolicy.generationCapFor(budget))
-        assertTrue(limit < budget)
+        val threshold = ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens = 1_000)
+        assertEquals(declared, budget)
+        assertTrue(threshold < budget)
+        assertEquals(
+            budget - 1_000 - ContextWindowPolicy.RESERVED_OUTPUT_TOKENS - ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
+            threshold,
+        )
     }
 
     @Test

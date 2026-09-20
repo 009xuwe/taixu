@@ -1088,10 +1088,10 @@ private fun ContextBudgetSliderRow(
         }
         Text(
             if (declaredTokens != null) {
-                "当前激活模型档案已单独配置上下文上限 ${declaredTokens / 1000}K，此滑块暂不生效；" +
-                    "仅当模型未配置 contextTokens 时，本值才作为兜底预算。"
+                "当前激活模型已适配上下文上限 ${declaredTokens / 1000}K（显式配置或自动识别），此滑块暂不生效；" +
+                    "仅在模型无法识别且未配置 contextTokens 时，本值才作为兜底预算。"
             } else {
-                "当前无激活模型声明 contextTokens，本值即实际生效预算；" +
+                "当前未识别到激活模型上下文上限，本值即实际生效预算；" +
                     "长会话历史超出预算将自动折叠早期内容。"
             },
             style = MaterialTheme.typography.bodySmall,
@@ -1101,8 +1101,8 @@ private fun ContextBudgetSliderRow(
             value = sliderVal,
             onValueChange = { sliderVal = it },
             onValueChangeFinished = { onValueChange(sliderVal.toInt()) },
-            valueRange = 8000f..1000000f,
-            steps = 48, // 步长约 2 万 tok
+            valueRange = 8000f..2000000f,
+            steps = 49, // 步长约 4 万 tok
         )
     }
 }
@@ -1154,9 +1154,10 @@ private fun ContextFoldingRatioSliderRow(
             )
         }
         Text(
-            "历史在「预算 × 比例」处开始折叠；默认 70%，让长会话在撞满预算 / 网关之前平滑进摘要。" +
-                "调到 100% 则只在预算的 75% 减去输出/工具/系统预留处折叠。" +
-                "大窗口模型不再被 96K 封顶。走 Nginx/中转时请把 client_max_body_size 调到 20m 以上，否则可能 HTTP 413。",
+            "历史在「预算 × 比例」处开始折叠；默认 100%，对齐主流 harness 的" +
+                " contextWindow - reserveTokens - toolSchemaReserve - systemTokens。" +
+                "调低比例可让历史更早进入摘要、节省 input token；大窗口模型不再被 96K 封顶。" +
+                "走 Nginx/中转时请把 client_max_body_size 调到 20m 以上，否则可能 HTTP 413。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1168,18 +1169,16 @@ private fun ContextFoldingRatioSliderRow(
         // 说明这个预览数按什么预算折算，避免用户误以为它基于「上下文预算上限」滑块。
         Text(
             if (declaredTokens != null) {
-                "以上按当前生效预算 ${budget / 1000}K 计算" +
-                    "（模型档案声明 ${declaredTokens / 1000}K" +
-                    (
-                        if (declaredTokens > ContextWindowPolicy.MAX_CONTEXT_BUDGET) {
-                            "，引擎钳制到 ${ContextWindowPolicy.MAX_CONTEXT_BUDGET / 1000}K"
-                        } else {
-                            "，优先于上方预算滑块"
-                        }
-                    ) +
-                    "）。预览已扣除系统提示/输出/工具 schema 预留。"
+                "以上按当前生效模型窗口 ${budget / 1000}K 计算" +
+                    "（显式配置或自动适配）" +
+                    (if (declaredTokens > ContextWindowPolicy.MAX_CONTEXT_BUDGET) {
+                        "，引擎钳制到 ${ContextWindowPolicy.MAX_CONTEXT_BUDGET / 1000}K"
+                    } else {
+                        ""
+                    }) +
+                    "。预览已扣除系统提示/输出/工具 schema 预留。"
             } else {
-                "以上按上方「上下文预算上限」滑块的值计算（当前无激活模型声明 contextTokens）。" +
+                "以上按上方「上下文预算上限」滑块的值计算（当前未识别到模型上下文上限）。" +
                     "预览已扣除系统提示/输出/工具 schema 预留。"
             },
             style = MaterialTheme.typography.bodySmall,

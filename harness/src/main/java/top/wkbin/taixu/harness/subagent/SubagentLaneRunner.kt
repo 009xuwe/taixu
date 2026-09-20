@@ -312,6 +312,8 @@ class SubagentLaneRunner(
         val budget = ContextWindowPolicy.clampedBudget(
             model.contextTokens,
             runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(DEFAULT_CONTEXT_BUDGET_TOKENS),
+            modelId = model.model,
+            providerId = model.provider,
         )
         return (budget * LANE_HISTORY_BUDGET_FRACTION).toInt().coerceAtLeast(MIN_LANE_HISTORY_TOKENS)
     }

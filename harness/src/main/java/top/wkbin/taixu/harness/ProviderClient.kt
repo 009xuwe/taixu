@@ -303,7 +303,14 @@ internal class ChatApi(
             }
             model.temperature?.let { put("temperature", kotlinx.serialization.json.JsonPrimitive(it)) }
             put("max_tokens", kotlinx.serialization.json.JsonPrimitive(
-                ContextWindowPolicy.outputBudget(model.maxTokens, 8_192, messages, model.contextTokens),
+                ContextWindowPolicy.outputBudget(
+                    model.maxTokens,
+                    8_192,
+                    messages,
+                    model.contextTokens,
+                    model.model,
+                    model.provider,
+                ),
             ))
             model.topP?.let { put("top_p", kotlinx.serialization.json.JsonPrimitive(it)) }
             // 推理开关/强度：按厂商能力翻译（reasoning_effort / thinking_config / thinking / reasoning）
@@ -758,9 +765,9 @@ class ProviderClient(
                 apiKey = providerRepository.readApiKey(),
             )
         }
-        // use_capability 代理（延迟连接）：请求路径不再做 MCP 发现——服务器进程只在
-        // 真正调用其工具时按需启动；provider 可见的 tools 数组也因此与 MCP 清单解耦。
-        baseConfig.applyGlobalReasoningDepth()
+        // 主流模型自动适配：provider 的 /models 通常不返回 context window，
+        // 这里在最终模型名（含 variant）确定后统一补全；显式 contextTokens 仍优先。
+        baseConfig.withResolvedContextWindow().applyGlobalReasoningDepth()
     }
 
     /**
@@ -794,8 +801,8 @@ class ProviderClient(
         } else {
             baseConfig
         }
-        // 同 resolveModel：请求路径零 MCP 发现（延迟连接）
-        sessionConfig.applyGlobalReasoningDepth()
+        // 同 resolveModel：请求路径零 MCP 发现；按最终 variant 自动适配 context window。
+        sessionConfig.withResolvedContextWindow().applyGlobalReasoningDepth()
     }
 
     /**
@@ -913,6 +920,17 @@ class ProviderClient(
             )
         }
     }
+
+    /**
+     * Fallback metadata for mainstream models whose provider /models response does not
+     * expose the context window. Explicit profile values are never overwritten.
+     */
+    private fun ModelConfig.withResolvedContextWindow(): ModelConfig {
+        if (contextTokens != null) return this
+        val inferred = ModelContextWindows.resolve(model, provider) ?: return this
+        return copy(contextTokens = inferred)
+    }
+
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"

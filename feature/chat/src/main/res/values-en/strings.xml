@@ -446,4 +446,5 @@
     <string name="chat_floating_idle">Ready</string>
     <string name="chat_floating_thinking">🧠 Thinking…</string>
     <string name="chat_floating_running">⚡ Executing…</string>
+    <string name="chat_context_compaction_threshold">History compacts at %1$s (%2$d%%)</string>
 </resources>

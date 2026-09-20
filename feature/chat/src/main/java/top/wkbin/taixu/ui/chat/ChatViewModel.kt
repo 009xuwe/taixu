@@ -544,9 +544,23 @@ class ChatViewModel(
         val subagentTokens = if (toolDisabled) 0 else ContextWindowPolicy.DEFAULT_SUBAGENT_TOKENS
 
         val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
+        // 折叠线只扣除持续占据上下文且不在 messages 内的真实提示开销；
+        // toolDefinitionTokens 已由 foldingLimitFor 内部的 TOOL_SCHEMA_RESERVE_TOKENS 支付，
+        // 不能在这里再扣一次（旧实现双重扣减，会把 1M 模型错误压到 67K 左右）。
+        val promptOverheadTokens = systemPromptTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
         val declaredTokens = activeModel?.contextTokens
+        val effectiveContextWindow = ContextWindowPolicy.resolveContextWindow(
+            declaredContextTokens = declaredTokens,
+            modelId = activeModel?.model,
+            providerId = activeModel?.provider,
+        )
         // 与引擎 ApiContextAssembler 同源：占用判定与折叠都走 clampedBudget。
-        val budget = ContextWindowPolicy.clampedBudget(declaredTokens, inputs.defaultBudget)
+        val budget = ContextWindowPolicy.clampedBudget(
+            declaredTokens,
+            inputs.defaultBudget,
+            modelId = activeModel?.model,
+            providerId = activeModel?.provider,
+        )
 
         // 与引擎同源（ApiContextAssembler）：把全量 UI 消息投影成「实际会发送的那份」再估算。
         // 引擎在压缩判定前会截断老轮次工具结果（浏览器快照、长 read 等大输出），面板此前漏了这一步，
@@ -559,7 +573,7 @@ class ChatViewModel(
         val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
             messages = projectedMessages,
             budget = budget,
-            systemTokens = totalSystemTokens,
+            systemTokens = promptOverheadTokens,
             compactionEnabled = compactionEnabled,
             systemPromptTokens = systemPromptTokens,
             toolDefinitionTokens = toolDefinitionTokens,
@@ -575,14 +589,17 @@ class ChatViewModel(
             ((totalCachedTokens * 100L) / totalPromptTokens).toInt().coerceIn(1, 100)
         } else null
 
+        val compactionThresholdTokens = ContextWindowPolicy.foldingLimitFor(
+            budget = budget,
+            ratioPercent = foldingRatioPercent,
+            systemTokens = promptOverheadTokens,
+        ).coerceAtLeast(1)
+
         ContextUsage(
             usedTokens = effectiveUsage.totalTokens,
-            limitTokens = ContextWindowPolicy.foldingLimitFor(
-                budget = budget,
-                ratioPercent = foldingRatioPercent,
-                systemTokens = totalSystemTokens,
-            ).coerceAtLeast(1),
-            declaredTokens = declaredTokens ?: budget,
+            limitTokens = budget,
+            compactionThresholdTokens = compactionThresholdTokens,
+            declaredTokens = effectiveContextWindow ?: budget,
             systemTokens = totalSystemTokens,
             toolTokens = effectiveUsage.toolTokens,
             conversationTokens = effectiveUsage.conversationTokens,
@@ -1388,14 +1405,15 @@ private data class ContextUsageInputs(
 data class ContextUsage(
     val usedTokens: Int = 0,
     /**
-     * 折叠触发线（分母）：= 模型标称上限按比例折算后再减输出/工具预留。
-     * 面板的百分比与分子分母均以此为准，保证「已用 / 分母 = 显示百分比」自洽。
+     * 模型上下文窗口（总预算，也是面板百分比的分母）。
+     * 主流 harness 以模型窗口展示占用；实际折叠线见 [compactionThresholdTokens]。
      */
     val limitTokens: Int = 128_000,
+    /** 达到该 token 数后下一次请求会触发历史压缩。 */
+    val compactionThresholdTokens: Int = 116_000,
     /**
-     * 模型标称上下文上限（用户在该模型档案里填的 contextTokens）。
-     * 仅用于在面板上标注「模型上限 X」，不参与比例计算——避免「填 100 万却按 98.8 万折叠」
-     * 造成分母与百分比对不上（两张皮）。
+     * 当前生效的模型上下文窗口。优先用户显式配置，其次自动适配主流模型元数据，
+     * 最后才回退全局预算。仅用于面板标注，不参与百分比计算。
      */
     val declaredTokens: Int = 128_000,
     /** 历史折叠线比例（%）。面板据此标注「按 X% 折叠」，使折叠决策对用户可见。 */

@@ -503,4 +503,5 @@
     <string name="chat_floating_idle">就绪</string>
     <string name="chat_floating_thinking">🧠 思考中…</string>
     <string name="chat_floating_running">⚡ 执行中…</string>
+    <string name="chat_context_compaction_threshold">达到 %1$s（按 %2$d%%）时自动压缩历史</string>
 </resources>

@@ -78,6 +78,7 @@ import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.AiModelProfileExport
 import top.wkbin.taixu.core.tools.AgentProviderDefinition
 import top.wkbin.taixu.core.tools.ProviderGroup
+import top.wkbin.taixu.harness.ModelContextWindows
 import top.wkbin.taixu.ui.components.ProviderBadge
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeButton
@@ -291,6 +292,13 @@ private fun ModelEditorContent(
         filterCandidateModels(candidateModels, modelSearchQuery)
     }
 
+    /** 主流模型自动适配值；用户在输入框里填写的值仍然优先。 */
+    val autoContextTokens = remember(selectedModels, customModelInput, provider.id) {
+        val selected = selectedModels.firstOrNull()
+            ?: customModelInput.substringBefore(',').trim().takeIf { it.isNotBlank() }
+        selected?.let { modelId -> ModelContextWindows.resolve(modelId, provider.id) }
+    }
+
     // 高级与推理参数
     var rpmLimitText by rememberSaveable(modelId) {
         mutableStateOf(existing?.requestsPerMinutePerKey?.takeIf { it > 0 }?.toString().orEmpty())
@@ -300,11 +308,12 @@ private fun ModelEditorContent(
     var contextTokensText by rememberSaveable(modelId) { mutableStateOf(existing?.contextTokens?.toString().orEmpty()) }
     val parsedMaxTokens = maxTokensText.trim().toIntOrNull()
     val parsedContextTokens = contextTokensText.trim().toIntOrNull()
+    val effectiveContextTokens = parsedContextTokens ?: autoContextTokens
     val maxTokensInvalid = maxTokensText.isNotBlank() && (parsedMaxTokens == null || parsedMaxTokens <= 0)
     val contextTokensInvalid = contextTokensText.isNotBlank() &&
         (parsedContextTokens == null || parsedContextTokens <= 0)
-    val tokenWindowInvalid = parsedMaxTokens != null && parsedContextTokens != null &&
-        parsedMaxTokens > parsedContextTokens
+    val tokenWindowInvalid = parsedMaxTokens != null && effectiveContextTokens != null &&
+        parsedMaxTokens > effectiveContextTokens
     val tokenFieldsValid = !maxTokensInvalid && !contextTokensInvalid && !tokenWindowInvalid
     var compactionKeepRecentText by rememberSaveable(modelId) {
         mutableStateOf(existing?.compactionKeepRecentTokens?.toString().orEmpty())
@@ -1008,13 +1017,17 @@ private fun ModelEditorContent(
                                     onValueChange = { contextTokensText = it.filter(Char::isDigit) },
                                     modifier = Modifier.weight(1f),
                                     label = { Text("上下文上限") },
-                                    placeholder = { Text("128000") },
+                                    placeholder = { Text(autoContextTokens?.let(::formatContextWindow) ?: "留空自动") },
                                     singleLine = true,
                                     isError = contextTokensInvalid || tokenWindowInvalid,
                                     supportingText = if (contextTokensInvalid) {
-                                        { Text("请输入大于 0 的整数，或留空使用默认值") }
+                                        { Text("请输入大于 0 的整数，或留空自动适配") }
                                     } else if (tokenWindowInvalid) {
-                                        { Text("必须不小于 Max Tokens") }
+                                        { Text("不能大于当前上下文上限（自动 ${autoContextTokens?.let(::formatContextWindow) ?: "全局预算"}）") }
+                                    } else if (contextTokensText.isBlank() && autoContextTokens != null) {
+                                        { Text("留空自动适配：${formatContextWindow(autoContextTokens)}") }
+                                    } else if (contextTokensText.isBlank()) {
+                                        { Text("留空使用全局兜底预算") }
                                     } else null,
                                     shape = compactFieldShape,
                                     colors = fieldColors,
@@ -1360,6 +1373,14 @@ private fun ModelEditorContent(
             }
         }
     }
+}
+
+private fun formatContextWindow(tokens: Int): String = when {
+    tokens <= 0 -> "0"
+    tokens % 1_000_000 == 0 -> "${tokens / 1_000_000}M"
+    tokens >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", tokens / 1_000_000.0)
+    tokens % 1_000 == 0 -> "${tokens / 1_000}K"
+    else -> String.format(java.util.Locale.US, "%.1fK", tokens / 1_000.0)
 }
 
 internal fun filterCandidateModels(models: List<String>, query: String): List<String> {

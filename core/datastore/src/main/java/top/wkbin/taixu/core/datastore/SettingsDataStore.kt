@@ -619,13 +619,13 @@ class SettingsDataStore(
     suspend fun setContextBudgetTokens(value: Int) { context.settingsDataStore.edit { it[contextBudgetTokensKey] = value.coerceIn(4_000, 2_000_000) } }
 
     /**
-     * 历史折叠线比例（百分比，默认 70，必须与引擎 ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT 同步）。
+     * 历史折叠线比例（百分比，默认 100，必须与引擎 ContextWindowPolicy.DEFAULT_FOLDING_RATIO_PERCENT 同步）。
      *
-     * 预算内可折叠到多少：折叠触发线按 `预算 × 比例%` 折算后再受输出/工具预留约束。
-     * 70 = 在 75% 输入预留之前平滑进摘要，降低 HTTP 413；100 = 只在这些预留处折叠。
+     * 100 = 对齐主流 harness：`contextWindow - reserveTokens - toolSchemaReserve - systemTokens`；
+     * 低于 100 会让历史更早进入摘要，主要用于主动节省 input token 成本。
      */
     private val contextFoldingRatioPercentKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_folding_ratio_percent")
-    val contextFoldingRatioPercent: Flow<Int> = context.settingsDataStore.data.map { it[contextFoldingRatioPercentKey] ?: 70 }
+    val contextFoldingRatioPercent: Flow<Int> = context.settingsDataStore.data.map { it[contextFoldingRatioPercentKey] ?: 100 }
     suspend fun setContextFoldingRatioPercent(value: Int) { context.settingsDataStore.edit { it[contextFoldingRatioPercentKey] = value.coerceIn(10, 100) } }
 
     /**

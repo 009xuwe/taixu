@@ -55,6 +55,8 @@ class ApiContextAssembler(
         val budgetTokens = ContextWindowPolicy.clampedBudget(
             model.contextTokens,
             runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000),
+            modelId = model.model,
+            providerId = model.provider,
         )
         val toolCallMode = if (model.pureChatMode) ToolCallMode.DISABLED else model.toolCallMode
 
