@@ -88,9 +88,19 @@ class CcSwitchClient @Inject constructor(
         port: Int = 19870,
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
-            val payload = """{"providerId":"$providerId"}"""
+            // agentId/providerId 均外部可注入：路径段用 HttpUrl 编码，JSON 用结构化序列化，
+            // 不再手工拼 URL/JSON 字符串（避免 agentId 含 / 或 ? 时越权访问其他端点）
+            val url = okhttp3.HttpUrl.Builder()
+                .scheme("http")
+                .host("127.0.0.1")
+                .port(port)
+                .addPathSegment("api")
+                .addPathSegment(agentId)
+                .addPathSegment("switch")
+                .build()
+            val payload = org.json.JSONObject().put("providerId", providerId).toString()
             val request = Request.Builder()
-                .url("http://127.0.0.1:$port/api/agents/$agentId/switch")
+                .url(url)
                 .post(payload.toRequestBody(jsonMediaType))
                 .build()
             client.newCall(request).execute().use { response ->
@@ -127,9 +137,23 @@ class CcSwitchClient @Inject constructor(
         port: Int = 19870,
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
-            val payload = if (version != null) """{"version":"$version"}""" else "{}"
+            // 同 switchAgentProvider：agentId 走路径段编码，version 走结构化 JSON，
+            // 避免含 / ? 或引号的 id 越权访问其他端点 / 破坏 JSON 结构
+            val url = okhttp3.HttpUrl.Builder()
+                .scheme("http")
+                .host("127.0.0.1")
+                .port(port)
+                .addPathSegment("api")
+                .addPathSegment(agentId)
+                .addPathSegment("install")
+                .build()
+            val payload = if (version != null) {
+                org.json.JSONObject().put("version", version).toString()
+            } else {
+                "{}"
+            }
             val request = Request.Builder()
-                .url("http://127.0.0.1:$port/api/agents/$agentId/install")
+                .url(url)
                 .post(payload.toRequestBody(jsonMediaType))
                 .build()
             client.newCall(request).execute().use { response ->
