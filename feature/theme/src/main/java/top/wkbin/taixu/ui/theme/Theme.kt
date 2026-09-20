@@ -243,12 +243,22 @@ fun TaiXuTheme(
     }
 
     val context = LocalContext.current
+    val staticFallback = if (darkTheme) XuantongDarkColors else XuantongLightColors
+    val systemMonet = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    } else {
+        staticFallback
+    }
+
     val colorScheme = when (style) {
         ThemeStyle.MATERIAL_YOU -> {
-            if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (dynamicColor) {
+                rememberWallpaperDynamicColorScheme(
+                    darkTheme = darkTheme,
+                    fallback = systemMonet,
+                )
             } else {
-                if (darkTheme) XuantongDarkColors else XuantongLightColors
+                staticFallback
             }
         }
         ThemeStyle.LIQUID_GLASS -> if (darkTheme) ChengmingDarkColors else ChengmingLightColors

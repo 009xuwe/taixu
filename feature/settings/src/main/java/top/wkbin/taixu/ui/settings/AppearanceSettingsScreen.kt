@@ -259,7 +259,11 @@ fun AppearanceSettingsScreen(
                     ThemeOptionRow(
                         title = stringResource(R.string.settings_theme_material_you),
                         subtitle = stringResource(R.string.settings_theme_material_you_description),
-                        accentColor = androidx.compose.ui.graphics.Color(0xFF4259C3),
+                        accentColor = if (isMaterialYou && dynamicColorEnabled && isDynamicColorSupported) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            androidx.compose.ui.graphics.Color(0xFF4259C3)
+                        },
                         selected = isMaterialYou,
                         onClick = { viewModel.setThemeStyle("material_you") },
                     )
