@@ -19,7 +19,7 @@
 ## 3. 🎨 M3 Expressive 与 UX/UI 设计系统与前端架构铁律
 
 1. **统一设计系统组件（严禁 raw Material 组件散落）**：
-   - 容器必须使用 `top.wkbin.taixu.ui.components.RuntimeCard`（支持 `containerColor`, `borderColor`, `contentPadding`, `onClick`），**严禁**使用原生 `androidx.compose.material3.Card` 或自定义 `Modifier.border/background` 拼接容器，确保在**玄同（标准 M3）**与**澄明（液态玻璃）**双主题下毛玻璃、折射与微边框自适应生效。
+   - 容器必须使用 `top.wkbin.taixu.ui.components.RuntimeCard`（支持 `containerColor`, `borderColor`, `contentPadding`, `onClick`），**严禁**使用原生 `androidx.compose.material3.Card` 或自定义 `Modifier.border/background` 拼接容器，确保在**Material You（标准 M3）**与**液态玻璃**双主题下毛玻璃、折射与微边框自适应生效。
    - 按钮统一使用 `RuntimeButton`, `RuntimeFilledTonalButton`, `RuntimeOutlinedButton`, `RuntimeTextButton`, `RuntimeIconButton`。
    - 弹窗统一使用 `top.wkbin.taixu.ui.components.RuntimeAlertDialog`。
    - 开关与进度指示使用 `RuntimeSwitch`, `RuntimeLinearProgressIndicator`, `RuntimeCircularProgressIndicator`。

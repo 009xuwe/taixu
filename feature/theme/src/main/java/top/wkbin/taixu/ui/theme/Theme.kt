@@ -2,6 +2,7 @@ package top.wkbin.taixu.ui.theme
 
 import android.app.Activity
 import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -11,6 +12,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -38,7 +41,7 @@ import top.wkbin.taixu.feature.theme.R
 /**
  * 太墟内置主题风格。
  *
- * - [XUANTONG]（玄同）—— 默认主题。源自《老子》「万物同归于玄」，曜石夜空与温润素白的 M3 Expressive 设计系统。
+ * - [XUANTONG]（玄同）—— 默认主题。源自《老子》「万物同归于玄」，Material You 设计系统（支持 Monet 动态壁纸取色与曜石/素白基调）。
  * - [CHENGMING]（澄明）—— 液态玻璃主题。源自「澄明」通透清澈之意，以毛玻璃折射 + 流光 Aurora 渲染虚实交织的界面。
  */
 enum class ThemeStyle(
@@ -47,22 +50,31 @@ enum class ThemeStyle(
     val displayNameEn: String,
     val description: String,
 ) {
-    XUANTONG(
-        id = "xuantong",
-        displayName = "玄同",
-        displayNameEn = "Xuantong",
-        description = "默认主题 · 源自《老子》「万物同归于玄」。曜石夜空与温润素白，M3 Expressive 设计系统。",
+    MATERIAL_YOU(
+        id = "material_you",
+        displayName = "Material You",
+        displayNameEn = "Material You",
+        description = "默认主题 · Google Material You (M3) 原生设计系统，支持跟随系统壁纸动态取色与经典曜石配色。",
     ),
-    CHENGMING(
-        id = "chengming",
-        displayName = "澄明",
-        displayNameEn = "Chengming",
-        description = "液态玻璃主题 · 毛玻璃折射 + 流光 Aurora，源自「澄明」通透清澈之意。",
+    LIQUID_GLASS(
+        id = "liquid_glass",
+        displayName = "液态玻璃",
+        displayNameEn = "Liquid Glass",
+        description = "液态玻璃主题 · 毛玻璃折射 + 流光 Aurora，通透清澈的玻璃质感。",
     ),
     ;
 
     companion object {
-        fun fromId(id: String?): ThemeStyle = entries.firstOrNull { it.id == id } ?: XUANTONG
+        @Deprecated("使用 MATERIAL_YOU 代替", ReplaceWith("MATERIAL_YOU"))
+        val XUANTONG get() = MATERIAL_YOU
+        @Deprecated("使用 LIQUID_GLASS 代替", ReplaceWith("LIQUID_GLASS"))
+        val CHENGMING get() = LIQUID_GLASS
+
+        fun fromId(id: String?): ThemeStyle = when (id) {
+            "liquid_glass", "chengming" -> LIQUID_GLASS
+            "material_you", "xuantong" -> MATERIAL_YOU
+            else -> MATERIAL_YOU
+        }
     }
 }
 
@@ -199,20 +211,21 @@ private val ChengmingDarkColors = darkColorScheme(
 )
 
 /**
- * Material 3 Expressive 形状体系 (Generous, Organic, Bolder)
+ * Material 3 形状体系 (Shape Scale)
  */
 private val TaiXuShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(32.dp),
+    extraSmall = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(28.dp),
 )
 
 @Composable
 fun TaiXuTheme(
-    style: ThemeStyle = ThemeStyle.XUANTONG,
+    style: ThemeStyle = ThemeStyle.MATERIAL_YOU,
     darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = true,
     backgroundUri: String? = null,
     content: @Composable () -> Unit,
 ) {
@@ -229,9 +242,16 @@ fun TaiXuTheme(
         }
     }
 
+    val context = LocalContext.current
     val colorScheme = when (style) {
-        ThemeStyle.XUANTONG -> if (darkTheme) XuantongDarkColors else XuantongLightColors
-        ThemeStyle.CHENGMING -> if (darkTheme) ChengmingDarkColors else ChengmingLightColors
+        ThemeStyle.MATERIAL_YOU -> {
+            if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            } else {
+                if (darkTheme) XuantongDarkColors else XuantongLightColors
+            }
+        }
+        ThemeStyle.LIQUID_GLASS -> if (darkTheme) ChengmingDarkColors else ChengmingLightColors
     }
 
     MaterialTheme(
@@ -239,7 +259,7 @@ fun TaiXuTheme(
         typography = AppTypography,
         shapes = TaiXuShapes,
     ) {
-        if (style == ThemeStyle.CHENGMING) {
+        if (style == ThemeStyle.LIQUID_GLASS) {
             LiquidGlassRoot(content, darkTheme, backgroundUri)
         } else {
             content()

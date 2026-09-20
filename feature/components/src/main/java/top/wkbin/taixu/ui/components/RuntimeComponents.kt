@@ -712,6 +712,7 @@ fun RuntimeCard(
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     borderColor: Color = Color.Transparent,
+    shape: Shape = RoundedCornerShape(16.dp),
     onClick: (() -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(16.dp),
     content: @Composable ColumnScope.() -> Unit,
@@ -719,7 +720,6 @@ fun RuntimeCard(
     val glassBackdrop = LocalLiquidGlassSurfaceBackdrop.current
     val colors = CardDefaults.cardColors(containerColor = containerColor)
     val border = borderColor.takeIf { it.alpha > 0f }?.let { BorderStroke(1.dp, it) }
-    val shape = RoundedCornerShape(16.dp)
 
     if (glassBackdrop != null) {
         val interactionSource = remember { MutableInteractionSource() }

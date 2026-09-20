@@ -110,7 +110,8 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContent {
             val themeMode by settingsDataStore.themeMode.collectAsStateWithLifecycle(initialValue = "system")
-            val themeStyle by settingsDataStore.themeStyle.collectAsStateWithLifecycle(initialValue = "xuantong")
+            val themeStyle by settingsDataStore.themeStyle.collectAsStateWithLifecycle(initialValue = "material_you")
+            val dynamicColorEnabled by settingsDataStore.dynamicColorEnabled.collectAsStateWithLifecycle(initialValue = true)
             val chengmingBackgroundUri by settingsDataStore.chengmingBackgroundUri.collectAsStateWithLifecycle(initialValue = null)
             val pageScale by settingsDataStore.appFontScale.collectAsStateWithLifecycle(initialValue = 1f)
             val systemDark = isSystemInDarkTheme()
@@ -130,6 +131,7 @@ class MainActivity : AppCompatActivity() {
                 TaiXuTheme(
                     style = top.wkbin.taixu.ui.theme.ThemeStyle.fromId(themeStyle),
                     darkTheme = isDark,
+                    dynamicColor = dynamicColorEnabled,
                     backgroundUri = chengmingBackgroundUri,
                 ) {
                 val onboardingViewModel: OnboardingViewModel = koinViewModel()

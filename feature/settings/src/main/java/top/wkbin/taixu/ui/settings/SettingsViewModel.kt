@@ -636,11 +636,20 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, "system")
 
     val themeStyle: StateFlow<String> = appearancePreferences.themeStyle
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "xuantong")
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "material_you")
 
     fun setThemeStyle(style: String) {
         viewModelScope.launch {
             appearancePreferences.setThemeStyle(style)
+        }
+    }
+
+    val dynamicColorEnabled: StateFlow<Boolean> = appearancePreferences.dynamicColorEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setDynamicColorEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setDynamicColorEnabled(enabled)
         }
     }
 

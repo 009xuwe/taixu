@@ -2,6 +2,7 @@ package top.wkbin.taixu.ui.settings
 
 import org.koin.compose.viewmodel.koinViewModel
 import android.graphics.BitmapFactory
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -74,6 +75,7 @@ fun AppearanceSettingsScreen(
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val themeStyle by viewModel.themeStyle.collectAsStateWithLifecycle()
+    val dynamicColorEnabled by viewModel.dynamicColorEnabled.collectAsStateWithLifecycle()
     val terminalFontSize by viewModel.terminalFontSize.collectAsStateWithLifecycle()
     val terminalColorScheme by viewModel.terminalColorScheme.collectAsStateWithLifecycle()
     val terminalHapticsEnabled by viewModel.terminalHapticsEnabled.collectAsStateWithLifecycle()
@@ -243,6 +245,9 @@ fun AppearanceSettingsScreen(
             }
 
             // 3. 应用视觉与主题
+            val isMaterialYou = themeStyle == "material_you" || themeStyle == "xuantong"
+            val isLiquidGlass = themeStyle == "liquid_glass" || themeStyle == "chengming"
+            val isDynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
             item {
                 Text(
                     text = stringResource(R.string.settings_theme_style),
@@ -252,48 +257,64 @@ fun AppearanceSettingsScreen(
                 )
                 SettingsGroup {
                     ThemeOptionRow(
-                        title = stringResource(R.string.settings_theme_xuantong),
-                        subtitle = stringResource(R.string.settings_theme_xuantong_description),
+                        title = stringResource(R.string.settings_theme_material_you),
+                        subtitle = stringResource(R.string.settings_theme_material_you_description),
                         accentColor = androidx.compose.ui.graphics.Color(0xFF4259C3),
-                        selected = themeStyle == "xuantong",
-                        onClick = { viewModel.setThemeStyle("xuantong") },
+                        selected = isMaterialYou,
+                        onClick = { viewModel.setThemeStyle("material_you") },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ThemeOptionRow(
-                        title = stringResource(R.string.settings_theme_chengming),
-                        subtitle = stringResource(R.string.settings_theme_chengming_description),
-                        accentColor = androidx.compose.ui.graphics.Color(0xFF6E7CE0),
-                        selected = themeStyle == "chengming",
-                        onClick = { viewModel.setThemeStyle("chengming") },
+                        title = stringResource(R.string.settings_theme_liquid_glass),
+                        subtitle = stringResource(R.string.settings_theme_liquid_glass_description),
+                        accentColor = androidx.compose.ui.graphics.Color(0xFF0088FF),
+                        selected = isLiquidGlass,
+                        onClick = { viewModel.setThemeStyle("liquid_glass") },
                     )
+                    if (isMaterialYou) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        ToggleRow(
+                            icon = RuntimeIconName.Palette,
+                            title = stringResource(R.string.settings_dynamic_color),
+                            subtitle = stringResource(
+                                if (isDynamicColorSupported) R.string.settings_dynamic_color_description
+                                else R.string.settings_dynamic_color_unsupported
+                            ),
+                            checked = dynamicColorEnabled && isDynamicColorSupported,
+                            change = viewModel::setDynamicColorEnabled,
+                            enabled = isDynamicColorSupported,
+                        )
+                    }
                 }
             }
 
-            item {
-                Text(
-                    text = stringResource(R.string.settings_chengming_background),
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-                )
-                SettingsGroup {
-                    Column(
-                        Modifier.fillMaxWidth().padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = stringResource(if (backgroundUri == null) R.string.settings_background_none else R.string.settings_background_custom),
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                        )
-                        backgroundUri?.let { uri -> ChengmingBackgroundPreview(uri) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(
-                                onClick = { backgroundPicker.launch(arrayOf("image/*")) },
-                            ) { Text(stringResource(if (backgroundUri == null) R.string.settings_background_upload else R.string.settings_background_change)) }
-                            if (backgroundUri != null) {
+            if (isLiquidGlass) {
+                item {
+                    Text(
+                        text = stringResource(R.string.settings_chengming_background),
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                    )
+                    SettingsGroup {
+                        Column(
+                            Modifier.fillMaxWidth().padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(
+                                text = stringResource(if (backgroundUri == null) R.string.settings_background_none else R.string.settings_background_custom),
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                            backgroundUri?.let { uri -> ChengmingBackgroundPreview(uri) }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 TextButton(
-                                    onClick = { viewModel.setChengmingBackgroundUri(null) },
-                                ) { Text(stringResource(R.string.settings_background_remove)) }
+                                    onClick = { backgroundPicker.launch(arrayOf("image/*")) },
+                                ) { Text(stringResource(if (backgroundUri == null) R.string.settings_background_upload else R.string.settings_background_change)) }
+                                if (backgroundUri != null) {
+                                    TextButton(
+                                        onClick = { viewModel.setChengmingBackgroundUri(null) },
+                                    ) { Text(stringResource(R.string.settings_background_remove)) }
+                                }
                             }
                         }
                     }
