@@ -166,6 +166,7 @@ class SettingsDataStore(
     private val registrySignatureUrlKey = stringPreferencesKey("registry_signature_url")
     private val registryPublicKeyKey = stringPreferencesKey("registry_public_key")
     private val thinkingExpandedKey = booleanPreferencesKey("thinking_blocks_expanded")
+    private val thinkingAutoTranslateKey = booleanPreferencesKey("thinking_auto_translate")
     private val defaultReasoningDepthKey = stringPreferencesKey("agent_default_reasoning_depth")
     private val agentLoggingEnabledKey = booleanPreferencesKey("agent_local_logging_enabled")
     private val executionModeKey = stringPreferencesKey("execution_mode")
@@ -575,6 +576,13 @@ class SettingsDataStore(
 
     suspend fun setThinkingExpanded(value: Boolean) {
         context.settingsDataStore.edit { it[thinkingExpandedKey] = value }
+    }
+
+    /** 是否在展开思考过程时自动翻译为中文（需下载本地语种模型）。 */
+    val thinkingAutoTranslate: Flow<Boolean> = context.settingsDataStore.data.map { it[thinkingAutoTranslateKey] ?: false }
+
+    suspend fun setThinkingAutoTranslate(value: Boolean) {
+        context.settingsDataStore.edit { it[thinkingAutoTranslateKey] = value }
     }
 
     /** 全局推理深度：auto / disabled / low / medium / high（作用于未单独设置强度的模型）。 */

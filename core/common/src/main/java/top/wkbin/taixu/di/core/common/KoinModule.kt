@@ -12,4 +12,8 @@ val coreCommonModule = module {
     single<CrashReporter> { CrashReporter(context = get(), secretRedactor = get()) }
 
     single<GlobalNavigationBus> { GlobalNavigationBus() }
+
+    single<top.wkbin.taixu.core.common.translation.TranslationManager> {
+        top.wkbin.taixu.core.common.translation.TranslationManager(context = get(), appLogger = get())
+    }
 }

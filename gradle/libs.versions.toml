@@ -45,6 +45,7 @@ jgit = "6.10.1.202505221210-r"
 termux = "0.118.0"
 # WorkManager：工作流定时计划的到点触发（进程被杀也能拉起）；周期最小 15 分钟、Doze 下允许分钟级延迟
 work = "2.10.0"
+mlkitTranslate = "17.0.3"
 
 [libraries]
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
@@ -119,6 +120,7 @@ coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp"
 jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
 termux-terminal-emulator = { group = "com.termux", name = "terminal-emulator", version.ref = "termux" }
 termux-terminal-view = { group = "com.termux", name = "terminal-view", version.ref = "termux" }
+mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

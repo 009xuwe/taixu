@@ -97,9 +97,11 @@ internal fun ChatMessageList(
     workspaceProject: WorkspaceProject?,
     onboardingPrivilege: OnboardingPrivilege?,
     thinkingExpanded: Boolean,
+    thinkingAutoTranslate: Boolean = false,
     thinkingLive: Boolean,
     liveThinkingMessageId: String?,
     lastAssistantMessageId: String?,
+    onNavigateToSettings: (() -> Unit)? = null,
     knownMentionNames: List<String>,
     quickPhrases: List<QuickPhrase>,
     onSelectPhrase: (QuickPhrase) -> Unit,
@@ -242,6 +244,8 @@ internal fun ChatMessageList(
                                 showRegenerate = message.id == lastAssistantMessageId,
                                 onRegenerate = onRegenerate,
                                 onCreateBranch = { onCreateBranch(message.id) },
+                                autoTranslate = thinkingAutoTranslate,
+                                onNavigateToSettings = onNavigateToSettings,
                             )
                             is ToolCall -> {
                                 // 原始下标由投影阶段预计算（见 projectChatMessages），组合期 O(1)，

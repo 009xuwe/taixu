@@ -93,6 +93,7 @@ class SettingsViewModel(
     private val profileBackupCodec: AiProfileBackupCodec,
     private val webChatBridgeServer: top.wkbin.taixu.runtime.webchat.WebChatBridgeServer? = null,
     private val browserPrefs: BrowserPreferences,
+    private val translationManager: top.wkbin.taixu.core.common.translation.TranslationManager,
 ) : ViewModel() {
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
@@ -665,6 +666,34 @@ class SettingsViewModel(
     // ---- Agent 配置与管理 ----
     val thinkingExpanded: StateFlow<Boolean> = agentPreferences.thinkingExpanded
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val translationModelStatus: StateFlow<top.wkbin.taixu.core.common.translation.TranslationModelStatus> =
+        translationManager.status
+
+    val thinkingAutoTranslate: StateFlow<Boolean> = agentPreferences.thinkingAutoTranslate
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun downloadTranslationModel(requireWifi: Boolean = false) {
+        viewModelScope.launch {
+            translationManager.downloadModel(requireWifi)
+        }
+    }
+
+    fun deleteTranslationModel() {
+        viewModelScope.launch {
+            translationManager.deleteModel()
+        }
+    }
+
+    fun refreshTranslationModelStatus() {
+        translationManager.refreshStatus()
+    }
+
+    fun setThinkingAutoTranslate(value: Boolean) {
+        viewModelScope.launch {
+            agentPreferences.setThinkingAutoTranslate(value)
+        }
+    }
 
     val customSystemPromptEnabled: StateFlow<Boolean> = agentPreferences.customSystemPromptEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)

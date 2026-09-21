@@ -36,6 +36,8 @@ val featureChatModule = module {
             privilegeManager = get(),
             pathManager = get(),
             workflowRepository = get(),
+            translationManager = getOrNull(),
+            globalNavigationBus = getOrNull(),
         )
     }
 }

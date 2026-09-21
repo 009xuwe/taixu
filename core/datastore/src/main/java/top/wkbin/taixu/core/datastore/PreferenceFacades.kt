@@ -154,6 +154,7 @@ class AgentPreferences(private val store: SettingsDataStore) {
     val agentLoggingEnabled get() = store.agentLoggingEnabled
     val selectedDistribution get() = store.selectedDistribution
     val thinkingExpanded get() = store.thinkingExpanded
+    val thinkingAutoTranslate get() = store.thinkingAutoTranslate
     val defaultReasoningDepth get() = store.defaultReasoningDepth
     val contextCompactionEnabled get() = store.contextCompactionEnabled
     val contextCompactionThreshold get() = store.contextCompactionThreshold
@@ -172,6 +173,7 @@ class AgentPreferences(private val store: SettingsDataStore) {
     val defaultRoundLimitAutoContinuations get() = SettingsDataStore.DEFAULT_ROUND_LIMIT_AUTO_CONTINUATIONS
     val defaultBaseCommandTimeoutSeconds get() = DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS
     suspend fun setThinkingExpanded(value: Boolean) = store.setThinkingExpanded(value)
+    suspend fun setThinkingAutoTranslate(value: Boolean) = store.setThinkingAutoTranslate(value)
     suspend fun setCommandOutputCompressionEnabled(value: Boolean) = store.setCommandOutputCompressionEnabled(value)
     suspend fun removeModelApiKey(secretRef: String) = store.removeModelApiKey(secretRef)
     suspend fun setEnvironmentPrivacyMode(value: Boolean) = store.setEnvironmentPrivacyMode(value)

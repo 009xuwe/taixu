@@ -85,6 +85,8 @@ fun AgentSettingsScreen(
     viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
+    val translationModelStatus by viewModel.translationModelStatus.collectAsStateWithLifecycle()
+    val thinkingAutoTranslate by viewModel.thinkingAutoTranslate.collectAsStateWithLifecycle()
     val customSystemPromptEnabled by viewModel.customSystemPromptEnabled.collectAsStateWithLifecycle()
     val customSystemPrompt by viewModel.customSystemPrompt.collectAsStateWithLifecycle()
     val compactionEnabled by viewModel.contextCompactionEnabled.collectAsStateWithLifecycle()
@@ -162,7 +164,7 @@ fun AgentSettingsScreen(
                 )
             }
             item {
-                AgentBlockTitle("思考呈现")
+                AgentBlockTitle("思考呈现与翻译")
             }
             item {
                 AgentSettingsGroup {
@@ -172,6 +174,27 @@ fun AgentSettingsScreen(
                         subtitle = if (thinkingExpanded) "聊天界面中新生成的思考过程将默认展开呈现" else "思考过程（包括生成中内容）默认折叠，点击可展开查看",
                         checked = thinkingExpanded,
                         onCheckedChange = viewModel::setThinkingExpanded,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    AgentToggleRow(
+                        icon = RuntimeIconName.Globe,
+                        title = "展开时自动翻译英文思考为中文",
+                        subtitle = if (thinkingAutoTranslate) "展开思考块时若检测为英文将自动调用本地离线模型翻译呈现" else "仅在点击思考块上的翻译按钮时进行翻译",
+                        checked = thinkingAutoTranslate,
+                        onCheckedChange = viewModel::setThinkingAutoTranslate,
+                    )
+                }
+            }
+            item {
+                AgentBlockTitle("思考流离线翻译语种模型")
+            }
+            item {
+                AgentSettingsGroup {
+                    TranslationModelCard(
+                        status = translationModelStatus,
+                        onDownload = { viewModel.downloadTranslationModel() },
+                        onDelete = { viewModel.deleteTranslationModel() },
+                        onRetry = { viewModel.downloadTranslationModel() },
                     )
                 }
             }

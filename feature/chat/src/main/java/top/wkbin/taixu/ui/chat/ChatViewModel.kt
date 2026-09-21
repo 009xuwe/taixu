@@ -122,6 +122,8 @@ class ChatViewModel(
     private val privilegeManager: top.wkbin.taixu.runtime.privilege.PrivilegeManager,
     private val pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
     private val workflowRepository: top.wkbin.taixu.core.database.WorkflowRepository,
+    val translationManager: top.wkbin.taixu.core.common.translation.TranslationManager? = null,
+    val globalNavigationBus: top.wkbin.taixu.core.common.navigation.GlobalNavigationBus? = null,
 ) : ViewModel() {
     private val _workflowLaunchRequests = kotlinx.coroutines.flow.MutableSharedFlow<WorkflowLaunchRequest>(extraBufferCapacity = 2)
     val workflowLaunchRequests: kotlinx.coroutines.flow.SharedFlow<WorkflowLaunchRequest> = _workflowLaunchRequests
@@ -484,6 +486,14 @@ class ChatViewModel(
 
     fun setThinkingExpanded(value: Boolean) {
         viewModelScope.launch { settingsDataStore.setThinkingExpanded(value) }
+    }
+
+    /** 思考过程是否在展开时自动翻译为中文。 */
+    val thinkingAutoTranslate: StateFlow<Boolean> = settingsDataStore.thinkingAutoTranslate
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun navigateToAgentSettings() {
+        globalNavigationBus?.navigateTo(top.wkbin.taixu.core.common.navigation.AppNavigationTarget.AgentSettings)
     }
 
     // 输入草稿：同步写入 SavedStateHandle，进程重建 / 旋转后可恢复

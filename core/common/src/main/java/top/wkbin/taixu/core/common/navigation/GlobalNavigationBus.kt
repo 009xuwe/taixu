@@ -12,6 +12,9 @@ sealed interface AppNavigationTarget {
 
     /** 打开工作流运行页（通知栏点入；executionId 为空则只进入工作流目录） */
     data class WorkflowRun(val executionId: String? = null) : AppNavigationTarget
+
+    /** 打开 Agent 设置页（模型/思考呈现/工具中心配置） */
+    data object AgentSettings : AppNavigationTarget
 }
 
 /**

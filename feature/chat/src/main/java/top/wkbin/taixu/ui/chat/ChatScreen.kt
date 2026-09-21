@@ -145,6 +145,7 @@ fun ChatScreen(
     val status by viewModel.status.collectAsStateWithLifecycle()
     val thinkingLive by viewModel.thinkingLive.collectAsStateWithLifecycle()
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
+    val thinkingAutoTranslate by viewModel.thinkingAutoTranslate.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
     val models by viewModel.models.collectAsStateWithLifecycle()
@@ -443,8 +444,10 @@ fun ChatScreen(
                     running = running,
                     status = status,
                     thinkingExpanded = thinkingExpanded,
+                    thinkingAutoTranslate = thinkingAutoTranslate,
                     thinkingLive = thinkingLive,
                     liveThinkingMessageId = liveThinkingMessageId,
+                    onNavigateToSettings = viewModel::navigateToAgentSettings,
                     toolResults = toolResults,
                     workspace = workspace,
                     workspaceProject = effectiveWorkspaceProject,
@@ -908,8 +911,10 @@ private fun ChatPaneContent(
     running: Boolean,
     status: String?,
     thinkingExpanded: Boolean,
+    thinkingAutoTranslate: Boolean = false,
     thinkingLive: Boolean,
     liveThinkingMessageId: String?,
+    onNavigateToSettings: (() -> Unit)? = null,
     toolResults: Map<String, ToolResult>,
     workspace: String,
     workspaceProject: WorkspaceProject? = null,
@@ -984,9 +989,11 @@ private fun ChatPaneContent(
             workspaceProject = workspaceProject,
             onboardingPrivilege = onboardingPrivilege,
             thinkingExpanded = thinkingExpanded,
+            thinkingAutoTranslate = thinkingAutoTranslate,
             thinkingLive = thinkingLive,
             liveThinkingMessageId = liveThinkingMessageId,
             lastAssistantMessageId = lastAssistantMessageId,
+            onNavigateToSettings = onNavigateToSettings,
             knownMentionNames = knownMentionNames,
             quickPhrases = quickPhrases,
             onSelectPhrase = onSelectPhrase,

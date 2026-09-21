@@ -87,6 +87,7 @@ val featureSettingsModule = module {
             profileBackupCodec = get(),
             webChatBridgeServer = get(),
             browserPrefs = get(),
+            translationManager = get(),
         )
     }
 

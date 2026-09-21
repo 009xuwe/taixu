@@ -48,9 +48,12 @@ import androidx.compose.material3.Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,6 +71,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import top.wkbin.taixu.harness.AssistantText
@@ -379,10 +383,12 @@ internal fun ImageThumbnail(
 internal fun AssistantBubble(
     message: AssistantText,
     defaultExpanded: Boolean,
+    autoTranslate: Boolean = false,
     live: Boolean = false,
     showRegenerate: Boolean = false,
     onRegenerate: () -> Unit = {},
     onCreateBranch: () -> Unit = {},
+    onNavigateToSettings: (() -> Unit)? = null,
 ) {
     val reasoning = message.reasoning
     val context = LocalContext.current
@@ -415,6 +421,8 @@ internal fun AssistantBubble(
                 defaultExpanded = defaultExpanded,
                 live = live,
                 durationMs = message.reasoningMs,
+                autoTranslate = autoTranslate,
+                onNavigateToSettings = onNavigateToSettings,
             )
         }
 
@@ -729,14 +737,53 @@ internal fun ThinkingBlock(
     defaultExpanded: Boolean,
     live: Boolean = false,
     durationMs: Long? = null,
+    autoTranslate: Boolean = false,
+    onNavigateToSettings: (() -> Unit)? = null,
 ) {
     var expanded by rememberSaveable(id) { mutableStateOf(defaultExpanded) }
+    var showTranslation by rememberSaveable(id) { mutableStateOf(false) }
+    var translatedText by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    var isTranslating by remember { mutableStateOf(false) }
+    var showMissingModelDialog by rememberSaveable(id) { mutableStateOf(false) }
+
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+
+    val translationManager = remember {
+        org.koin.core.context.GlobalContext.getOrNull()
+            ?.getOrNull<top.wkbin.taixu.core.common.translation.TranslationManager>()
+    }
+    val globalNavigationBus = remember {
+        org.koin.core.context.GlobalContext.getOrNull()
+            ?.getOrNull<top.wkbin.taixu.core.common.navigation.GlobalNavigationBus>()
+    }
+    val fallbackStatusFlow = remember {
+        kotlinx.coroutines.flow.MutableStateFlow<top.wkbin.taixu.core.common.translation.TranslationModelStatus>(
+            top.wkbin.taixu.core.common.translation.TranslationModelStatus.Checking
+        )
+    }
+    val translationModelStatus by (translationManager?.status ?: fallbackStatusFlow)
+        .collectAsStateWithLifecycle()
+
+    LaunchedEffect(expanded, autoTranslate) {
+        if (expanded && autoTranslate && !live && !showTranslation && translatedText == null) {
+            if (translationManager?.isReady() == true) {
+                isTranslating = true
+                val result = translationManager.translate(reasoning)
+                if (result.isSuccess) {
+                    translatedText = result.getOrNull()
+                    showTranslation = true
+                }
+                isTranslating = false
+            }
+        }
+    }
 
     val copyToClipboard = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.chat_reasoning_clipboard), reasoning))
+        val textToCopy = if (showTranslation && translatedText != null) translatedText else reasoning
+        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.chat_reasoning_clipboard), textToCopy))
         Toast.makeText(context, context.getString(R.string.chat_reasoning_copied), Toast.LENGTH_SHORT).show()
     }
 
@@ -792,6 +839,56 @@ internal fun ThinkingBlock(
             Spacer(Modifier.weight(1f))
 
             if (expanded) {
+                if (!live) {
+                    IconButton(
+                        onClick = {
+                            val isReady = translationManager?.isReady() == true
+                            if (!isReady) {
+                                showMissingModelDialog = true
+                            } else {
+                                if (showTranslation) {
+                                    showTranslation = false
+                                } else if (translatedText != null) {
+                                    showTranslation = true
+                                } else {
+                                    scope.launch {
+                                        isTranslating = true
+                                        val result = translationManager.translate(reasoning)
+                                        if (result.isSuccess) {
+                                            translatedText = result.getOrNull()
+                                            showTranslation = true
+                                        } else {
+                                            Toast.makeText(
+                                                context,
+                                                result.exceptionOrNull()?.message ?: "离线翻译失败",
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                        isTranslating = false
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.size(22.dp),
+                        contentDescription = if (showTranslation) "查看英文原文" else "离线翻译思考",
+                    ) {
+                        if (isTranslating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(11.dp),
+                                strokeWidth = 1.5.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        } else {
+                            RuntimeIcon(
+                                RuntimeIconName.Globe,
+                                Modifier.size(11.dp),
+                                tint = if (showTranslation) MaterialTheme.colorScheme.primary
+                                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            )
+                        }
+                    }
+                }
+
                 IconButton(
                     onClick = copyToClipboard,
                     modifier = Modifier.size(22.dp),
@@ -832,26 +929,116 @@ internal fun ThinkingBlock(
                     }
                     .padding(start = 22.dp, top = 1.dp, bottom = 2.dp),
             ) {
-                if (live) {
-                    SelectionContainer {
-                        Text(
-                            text = reasoning,
+                if (showTranslation && translatedText != null) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(bottom = 2.dp),
+                        ) {
+                            RuntimeIcon(
+                                RuntimeIconName.Globe,
+                                Modifier.size(11.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                text = "中文译文 (ML Kit 离线生成)",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                ),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        MarkdownText(
+                            translatedText.orEmpty(),
                             modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                } else if (isTranslating) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = "正在离线翻译思考内容...",
                             style = MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 12.sp,
-                                lineHeight = 17.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             ),
                         )
                     }
                 } else {
-                    MarkdownText(
-                        reasoning,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    if (live) {
+                        SelectionContainer {
+                            Text(
+                                text = reasoning,
+                                modifier = Modifier.fillMaxWidth(),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                                ),
+                            )
+                        }
+                    } else {
+                        MarkdownText(
+                            reasoning,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (showMissingModelDialog) {
+        val isDownloading = translationModelStatus is top.wkbin.taixu.core.common.translation.TranslationModelStatus.Downloading
+        val downloadingStatus = translationModelStatus as? top.wkbin.taixu.core.common.translation.TranslationModelStatus.Downloading
+        RuntimeAlertDialog(
+            onDismissRequest = { showMissingModelDialog = false },
+            title = {
+                Text(
+                    text = if (isDownloading) "离线翻译模型下载中" else "未下载离线翻译语种包",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                )
+            },
+            text = {
+                Text(
+                    text = if (isDownloading && downloadingStatus != null) {
+                        "离线翻译语种模型正在后台下载中（${downloadingStatus.stepName}，${downloadingStatus.detailText}）。\n\n下载完成后将自动就绪支持离线翻译，您可前往「智能体设置」查看详细进度。"
+                    } else {
+                        "本地英语-中文翻译模型（约 60MB）尚未下载。请前往「Agent 设置」完成语种模型下载后方可离线翻译思考流内容。"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showMissingModelDialog = false
+                        if (onNavigateToSettings != null) {
+                            onNavigateToSettings()
+                        } else {
+                            globalNavigationBus?.navigateTo(top.wkbin.taixu.core.common.navigation.AppNavigationTarget.AgentSettings)
+                        }
+                    }
+                ) {
+                    Text(if (isDownloading) "查看下载进度" else "前往设置")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMissingModelDialog = false }) {
+                    Text(if (isDownloading) "后台继续" else "取消")
+                }
+            },
+        )
     }
 }
 

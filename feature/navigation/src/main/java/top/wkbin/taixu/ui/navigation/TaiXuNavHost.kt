@@ -173,6 +173,13 @@ fun TaiXuNavHost(
                     )
                     globalNavigationBus.clearLatest(target)
                 }
+                top.wkbin.taixu.core.common.navigation.AppNavigationTarget.AgentSettings -> {
+                    selectedMain = MainDestination.Settings
+                    if (settingsStack.lastOrNull() != AgentSettingsDestination) {
+                        settingsStack.pushRaw(AgentSettingsDestination)
+                    }
+                    globalNavigationBus.clearLatest(target)
+                }
             }
         }
     }
