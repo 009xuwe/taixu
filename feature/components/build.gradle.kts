@@ -30,5 +30,7 @@ dependencies {
     implementation(project(":feature:theme"))
     // 澄明(液态玻璃)主题：底部导航毛玻璃折射
     implementation(libs.backdrop)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

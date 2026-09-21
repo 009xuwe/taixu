@@ -298,6 +298,27 @@ class SettingsViewModel(
         _isDownloading.value = false
     }
 
+    private val _currentReleaseNotes = MutableStateFlow<String?>(null)
+    val currentReleaseNotes: StateFlow<String?> = _currentReleaseNotes.asStateFlow()
+
+    private val _isLoadingReleaseNotes = MutableStateFlow(false)
+    val isLoadingReleaseNotes: StateFlow<Boolean> = _isLoadingReleaseNotes.asStateFlow()
+
+    fun loadCurrentReleaseNotes(currentVersion: String) {
+        viewModelScope.launch {
+            _isLoadingReleaseNotes.value = true
+            val bundled = appUpdateManager.getBundledReleaseNotes()
+            if (bundled.isNotBlank()) {
+                _currentReleaseNotes.value = bundled
+            }
+            val latestNotes = appUpdateManager.getOrFetchCurrentReleaseNotes(currentVersion)
+            if (latestNotes.isNotBlank()) {
+                _currentReleaseNotes.value = latestNotes
+            }
+            _isLoadingReleaseNotes.value = false
+        }
+    }
+
     fun switchActiveDistro(distroId: String) {
         viewModelScope.launch {
             linuxRuntime.switchActiveDistro(distroId)
