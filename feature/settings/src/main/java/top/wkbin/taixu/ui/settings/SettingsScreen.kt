@@ -78,14 +78,6 @@ fun SettingsScreen(
             RuntimeTopBar(
                 title = "太墟 · 乾坤",
                 statusText = "系统设置与控制中枢",
-                actions = {
-                    top.wkbin.taixu.ui.components.RuntimeIconButton(
-                        onClick = onOpenSearch,
-                        contentDescription = "搜索功能与设置选项",
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Search, Modifier.size(20.dp))
-                    }
-                },
             )
         },
         bottomBar = {
