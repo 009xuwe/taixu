@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -34,6 +35,7 @@ import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.harness.effects.RetryPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
+import top.wkbin.taixu.harness.operation.OperationStatus
 import top.wkbin.taixu.harness.recovery.RecoveryManager
 import top.wkbin.taixu.harness.recovery.RecoveryOutcome
 import top.wkbin.taixu.harness.queue.PromptQueue
@@ -100,6 +102,7 @@ class HarnessLoop(
     /** Sessions being deleted; reject new runs and skip pending drainage. */
     private val tombstonedSessions = ConcurrentHashMap.newKeySet<String>()
     private val recoveredSessions = ConcurrentHashMap.newKeySet<String>()
+    private val approvalTimeoutJobs = ConcurrentHashMap<String, Job>()
 
     private val _sessionPendingMessages = ConcurrentHashMap<String, MutableStateFlow<List<PendingMessage>>>()
 
@@ -192,6 +195,114 @@ class HarnessLoop(
             cancellingSessions.contains(sessId) ||
             stateMirrors.isWaitingApproval(sessId)
 
+    private fun cancelApprovalTimeout(sessId: String) {
+        approvalTimeoutJobs.remove(sessId)?.cancel()
+    }
+
+    private fun scheduleApprovalTimeout(sessId: String) {
+        cancelApprovalTimeout(sessId)
+        val job = loopScope.launch {
+            val pending = runCatching { approvalRepository.pendingNow(sessId) }.getOrDefault(emptyList())
+            if (pending.isEmpty()) {
+                val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
+                var settled = false
+                mutex.withLock {
+                    settled = checkAndSettleExpiredApprovalsLocked(sessId)
+                    if (settled) {
+                        startNextQueuedLocked(sessId)
+                    }
+                }
+                if (settled) {
+                    refreshPendingProjection(sessId)
+                }
+                return@launch
+            }
+            val minExpiry = pending.minOf { it.expiresAt }
+            val delayMs = (minExpiry - System.currentTimeMillis()).coerceAtLeast(0L)
+            delay(delayMs)
+            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
+            var settled = false
+            mutex.withLock {
+                settled = checkAndSettleExpiredApprovalsLocked(sessId)
+                if (settled) {
+                    startNextQueuedLocked(sessId)
+                }
+            }
+            if (settled) {
+                refreshPendingProjection(sessId)
+            }
+        }
+        approvalTimeoutJobs[sessId] = job
+    }
+
+    /**
+     * 检查并自愈已过期的等待审批：
+     * 若会话无活跃 Job 且处于 WAITING_APPROVAL，清扫已过期的 pending 请求并补充超时 ToolResult。
+     * 若已无合法 pending 审批，复位状态为 IDLE，返回 true；若仍有合法审批等待中，返回 false。
+     * 必须在持有会话互斥锁（sessionMutexes[sessId]）下调用。
+     */
+    private suspend fun checkAndSettleExpiredApprovalsLocked(sessId: String): Boolean {
+        if (sessionJobs[sessId]?.isActive == true) return false
+        if (!stateMirrors.isWaitingApproval(sessId)) return false
+
+        val swept = approvalRepository.sweepExpiredForSession(sessId)
+        val now = now()
+        for (expired in swept) {
+            val output = if (expired.toolName == AskUserQuestions.TOOL_NAME) {
+                "用户未在规定时间内回答提问（提问已超时），本次等待已结束。"
+            } else {
+                val ttlMinutes = ApprovalPolicyEngine.APPROVAL_TTL_MS / 60_000L
+                resumePolicy.invalidationResultMessage("该审批已过期（超过 $ttlMinutes 分钟未处理）")
+            }
+            val result = ToolResult(
+                id = newId(),
+                createdAt = now,
+                toolCallId = expired.toolCallId,
+                success = false,
+                output = output,
+            )
+            val active = operationCoordinator.active(sessId)
+            if (active != null && (expired.operationId == null || expired.operationId == active.id)) {
+                operationCoordinator.toolSettled(active.id, result, round = 0, toolName = expired.toolName)
+                messageProjector.publishPersisted(sessId, result)
+            } else {
+                messageProjector.append(sessId, result)
+            }
+        }
+
+        val remainingPending = approvalRepository.pendingNow(sessId)
+        if (remainingPending.isNotEmpty()) {
+            scheduleApprovalTimeout(sessId)
+            return false
+        }
+
+        cancelApprovalTimeout(sessId)
+        logger.i("Session $sessId had approvals expired or settled; resetting WAITING_APPROVAL to IDLE")
+
+        if (swept.isEmpty()) {
+            repairDanglingToolCalls(sessId, interrupted = true)
+        }
+
+        val activeOp = operationCoordinator.active(sessId)
+        if (activeOp != null && activeOp.status == OperationStatus.WAITING_APPROVAL.id) {
+            operationCoordinator.finish(sessId, "aborted", details = "审批或提问已过期")
+        }
+
+        agentTaskStateMachine.activeForSession(sessId)?.let { activeTask ->
+            if (activeTask.status == top.wkbin.taixu.core.database.task.AgentTaskStatus.WAITING_APPROVAL) {
+                agentTaskStateMachine.markFailed(activeTask.id, "审批或提问已过期")
+            }
+        }
+
+        stateMirrors.setRunState(sessId, SessionRunState.IDLE)
+        stateMirrors.setStatus(sessId, null)
+        if (sessId == sessionTracker.foregroundId) {
+            stateMirrors.setForegroundRunning(false)
+        }
+
+        return true
+    }
+
     /** 新建会话。workspace 为关联的工作区 Linux 路径（如 /workspace/proj），空串表示不关联。 */
     suspend fun newSession(title: String, workspace: String = "", projectType: String = ""): String {
         val id = UUID.randomUUID().toString()
@@ -248,10 +359,24 @@ class HarnessLoop(
         stateMirrors.setThinkingLive(id, stateMirrors.thinkingLiveOf(id))
         refreshPendingProjection(id)
 
-        if (withContext(Dispatchers.IO) { approvalRepository.pendingNow(id).isNotEmpty() }) {
-            if (!isCurrentLoad(id, generation)) return
+        val hasPendingApprovals = withContext(Dispatchers.IO) { approvalRepository.pendingNow(id).isNotEmpty() }
+        if (!isCurrentLoad(id, generation)) return
+        if (hasPendingApprovals) {
             stateMirrors.setRunState(id, SessionRunState.WAITING_APPROVAL)
             stateMirrors.setStatus(id, "等待用户批准")
+            scheduleApprovalTimeout(id)
+        } else {
+            val mutex = sessionMutexes.getOrPut(id) { Mutex() }
+            val settled = mutex.withLock {
+                val ok = checkAndSettleExpiredApprovalsLocked(id)
+                if (ok) {
+                    startNextQueuedLocked(id)
+                }
+                ok
+            }
+            if (settled) {
+                refreshPendingProjection(id)
+            }
         }
 
         stateMirrors.recordThinkingModeFromHistory(id, liveFlow.value)
@@ -412,6 +537,7 @@ class HarnessLoop(
         // Mark tombstoned first so finishRun on the dying job cannot drain pending
         // messages and start a fresh run after we have already begun cleanup.
         tombstonedSessions.add(id)
+        cancelApprovalTimeout(id)
         _sessionPendingMessages[id]?.value = emptyList()
         sessionJobs[id]?.cancelAndJoin()
         _sessionPendingMessages.remove(id)
@@ -473,6 +599,7 @@ class HarnessLoop(
                 // 重建 durable task 并发起真实 LLM 调用（幽灵运行）。
                 if (tombstonedSessions.contains(sessId)) return@withLock
                 if (sessionDao.findById(sessId) == null) return@withLock
+                checkAndSettleExpiredApprovalsLocked(sessId)
                 if (isSessionBusy(sessId)) {
                     // Steering/follow-up belongs to the currently active durable task.
                     promptQueueManager.enqueue(sessId, queue, PendingMessage(trimmed, imageUrls))
@@ -641,6 +768,7 @@ class HarnessLoop(
             }
             job?.cancelAndJoin()
             val restarted = mutex.withLock {
+                cancelApprovalTimeout(sessId)
                 var approvalsSettled = true
                 try {
                     rejectPendingApprovalsForCancel(sessId)
@@ -662,6 +790,7 @@ class HarnessLoop(
                 if (stillWaiting) {
                     stateMirrors.setRunState(sessId, SessionRunState.WAITING_APPROVAL)
                     stateMirrors.setStatus(sessId, "等待用户批准")
+                    scheduleApprovalTimeout(sessId)
                 } else {
                     stateMirrors.setRunState(sessId, SessionRunState.IDLE)
                     stateMirrors.setStatus(sessId, null)
@@ -813,11 +942,23 @@ class HarnessLoop(
                 // tombstone 检查形同虚设。再查一次 DB：会话已删除则拒绝启动 runLoop，
                 // 否则会重建数据并发起真实的 LLM 调用。
                 if (sessionDao.findById(sessId) == null) return@withLock
+                val selfHealed = checkAndSettleExpiredApprovalsLocked(sessId)
+                if (selfHealed) {
+                    refreshQueue = true
+                }
                 if (isSessionBusy(sessId)) {
                     enqueueOnBusy?.let {
                         promptQueueManager.enqueue(sessId, PromptQueue.NEXT_RUN, it)
                         refreshQueue = true
                     }
+                    return@withLock
+                }
+                if (promptQueueManager.list(sessId, PromptQueue.NEXT_RUN).isNotEmpty()) {
+                    enqueueOnBusy?.let {
+                        promptQueueManager.enqueue(sessId, PromptQueue.NEXT_RUN, it)
+                        refreshQueue = true
+                    }
+                    startNextQueuedLocked(sessId)
                     return@withLock
                 }
                 launchSessionJobLocked(sessId, enqueueOnBusy?.taskId, block = block)
@@ -925,6 +1066,7 @@ class HarnessLoop(
                 RunResult.WaitingApproval -> {
                     taskId?.let { agentTaskStateMachine.markWaitingApproval(it) }
                     stateMirrors.setRunState(sessId, SessionRunState.WAITING_APPROVAL)
+                    scheduleApprovalTimeout(sessId)
                 }
                 RunResult.Cancelled -> {
                     taskId?.let { agentTaskStateMachine.markCancelled(it) }
@@ -958,6 +1100,7 @@ class HarnessLoop(
         } catch (_: ApprovalPauseException) {
             taskId?.let { agentTaskStateMachine.markWaitingApproval(it) }
             stateMirrors.setRunState(sessId, SessionRunState.WAITING_APPROVAL)
+            scheduleApprovalTimeout(sessId)
         } catch (throwable: Throwable) {
             logger.e("Harness loop failed for session $sessId", throwable)
             val msg = throwable.message ?: "执行失败"
@@ -1303,6 +1446,7 @@ class HarnessLoop(
                 return@launch
             }
             val sessId = request.sessionId
+            cancelApprovalTimeout(sessId)
             if (request.status != top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_PENDING) {
                 logger.w("resolveApproval: request not pending (status=${request.status}), ignoring: $requestId")
                 return@launch
@@ -1434,6 +1578,7 @@ class HarnessLoop(
                 return@launch
             }
             val sessId = request.sessionId
+            cancelApprovalTimeout(sessId)
             if (request.status != top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_PENDING) {
                 logger.w("resolveQuestion: request not pending (status=${request.status}), ignoring: $requestId")
                 return@launch
