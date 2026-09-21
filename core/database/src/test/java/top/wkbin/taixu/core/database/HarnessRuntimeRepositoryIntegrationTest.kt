@@ -163,6 +163,28 @@ class HarnessRuntimeRepositoryIntegrationTest {
     }
 
     @Test
+    fun `branchWindow returns entries at or above sequence plus recall contexts`() = runBlocking {
+        val sessionId = "s-window"
+        var parentId: String? = null
+        repeat(10) { index ->
+            val type = when (index) {
+                1 -> "recall_context"
+                4 -> "compaction"
+                else -> "message"
+            }
+            val next = entry("e$index", sessionId, parentId).copy(entryType = type)
+            dao.insertEntry(next)
+            parentId = next.id
+        }
+
+        val all = repository.branch(sessionId, "e9")
+        val e4Seq = all.first { it.id == "e4" }.sequence
+        val window = repository.branchWindow(sessionId, "e9", e4Seq)
+
+        assertEquals(listOf("e1", "e4", "e5", "e6", "e7", "e8", "e9"), window.map { it.id })
+    }
+
+    @Test
     fun `branch search and indexed read stay on active branch and treat wildcards literally`() = runBlocking {
         val sessionId = "s-search"
         val root = entry("root", sessionId, null).copy(payloadJson = "literal 100% complete")

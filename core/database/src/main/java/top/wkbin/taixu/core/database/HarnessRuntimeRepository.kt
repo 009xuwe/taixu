@@ -27,6 +27,8 @@ interface HarnessRuntimeRepository {
         require(limit > 0) { "Branch tail limit must be positive" }
         return branch(sessionId, leafId).takeLast(limit)
     }
+    suspend fun branchWindow(sessionId: String, leafId: String?, minSequence: Long): List<HarnessEntryEntity> =
+        branch(sessionId, leafId).filter { it.sequence >= minSequence || it.entryType == "recall_context" }
     suspend fun latestBranchEntryOfType(
         sessionId: String,
         leafId: String?,
@@ -113,6 +115,9 @@ class RoomHarnessRuntimeRepository(
     override suspend fun branchTail(sessionId: String, leafId: String?, limit: Int): List<HarnessEntryEntity> {
         require(limit > 0) { "Branch tail limit must be positive" }
         return leafId?.let { dao.branchTail(sessionId, it, limit).map(::restoreFromStorage) }.orEmpty()
+    }
+    override suspend fun branchWindow(sessionId: String, leafId: String?, minSequence: Long): List<HarnessEntryEntity> {
+        return leafId?.let { dao.branchWindow(sessionId, it, minSequence).map(::restoreFromStorage) }.orEmpty()
     }
     override suspend fun latestBranchEntryOfType(
         sessionId: String,

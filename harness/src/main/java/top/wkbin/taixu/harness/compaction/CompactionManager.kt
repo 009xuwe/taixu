@@ -31,13 +31,10 @@ class CompactionManager(
 
     suspend fun project(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): CompactedContext {
         val lane = repository.ensureLane(sessionId, laneName)
-        // Provider projection must walk the complete active branch. A UI-sized tail limit here
-        // silently drops unsummarized messages before token budgeting gets a chance to compact them.
-        // The latest compaction is still fetched separately to recover its retained snapshot.
         val latestCompaction = repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
-        val entries = repository.branch(sessionId, lane.leafId)
-        val recallBlocks = recallBlocksWithin(entries)
         if (latestCompaction == null) {
+            val entries = repository.branch(sessionId, lane.leafId)
+            val recallBlocks = recallBlocksWithin(entries)
             return CompactedContext(
                 messages = entries.mapNotNull(::decodeMessage),
                 branchSummaries = branchSummariesWithin(entries, afterSequence = null),
@@ -46,18 +43,48 @@ class CompactionManager(
             )
         }
 
-        val payload = json.decodeFromString(CompactionPayload.serializer(), latestCompaction.payloadJson)
-        val retained = json.decodeFromString(ListSerializer(HarnessMessage.serializer()), payload.retainedMessagesJson)
+        val payload = runCatching {
+            json.decodeFromString(CompactionPayload.serializer(), latestCompaction.payloadJson)
+        }.onFailure { throwable ->
+            Log.e("ContextCompaction", "Failed to deserialize compaction payload for $sessionId: ${throwable.message}", throwable)
+        }.getOrNull()
+
+        if (payload == null) {
+            // 异常降级：快照损坏或反序列化失败时，回退到全量活跃分支直接投射，避免会话永久瘫痪
+            val entries = repository.branch(sessionId, lane.leafId)
+            val recallBlocks = recallBlocksWithin(entries)
+            return CompactedContext(
+                messages = entries.mapNotNull(::decodeMessage),
+                branchSummaries = branchSummariesWithin(entries, afterSequence = null),
+                recallBlocks = recallBlocks,
+                sourceMaxSequence = entries.maxOfOrNull { it.sequence } ?: 0L,
+            )
+        }
+
+        val retained = payload.retainedMessages
+            ?: payload.retainedMessagesJson?.takeIf { it.isNotBlank() }?.let { jsonStr ->
+                runCatching {
+                    json.decodeFromString(ListSerializer(HarnessMessage.serializer()), jsonStr)
+                }.onFailure {
+                    Log.w("ContextCompaction", "Failed to decode legacy retainedMessagesJson for $sessionId: ${it.message}")
+                }.getOrNull()
+            }.orEmpty()
+
+        // 仅截取自愈水位线之后的增量窗口（与 recall_context 块）：
+        // 已被折叠的历史消息及其 Blob 大文件不再加载至 JVM 堆内，根治全分支膨胀导致的 OOM。
+        val watermark = payload.sourceWatermarkSequence ?: latestCompaction.sequence
+        val minSequence = minOf(watermark, latestCompaction.sequence)
+        val windowEntries = repository.branchWindow(sessionId, lane.leafId, minSequence)
+        val recallBlocks = recallBlocksWithin(windowEntries)
+
         // 自愈：重读快照之后、压缩 entry 落库之前被并发直写落库的 entry（acceptRun 不经
-        // laneLock），不在 retainedMessagesJson 里、又因 sequence 更小被 afterMessages /
+        // laneLock），不在 retainedMessages 里、又因 sequence 更小被 afterMessages /
         // afterSequence 过滤——按水位线补回，否则从 provider 投影中永久丢失。
-        // 水位线必须取自与快照同一次 branch() 读（sourceMaxSequence）：分开二次读会抬高
-        // 水位线，把两次读之间落库的消息排除出自愈区间。
         val healedEntries = payload.sourceWatermarkSequence
             ?.takeIf { it < latestCompaction.sequence }
-            ?.let { watermark ->
-                entries.asSequence()
-                    .filter { it.sequence > watermark && it.sequence < latestCompaction.sequence }
+            ?.let { wm ->
+                windowEntries.asSequence()
+                    .filter { it.sequence > wm && it.sequence < latestCompaction.sequence }
                     .toList()
             }
             .orEmpty()
@@ -75,7 +102,7 @@ class CompactionManager(
             }
             .filter { it.isNotBlank() }
             .toList()
-        val afterMessages = entries.asSequence()
+        val afterMessages = windowEntries.asSequence()
             .filter { it.sequence > latestCompaction.sequence }
             .mapNotNull(::decodeMessage)
             .toList()
@@ -83,9 +110,9 @@ class CompactionManager(
         return CompactedContext(
             summary = payload.summary,
             messages = retained + healed + afterMessages,
-            branchSummaries = healedBranchSummaries + branchSummariesWithin(entries, afterSequence = latestCompaction.sequence),
+            branchSummaries = healedBranchSummaries + branchSummariesWithin(windowEntries, afterSequence = latestCompaction.sequence),
             recallBlocks = recallBlocks,
-            sourceMaxSequence = entries.maxOfOrNull { it.sequence } ?: 0L,
+            sourceMaxSequence = maxOf(payload.sourceWatermarkSequence ?: 0L, windowEntries.maxOfOrNull { it.sequence } ?: latestCompaction.sequence),
         )
     }
 
@@ -185,7 +212,8 @@ class CompactionManager(
             val payload = CompactionPayload(
                 sourceLeafId = lane.leafId,
                 summary = summary,
-                retainedMessagesJson = json.encodeToString(ListSerializer(HarnessMessage.serializer()), retained),
+                retainedMessagesJson = null,
+                retainedMessages = retained,
                 compactedMessageCount = collapsed.size,
                 cumulativeCompactedMessageCount = previousFoldedCount + collapsed.size,
                 retainedMessageCount = retained.size,

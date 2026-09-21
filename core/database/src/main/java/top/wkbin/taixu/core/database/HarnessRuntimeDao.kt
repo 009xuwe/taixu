@@ -153,6 +153,23 @@ interface HarnessRuntimeDao {
     """)
     suspend fun branchTail(sessionId: String, leafId: String, limit: Int): List<HarnessEntryEntity>
 
+    /**
+     * 按序列号水位线只返回增量条目与召回块，已被折叠的更早历史祖先条目不会加载到托管堆中。
+     */
+    @Query("""
+        WITH RECURSIVE branch AS (
+            SELECT * FROM harness_entries WHERE id = :leafId AND sessionId = :sessionId
+            UNION ALL
+            SELECT parent.* FROM harness_entries AS parent
+            JOIN branch AS child ON parent.id = child.parentId
+            WHERE parent.sessionId = :sessionId
+        )
+        SELECT * FROM branch
+        WHERE sequence >= :minSequence OR entryType = 'recall_context'
+        ORDER BY sequence
+    """)
+    suspend fun branchWindow(sessionId: String, leafId: String, minSequence: Long): List<HarnessEntryEntity>
+
     /** Latest entry of one type on the selected immutable-tree branch. */
     @Query("""
         WITH RECURSIVE branch AS (

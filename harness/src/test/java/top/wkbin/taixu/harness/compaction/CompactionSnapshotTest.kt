@@ -194,4 +194,87 @@ class CompactionSnapshotTest {
         assertTrue(summary.contains("<modified-files>"))
         assertTrue(summary.contains("core/network/B.kt"))
     }
+
+    @Test
+    fun `compact creates structured retainedMessages without nested JSON string`() = runBlocking {
+        val sessionId = "s-structured"
+        seedUserMessages(sessionId, 5)
+        val projected = compaction.project(sessionId)
+        compaction.compact(sessionId, projected, keepFromIndex = 3)
+
+        val lane = repository.ensureLane(sessionId, "main")
+        val latestCompactionEntry = repository.latestBranchEntryOfType(sessionId, lane.leafId, CompactionManager.ENTRY_TYPE)!!
+        val payload = Json.decodeFromString(CompactionPayload.serializer(), latestCompactionEntry.payloadJson)
+
+        // 验证已直接持久化结构化列表，不再将所有保留消息压缩为内嵌转义 JSON 字符串
+        assertNull(payload.retainedMessagesJson)
+        assertEquals(2, payload.retainedMessages?.size)
+        assertEquals("$sessionId-m3", payload.retainedMessages?.first()?.id)
+
+        // 验证 project 正常恢复
+        val reprojected = compaction.project(sessionId)
+        assertEquals(listOf("$sessionId-m3", "$sessionId-m4"), reprojected.messages.map { it.id })
+    }
+
+    @Test
+    fun `legacy retainedMessagesJson payload remains backwards compatible`() = runBlocking {
+        val sessionId = "s-legacy-payload"
+        repository.ensureLane(sessionId, "main")
+        val retainedMsg = UserMessage("legacy-1", 10L, "旧格式保留消息")
+        val legacyPayload = CompactionPayload(
+            sourceLeafId = null,
+            summary = "旧版摘要",
+            retainedMessagesJson = Json.encodeToString(kotlinx.serialization.builtins.ListSerializer(HarnessMessage.serializer()), listOf(retainedMsg)),
+            compactedMessageCount = 5,
+            cumulativeCompactedMessageCount = 5,
+            retainedMessageCount = 1,
+            estimatedTokensBefore = 500,
+            createdAt = 100L,
+            sourceWatermarkSequence = 0L,
+            retainedMessages = null,
+        )
+        repository.appendToLane(
+            sessionId,
+            "main",
+            HarnessEntryEntity(
+                id = "c-legacy",
+                sessionId = sessionId,
+                parentId = null,
+                createdAt = 100L,
+                entryType = CompactionManager.ENTRY_TYPE,
+                customType = null,
+                payloadJson = Json.encodeToString(CompactionPayload.serializer(), legacyPayload),
+            ),
+        )
+
+        val projected = compaction.project(sessionId)
+        assertEquals("旧版摘要", projected.summary)
+        assertEquals(1, projected.messages.size)
+        assertEquals("legacy-1", projected.messages.single().id)
+        assertEquals("旧格式保留消息", (projected.messages.single() as UserMessage).text)
+    }
+
+    @Test
+    fun `project degrades gracefully without crashing when compaction payload is corrupted`() = runBlocking {
+        val sessionId = "s-corrupt"
+        seedUserMessages(sessionId, 3)
+        val lane = repository.findLane(sessionId, "main")!!
+        repository.appendToLane(
+            sessionId,
+            "main",
+            HarnessEntryEntity(
+                id = "c-corrupt",
+                sessionId = sessionId,
+                parentId = lane.leafId,
+                createdAt = 999L,
+                entryType = CompactionManager.ENTRY_TYPE,
+                customType = null,
+                payloadJson = "{ not-valid-json }",
+            ),
+        )
+
+        // 损坏或无法解析时降级回退到分支直接投射，绝不抛出未捕获异常瘫痪 HarnessLoop
+        val projected = compaction.project(sessionId)
+        assertEquals(3, projected.messages.size)
+    }
 }
