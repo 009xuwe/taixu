@@ -340,8 +340,11 @@ internal class ChatApi(
                                     })
                                 }
                             })
-                        } else if (msg.content != null) {
-                            put("content", kotlinx.serialization.json.JsonPrimitive(msg.content))
+                        } else {
+                            // Strict OpenAI-compatible gateways deserialize content as a required
+                            // String; never omit it. Assistant tool-call turns legitimately have no
+                            // text, so send an empty string instead.
+                            put("content", kotlinx.serialization.json.JsonPrimitive(msg.content ?: ""))
                         }
                         msg.reasoning_content?.let { put("reasoning_content", kotlinx.serialization.json.JsonPrimitive(it)) }
                         msg.tool_call_id?.let { put("tool_call_id", kotlinx.serialization.json.JsonPrimitive(it)) }

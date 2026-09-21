@@ -18,6 +18,7 @@ import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.ProviderClient
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolCallIdNormalizer
 import top.wkbin.taixu.harness.ToolCallMode
@@ -458,7 +459,7 @@ internal fun isolatedProviderMessages(
     val answeredIds = task.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
     task.forEach { message ->
         when {
-            message is CapabilityEvent || message is ModelSwitchEvent -> Unit
+            message is CapabilityEvent || message is ModelSwitchEvent || message is SkillSuggestion -> Unit
             // 文本模式：落库的 assistant 文本已剥离工具标记，调用意图必须以同一协议形态
             // 回放成 assistant 消息，否则模型看不到自己调用了什么参数，结果无法关联；
             // 悬空调用（无结果）不回放，与主会话 NATIVE 分支同口径。结果以 user 文本回灌。

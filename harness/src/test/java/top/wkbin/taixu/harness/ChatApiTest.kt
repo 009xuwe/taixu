@@ -2,6 +2,9 @@ package top.wkbin.taixu.harness
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -64,6 +67,32 @@ class ChatApiTest {
         assertEquals("call_1", call.id)
         assertEquals("base", call.name)
         assertEquals("""{"command":"uname -m"}""", call.argumentsJson)
+    }
+
+    @Test
+    fun `assistant tool call keeps content field for strict providers`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
+        api.chat(
+            model(),
+            listOf(
+                ApiMessage(role = "user", content = "hi"),
+                ApiMessage(
+                    role = "assistant",
+                    content = null,
+                    tool_calls = listOf(
+                        ApiToolCall(
+                            id = "call_1",
+                            function = ApiFunctionCall(name = "read", arguments = """{"path":"a.kt"}"""),
+                        ),
+                    ),
+                ),
+                ApiMessage(role = "tool", content = "ok", tool_call_id = "call_1"),
+            ),
+        )
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        val assistant = body.getValue("messages").jsonArray[1].jsonObject
+        assertTrue("content must be present even when there is no assistant text", assistant.containsKey("content"))
+        assertEquals("", assistant.getValue("content").jsonPrimitive.content)
     }
 
     @Test

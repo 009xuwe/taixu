@@ -9,6 +9,7 @@ import top.wkbin.taixu.harness.HarnessApiMapper
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ModelSwitchEvent
 import top.wkbin.taixu.harness.ProviderClient
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.TextToolCallCodec
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolCallMode
@@ -60,7 +61,7 @@ object ApiMessageProjector {
             var i = 0
             while (i < msgs.size) {
                 val message = msgs[i]
-                if (message is CapabilityEvent || message is ModelSwitchEvent) {
+                if (message is CapabilityEvent || message is ModelSwitchEvent || message is SkillSuggestion) {
                     i++
                     continue
                 }

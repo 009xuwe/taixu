@@ -7,6 +7,7 @@ import org.junit.Test
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolCallMode
+import top.wkbin.taixu.harness.SkillSuggestion
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
 
@@ -24,6 +25,26 @@ class ApiMessageProjectorTest {
             imageDataUrl = "data:image/png;base64,AAAA",
         ),
     )
+
+    @Test
+    fun `ui only skill suggestion is not projected to the provider`() {
+        val projected = ApiMessageProjector.project(
+            listOf(
+                UserMessage(id = "u1", createdAt = 1L, text = "hi"),
+                SkillSuggestion(
+                    id = "s1",
+                    createdAt = 2L,
+                    action = "create",
+                    skillName = "demo",
+                    description = "demo skill",
+                    systemPrompt = "demo prompt",
+                ),
+            ),
+            toolCallMode = ToolCallMode.NATIVE,
+            visionEnabled = true,
+        )
+        assertEquals(listOf("user"), projected.map { it.role })
+    }
 
     @Test
     fun `vision bridge appends image message when vision enabled`() {
