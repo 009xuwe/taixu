@@ -207,13 +207,6 @@ class SystemPromptBuilder(
             ToolCallMode.NATIVE -> ""
         }
 
-        val thinkingLang = runCatching { settingsDataStore.thinkingLanguage.first() }.getOrDefault("zh")
-        val thinkingLanguageSection = when (thinkingLang) {
-            "zh" -> context.getString(R.string.harness_prompt_thinking_language_zh)
-            "en" -> context.getString(R.string.harness_prompt_thinking_language_en)
-            else -> ""
-        }
-
         val privilegeSection = runCatching { privilegeRenderer.render() }.getOrElse {
             // 渲染失败（如资产缺失）不等于能力不可用——旧的兜底文案会让模型
             // 在授权后误以为宿主通道被禁用。改为中性指示，以 host(status) 实测为准。
@@ -287,7 +280,6 @@ class SystemPromptBuilder(
             toolCallSection,
             workspaceGuidance,
             workspaceParts?.projectContext.orEmpty(),
-            thinkingLanguageSection,
         )
         val prompt = sections.filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
         if (sessionId.isNotBlank()) {

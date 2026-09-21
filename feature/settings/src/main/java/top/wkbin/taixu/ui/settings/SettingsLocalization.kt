@@ -304,13 +304,10 @@ private fun legacyStringResource(source: String): Int? = when (source) {
         "开始下载" -> R.string.settings_text_0136
         "开始安装" -> R.string.settings_text_0137
         "异常" -> R.string.settings_text_0138
-        "强制中文 (推荐)" -> R.string.settings_text_0139
-        "强制模型思考过程全程使用英文 (English)" -> R.string.settings_text_0140
         "当会话关联了工作区时，执行 base 命令默认以该目录为工作路径 (cwd)" -> R.string.settings_text_0141
         "当会话历史超过该轮数时，启动智能剪裁，最近 4 轮保持无损" -> R.string.settings_text_0142
         "当前活跃" -> R.string.settings_text_0143
         "必选基座" -> R.string.settings_text_0144
-        "思考与推理语言偏好 (Thinking Language)" -> R.string.settings_text_0145
         "思考呈现" -> R.string.settings_text_0146
         "思考流、子智能体、Skill 与插件" -> R.string.settings_text_0147
         "思考流与执行表现" -> R.string.settings_text_0148
@@ -415,7 +412,6 @@ private fun legacyStringResource(source: String): Int? = when (source) {
         "版本: v0.3.0 (Material 3 Expressive)" -> R.string.settings_text_0247
         "生成安全 Token" -> R.string.settings_text_0248
         "用户名称" -> R.string.settings_text_0249
-        "由模型根据上下文或底层默认策略自主决定思考语言" -> R.string.settings_text_0250
         "申请豁免电池优化" -> R.string.settings_text_0251
         "电池优化与后台保活" -> R.string.settings_text_0252
         "电池电量" -> R.string.settings_text_0253
@@ -515,7 +511,6 @@ private fun legacyStringResource(source: String): Int? = when (source) {
         "太墟支持多套 Linux 系统并存。所有系统均自动挂载 /workspace 代码工程，/sdcard 外部存储按「存储挂载与共享」页的开关注入，各发行版软件生态与包管理器完全独立隔离。" -> R.string.settings_long_008
         "尚未配置任何模型档案，可前往【设置 → 模型档案管理】添加 Claude、OpenAI 或 DeepSeek 模型" -> R.string.settings_long_009
         "挂载仅作用于 Linux 沙箱内的进程（终端、智枢 Agent、构建任务与后台服务），不影响文件浏览器——文件浏览器始终直接访问宿主存储。挂载在会话启动时注入，修改后新建的终端 / 构建任务才会应用。完整读写还需在系统设置中授予「所有文件访问」权限。" -> R.string.settings_long_010
-        "强约束模型思考过程全程使用中文（解决 DeepSeek/Claude 思考总跑英文的问题）" -> R.string.settings_long_011
         "提示：小米/华为/OPPO 等厂商系统还需在应用详情中手动允许「自启动」与「后台运行」，" -> R.string.settings_long_012
         "服务尚未启动，请先在【网关服务】卡片中点击启动，启动成功后将在此展示可访问链接。Token 可提前生成，启动时自动注入。" -> R.string.settings_long_013
         "架构: aarch64 · chroot-less user-space virtualization" -> R.string.settings_long_014

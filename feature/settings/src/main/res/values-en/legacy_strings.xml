@@ -284,13 +284,10 @@
     <string name="settings_text_0136" formatted="false">Start download</string>
     <string name="settings_text_0137" formatted="false">Start Installation</string>
     <string name="settings_text_0138" formatted="false">Exceptions</string>
-    <string name="settings_text_0139" formatted="false">Mandatory Chinese (recommended)</string>
-    <string name="settings_text_0140" formatted="false">Mandatory model thinking process in English throughout</string>
     <string name="settings_text_0141" formatted="false">When a session is associated with a workspace, the base command defaults to the directory as the working path (cwd)</string>
     <string name="settings_text_0142" formatted="false">When the session history exceeds the number of rounds, smart trimming is started, and the last 4 rounds remain lossless</string>
     <string name="settings_text_0143" formatted="false">Currently Active</string>
     <string name="settings_text_0144" formatted="false">Mandatory pedestal</string>
-    <string name="settings_text_0145" formatted="false">Thinking and Reasoning Language Preferences</string>
     <string name="settings_text_0146" formatted="false">Reflection Presentation</string>
     <string name="settings_text_0147" formatted="false">Think Stream, Subagents, Skills and Plugins</string>
     <string name="settings_text_0148" formatted="false">Thinking Flow and Execution Performance</string>
@@ -395,7 +392,6 @@
     <string name="settings_text_0247" formatted="false">Version: v0.3.0 (Material 3 Expressive)</string>
     <string name="settings_text_0248" formatted="false">Generate security token</string>
     <string name="settings_text_0249" formatted="false">User Name</string>
-    <string name="settings_text_0250" formatted="false">The thinking language is autonomously determined by the model based on the context or underlying default policy</string>
     <string name="settings_text_0251" formatted="false">Claim an exemption for battery optimization</string>
     <string name="settings_text_0252" formatted="false">Battery optimization and background keepalives</string>
     <string name="settings_text_0253" formatted="false">Battery level</string>
@@ -497,7 +493,6 @@
     <string name="settings_long_008" formatted="false">TaiXu supports multiple Linux systems side by side. Every system automatically mounts the /workspace projects; /sdcard external storage is injected according to the toggles in Storage Mounts &amp; Sharing. Each distro keeps its own package manager and software ecosystem fully isolated.</string>
     <string name="settings_long_009" formatted="false">You have not configured any model archives, you can add Claude, OpenAI or DeepSeek → models by going to [Setting up model archive management]</string>
     <string name="settings_long_010" formatted="false">Mounts only affect processes inside the Linux sandbox (terminal, agent, builds and background services), not the file explorer, which always accesses host storage directly. Mounts are injected at session startup; only new terminals and builds pick up changes. Full read-write access additionally requires the "All files access" permission in system settings.</string>
-    <string name="settings_long_011" formatted="false">Use Chinese throughout the strongly constrained model thinking process (solve the problem of DeepSeek/Claude thinking about running English)</string>
     <string name="settings_long_012" formatted="false">Tip: Xiaomi/Huawei/OPPO and other vendor systems also need to manually allow "autostart" and "background operation" in the application details.</string>
     <string name="settings_long_013" formatted="false">The service has not been started yet. Please click Start in the [Gateway Service] card first. After the startup is successful, the accessible link will be displayed here.Tokens can be generated in advance and injected automatically at startup.</string>
     <string name="settings_long_014" formatted="false">Architecture: aarch64 · chroot-less user-space virtualization</string>

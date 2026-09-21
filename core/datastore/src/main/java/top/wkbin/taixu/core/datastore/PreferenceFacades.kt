@@ -149,7 +149,6 @@ class AgentPreferences(private val store: SettingsDataStore) {
 
     suspend fun dismissSkillSuggestion(id: String) = store.dismissSkillSuggestion(id)
 
-    val thinkingLanguage get() = store.thinkingLanguage
     val customSystemPromptEnabled get() = store.customSystemPromptEnabled
     val customSystemPrompt get() = store.customSystemPrompt
     val agentLoggingEnabled get() = store.agentLoggingEnabled
@@ -176,7 +175,6 @@ class AgentPreferences(private val store: SettingsDataStore) {
     suspend fun setCommandOutputCompressionEnabled(value: Boolean) = store.setCommandOutputCompressionEnabled(value)
     suspend fun removeModelApiKey(secretRef: String) = store.removeModelApiKey(secretRef)
     suspend fun setEnvironmentPrivacyMode(value: Boolean) = store.setEnvironmentPrivacyMode(value)
-    suspend fun setThinkingLanguage(value: String) = store.setThinkingLanguage(value)
     suspend fun setCustomSystemPromptEnabled(value: Boolean) = store.setCustomSystemPromptEnabled(value)
     suspend fun setCustomSystemPrompt(value: String) = store.setCustomSystemPrompt(value)
     suspend fun setAgentLoggingEnabled(value: Boolean) = store.setAgentLoggingEnabled(value)

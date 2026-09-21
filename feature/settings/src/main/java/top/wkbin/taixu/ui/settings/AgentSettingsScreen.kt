@@ -85,7 +85,6 @@ fun AgentSettingsScreen(
     viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
-    val thinkingLanguage by viewModel.thinkingLanguage.collectAsStateWithLifecycle()
     val customSystemPromptEnabled by viewModel.customSystemPromptEnabled.collectAsStateWithLifecycle()
     val customSystemPrompt by viewModel.customSystemPrompt.collectAsStateWithLifecycle()
     val compactionEnabled by viewModel.contextCompactionEnabled.collectAsStateWithLifecycle()
@@ -173,11 +172,6 @@ fun AgentSettingsScreen(
                         subtitle = if (thinkingExpanded) "聊天界面中新生成的思考过程将默认展开呈现" else "思考过程（包括生成中内容）默认折叠，点击可展开查看",
                         checked = thinkingExpanded,
                         onCheckedChange = viewModel::setThinkingExpanded,
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    ThinkingLanguageSelectorRow(
-                        currentLang = thinkingLanguage,
-                        onLangChange = viewModel::setThinkingLanguage,
                     )
                 }
             }
@@ -1637,57 +1631,6 @@ private fun SubagentEditorDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ThinkingLanguageSelectorRow(
-    currentLang: String,
-    onLangChange: (String) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            RuntimeIcon(RuntimeIconName.Globe, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-            Column(Modifier.weight(1f)) {
-                Text("思考与推理语言偏好 (Thinking Language)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = when (currentLang) {
-                        "zh" -> "强约束模型思考过程全程使用中文（解决 DeepSeek/Claude 思考总跑英文的问题）"
-                        "en" -> "强制模型思考过程全程使用英文 (English)"
-                        else -> "由模型根据上下文或底层默认策略自主决定思考语言"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            listOf(
-                "zh" to "强制中文 (推荐)",
-                "en" to "英文 (English)",
-                "auto" to "自动 (Auto)",
-            ).forEach { (lang, label) ->
-                FilterChip(
-                    selected = currentLang == lang,
-                    onClick = { onLangChange(lang) },
-                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
-                )
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)

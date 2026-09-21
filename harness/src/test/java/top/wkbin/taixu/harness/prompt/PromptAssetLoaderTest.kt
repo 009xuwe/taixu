@@ -34,8 +34,6 @@ class PromptAssetLoaderTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val ids = listOf(
             R.string.harness_prompt_tool_call_disabled,
-            R.string.harness_prompt_thinking_language_zh,
-            R.string.harness_prompt_thinking_language_en,
             R.string.harness_prompt_subagent_none,
             R.string.harness_prompt_subagent_lane_system,
             R.string.harness_prompt_subagent_trigger_manual,

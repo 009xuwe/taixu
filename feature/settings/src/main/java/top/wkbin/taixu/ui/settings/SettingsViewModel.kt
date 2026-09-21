@@ -666,13 +666,6 @@ class SettingsViewModel(
     val thinkingExpanded: StateFlow<Boolean> = agentPreferences.thinkingExpanded
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    val thinkingLanguage: StateFlow<String> = agentPreferences.thinkingLanguage
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "zh")
-
-    fun setThinkingLanguage(lang: String) {
-        viewModelScope.launch { agentPreferences.setThinkingLanguage(lang) }
-    }
-
     val customSystemPromptEnabled: StateFlow<Boolean> = agentPreferences.customSystemPromptEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 

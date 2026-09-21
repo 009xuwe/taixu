@@ -170,7 +170,6 @@ class SettingsDataStore(
     private val agentLoggingEnabledKey = booleanPreferencesKey("agent_local_logging_enabled")
     private val executionModeKey = stringPreferencesKey("execution_mode")
     private val preferredExecutionModeKey = stringPreferencesKey("preferred_execution_mode")
-    private val thinkingLanguageKey = stringPreferencesKey("thinking_language")
     private val customSystemPromptEnabledKey = booleanPreferencesKey("custom_system_prompt_enabled")
     private val customSystemPromptKey = stringPreferencesKey("custom_system_prompt")
     private val legacyEnvironmentVariablesKey = stringPreferencesKey("environment_variables_json")
@@ -240,16 +239,6 @@ class SettingsDataStore(
         val encryptedValue: String,
     )
 
-
-    val thinkingLanguage: Flow<String> = context.settingsDataStore.data.map { preferences ->
-        preferences[thinkingLanguageKey] ?: "zh"
-    }
-
-    suspend fun setThinkingLanguage(lang: String) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[thinkingLanguageKey] = lang
-        }
-    }
 
     val customSystemPromptEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
         preferences[customSystemPromptEnabledKey] ?: false
