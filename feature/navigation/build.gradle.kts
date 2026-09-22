@@ -43,6 +43,7 @@ dependencies {
     implementation(project(":feature:custom_iteration"))
     implementation(project(":feature:browser"))
     implementation(project(":feature:git"))
+    implementation(project(":feature:preview"))
     // miuix-navigation3-ui 提供 androidx.navigation3.ui.NavDisplay 的 MIUI/HyperOS 风格实现，
     // 默认转场即侧滑动画，直接用默认 transitionSpec，不写自定义转场
     implementation(libs.bundles.navigation3)

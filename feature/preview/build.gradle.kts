@@ -4,8 +4,8 @@ plugins {
 }
 
 android {
-    namespace = "top.wkbin.taixu.feature.components"
-    resourcePrefix = "components_"
+    namespace = "top.wkbin.taixu.feature.preview"
+    resourcePrefix = "preview_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }
@@ -22,13 +22,14 @@ kotlin {
 dependencies {
     implementation(project(":core:common"))
     implementation(project(":core:model"))
+    implementation(project(":feature:theme"))
+    implementation(project(":feature:components"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.bundles.compose.ui)
+    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.kotlinx.coroutines.core)
-    implementation(project(":feature:theme"))
-    // 澄明(液态玻璃)主题：底部导航毛玻璃折射
     implementation(libs.backdrop)
-    implementation(libs.bundles.coil)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

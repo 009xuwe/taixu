@@ -39,6 +39,7 @@ import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 import top.wkbin.taixu.ui.developer.DeveloperScreen
 import top.wkbin.taixu.ui.developer.AdbLogcatScreen
+import top.wkbin.taixu.ui.preview.LiquidGlassCatalogScreen
 import top.wkbin.taixu.ui.home.HomeScreen
 import top.wkbin.taixu.ui.settings.AgentSettingsScreen
 import top.wkbin.taixu.ui.settings.ModelEditorScreen
@@ -95,6 +96,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object StatsDestination : AppDestination
 @Serializable data object PermissionGuideDestination : AppDestination
 @Serializable data object DeveloperDestination : AppDestination
+@Serializable data object LiquidGlassCatalogDestination : AppDestination
 @Serializable data object AdbLogcatDestination : AppDestination
 @Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
@@ -704,7 +706,15 @@ fun TaiXuNavHost(
             }
             entry<DeveloperDestination> {
                 GuardedEntry(DeveloperDestination) {
-                    DeveloperScreen(onBack = ::popBack)
+                    DeveloperScreen(
+                        onBack = ::popBack,
+                        onOpenCatalog = { settingsStack.push(DeveloperDestination, LiquidGlassCatalogDestination) },
+                    )
+                }
+            }
+            entry<LiquidGlassCatalogDestination> {
+                GuardedEntry(LiquidGlassCatalogDestination) {
+                    LiquidGlassCatalogScreen(onBack = ::popBack)
                 }
             }
             entry<AdbLogcatDestination> {
