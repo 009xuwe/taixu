@@ -15,16 +15,15 @@ val appVersionCode = 25
 val taiXuDevBuild = System.getenv("TAIXU_DEV_BUILD") == "1"
 
 plugins {
-    alias(libs.plugins.android.application)
+    alias(libs.plugins.taixu.android.application)
+    alias(libs.plugins.taixu.android.application.compose)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.androidx.baselineprofile)
 }
 
 extensions.configure<ApplicationExtension> {
     namespace = "top.wkbin.taixu"
     resourcePrefix = "taixu_"
-    compileSdk = 37
     ndkVersion = "30.0.15729638"
 
     defaultConfig {
@@ -115,15 +114,6 @@ extensions.configure<ApplicationExtension> {
         }
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    buildFeatures {
-        compose = true
-    }
-
     packaging {
         dex {
             useLegacyPackaging = true
@@ -150,12 +140,6 @@ extensions.configure<ApplicationExtension> {
                 "META-INF/notice.txt"
             )
         }
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
@@ -193,7 +177,6 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)
 
-    implementation(platform(libs.androidx.compose.bom))
     implementation(libs.bundles.compose.ui)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -221,8 +204,6 @@ dependencies {
     testImplementation(libs.androidx.work.testing)
     // Robolectric on Java 25 requires the same ASM override as core:database.
     testImplementation(libs.bundles.asm.test)
-
-    debugImplementation(libs.androidx.compose.ui.tooling)
 }
 
 val bundledProot = layout.projectDirectory.file(

@@ -1,37 +1,16 @@
 plugins {
-    alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.taixu.android.feature)
 }
 
 android {
     namespace = "top.wkbin.taixu.feature.workflow"
-    resourcePrefix = "workflow_"
-    compileSdk = 37
-    defaultConfig { minSdk = 29 }
-    buildFeatures { compose = true }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-}
-
-kotlin {
-    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {
-    implementation(project(":core:model"))
     implementation(project(":core:database"))
     implementation(project(":runtime"))
     implementation(project(":harness"))
-    implementation(project(":feature:components"))
     implementation(project(":feature:theme"))
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.bundles.compose.ui)
-    implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.bundles.koin.compose)
-    implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
-    debugImplementation(libs.androidx.compose.ui.tooling)
 }

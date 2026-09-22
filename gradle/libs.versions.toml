@@ -115,6 +115,12 @@ termux-terminal-emulator = { group = "com.termux", name = "terminal-emulator", v
 termux-terminal-view = { group = "com.termux", name = "terminal-view", version.ref = "termux" }
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
 
+# Dependencies of the included build-logic
+android-gradlePlugin = { group = "com.android.tools.build", name = "gradle", version.ref = "agp" }
+kotlin-gradlePlugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
+ksp-gradlePlugin = { group = "com.google.devtools.ksp", name = "com.google.devtools.ksp.gradle.plugin", version.ref = "ksp" }
+compose-gradlePlugin = { group = "org.jetbrains.kotlin", name = "compose-compiler-gradle-plugin", version.ref = "kotlin" }
+
 [bundles]
 compose-ui = [
     "androidx-compose-ui",
@@ -181,3 +187,12 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+
+# Convention plugins defined by build-logic
+taixu-android-application = { id = "taixu.android.application" }
+taixu-android-application-compose = { id = "taixu.android.application.compose" }
+taixu-android-library = { id = "taixu.android.library" }
+taixu-android-library-compose = { id = "taixu.android.library.compose" }
+taixu-android-feature = { id = "taixu.android.feature" }
+taixu-android-room = { id = "taixu.android.room" }
+taixu-jvm-library = { id = "taixu.jvm.library" }
