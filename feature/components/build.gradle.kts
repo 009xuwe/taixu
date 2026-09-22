@@ -23,14 +23,11 @@ dependencies {
     implementation(project(":core:common"))
     implementation(project(":core:model"))
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.material3)
+    implementation(libs.bundles.compose.ui)
     implementation(libs.kotlinx.coroutines.core)
     implementation(project(":feature:theme"))
     // 澄明(液态玻璃)主题：底部导航毛玻璃折射
     implementation(libs.backdrop)
-    implementation(libs.coil.compose)
-    implementation(libs.coil.network.okhttp)
+    implementation(libs.bundles.coil)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

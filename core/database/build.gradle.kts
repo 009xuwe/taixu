@@ -32,22 +32,16 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:security"))
-    implementation(libs.androidx.room.runtime)
+    implementation(libs.bundles.room)
     ksp(libs.androidx.room.compiler)
     implementation(libs.koin.core)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
-    testImplementation(libs.junit)
-    testImplementation(libs.robolectric)
-    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.bundles.test.robolectric)
     testImplementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.androidx.room.testing)
     testImplementation("org.xerial:sqlite-jdbc:3.50.3.0")
-    testImplementation(libs.asm)
-    testImplementation(libs.asm.commons)
-    testImplementation(libs.asm.util)
-    testImplementation(libs.asm.tree)
-    testImplementation(libs.asm.analysis)
+    testImplementation(libs.bundles.asm.test)
 }
 
 ksp {

@@ -24,11 +24,8 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":feature:components"))
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.material3)
+    implementation(libs.bundles.compose.ui)
     implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.koin.compose.viewmodel)
-    implementation(libs.koin.android)
+    implementation(libs.bundles.koin.compose)
     implementation(libs.kotlinx.coroutines.core)
 }

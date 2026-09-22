@@ -194,19 +194,16 @@ dependencies {
     implementation(libs.androidx.activity.compose)
 
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.material3)
+    implementation(libs.bundles.compose.ui)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
 
-    implementation(libs.koin.android)
-    implementation(libs.koin.compose.viewmodel)
+    implementation(libs.bundles.koin.compose)
     // 工作流定时计划：WorkManager 到点触发 + Koin Worker 注入
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.koin.workmanager)
 
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
+    implementation(libs.bundles.room)
 
     implementation(libs.shizuku.provider)
 
@@ -217,20 +214,13 @@ dependencies {
         artifact { type = "aar" }
     }
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.bundles.coroutines)
 
-    testImplementation(libs.junit)
+    testImplementation(libs.bundles.test.robolectric)
     testImplementation(libs.koin.test)
     testImplementation(libs.androidx.work.testing)
-    testImplementation(libs.robolectric)
-    testImplementation(libs.androidx.test.core)
     // Robolectric on Java 25 requires the same ASM override as core:database.
-    testImplementation(libs.asm)
-    testImplementation(libs.asm.commons)
-    testImplementation(libs.asm.util)
-    testImplementation(libs.asm.tree)
-    testImplementation(libs.asm.analysis)
+    testImplementation(libs.bundles.asm.test)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

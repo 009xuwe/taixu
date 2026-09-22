@@ -31,10 +31,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.koin.core)
-    testImplementation(libs.junit)
+    testImplementation(libs.bundles.test.robolectric)
     testImplementation(libs.kotlinx.coroutines.core)
-    testImplementation(libs.androidx.test.core)
-    testImplementation(libs.robolectric)
     // CDP WebSocket 会话测试：MockWebServer 的 withWebSocketUpgrade 提供真实 WS 服务端
     testImplementation(libs.okhttp.mockwebserver)
 }
