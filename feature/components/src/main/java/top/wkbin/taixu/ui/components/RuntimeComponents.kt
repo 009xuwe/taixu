@@ -54,6 +54,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.FloatingActionButtonElevation
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -2263,6 +2268,219 @@ fun ScrollFadeOverlay(
                         Brush.verticalGradient(listOf(color.copy(alpha = 0f), color)),
                     ),
             )
+        }
+    }
+}
+
+/**
+ * 主题自适应悬浮操作按钮 (M3 Floating Action Button)：
+ * - Material You 下：遵循 M3 规范，尺寸 56dp，形状 RoundedCornerShape(16.dp)，默认 primaryContainer / onPrimaryContainer 配色与 3dp 色调海拔；
+ * - 澄明（液态玻璃）下：透镜折射底层流光、SDF 高光与按压惯性形变。
+ */
+@Composable
+fun RuntimeFloatingActionButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(16.dp),
+    containerColor: Color = MaterialTheme.colorScheme.primaryContainer,
+    contentColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+    elevation: FloatingActionButtonElevation = FloatingActionButtonDefaults.elevation(
+        defaultElevation = 3.dp,
+        pressedElevation = 6.dp,
+    ),
+    content: @Composable () -> Unit,
+) {
+    val backdrop = LocalLiquidGlassSurfaceBackdrop.current
+    if (backdrop == null) {
+        FloatingActionButton(
+            onClick = onClick,
+            modifier = modifier,
+            shape = shape,
+            containerColor = containerColor,
+            contentColor = contentColor,
+            elevation = elevation,
+            content = content,
+        )
+    } else {
+        val interactionSource = remember { MutableInteractionSource() }
+        val pressed by interactionSource.collectIsPressedAsState()
+        val scale by animateFloatAsState(
+            targetValue = if (pressed) 0.94f else 1f,
+            animationSpec = tween(150, easing = FastOutSlowInEasing),
+            label = "glassFabScale",
+        )
+        Box(
+            modifier = modifier
+                .minimumInteractiveComponentSize()
+                .size(56.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .clip(shape)
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { shape },
+                    effects = {
+                        vibrancy()
+                        blur(4.dp.toPx())
+                        lens(14.dp.toPx(), 24.dp.toPx(), depthEffect = true)
+                    },
+                    highlight = { Highlight.Default },
+                    shadow = { Shadow(radius = 8.dp, alpha = 0.16f) },
+                    innerShadow = { InnerShadow(radius = 4.dp, alpha = 0.12f) },
+                    onDrawSurface = {
+                        drawRoundRect(containerColor.copy(alpha = 0.35f))
+                    },
+                )
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            CompositionLocalProvider(LocalContentColor provides contentColor) {
+                content()
+            }
+        }
+    }
+}
+
+/**
+ * 主题自适应小型悬浮操作按钮 (M3 Small Floating Action Button)：
+ * 遵循 M3 规范：尺寸 40dp，形状 RoundedCornerShape(12.dp)。
+ */
+@Composable
+fun RuntimeSmallFloatingActionButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(12.dp),
+    containerColor: Color = MaterialTheme.colorScheme.primaryContainer,
+    contentColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+    elevation: FloatingActionButtonElevation = FloatingActionButtonDefaults.elevation(
+        defaultElevation = 3.dp,
+        pressedElevation = 6.dp,
+    ),
+    content: @Composable () -> Unit,
+) {
+    RuntimeFloatingActionButton(
+        onClick = onClick,
+        modifier = modifier.size(40.dp),
+        shape = shape,
+        containerColor = containerColor,
+        contentColor = contentColor,
+        elevation = elevation,
+        content = content,
+    )
+}
+
+/**
+ * 主题自适应过滤标签 (M3 Filter Chip)：
+ * - 遵循 M3 规范：高度 32dp，形状 RoundedCornerShape(8.dp)，文字 labelMedium；
+ * - 包含 minimumInteractiveComponentSize() 满足 48dp 触控标准；
+ * - 澄明主题下自适应磨砂玻璃与按压缩放。
+ */
+@Composable
+fun RuntimeFilterChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    shape: Shape = RoundedCornerShape(8.dp),
+) {
+    val backdrop = LocalLiquidGlassSurfaceBackdrop.current
+    if (backdrop == null) {
+        FilterChip(
+            selected = selected,
+            onClick = onClick,
+            label = label,
+            modifier = modifier,
+            enabled = enabled,
+            leadingIcon = leadingIcon,
+            trailingIcon = trailingIcon,
+            shape = shape,
+            colors = FilterChipDefaults.filterChipColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                selectedLeadingIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ),
+        )
+    } else {
+        val interactionSource = remember { MutableInteractionSource() }
+        val pressed by interactionSource.collectIsPressedAsState()
+        val scale by animateFloatAsState(
+            targetValue = if (pressed) 0.96f else 1f,
+            animationSpec = tween(120, easing = FastOutSlowInEasing),
+            label = "glassChipScale",
+        )
+        val containerColor = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.38f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.20f)
+        }
+        val contentColor = if (selected) {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        val borderColor = if (selected) Color.Transparent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+
+        Box(
+            modifier = modifier
+                .minimumInteractiveComponentSize()
+                .height(32.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = if (enabled) 1f else 0.45f
+                }
+                .clip(shape)
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { shape },
+                    effects = {
+                        vibrancy()
+                        blur(3.dp.toPx())
+                        lens(6.dp.toPx(), 10.dp.toPx(), depthEffect = true)
+                    },
+                    highlight = { Highlight.Default.copy(alpha = if (selected) 0.35f else 0.18f) },
+                    innerShadow = { InnerShadow(radius = 2.dp, alpha = 0.08f) },
+                    onDrawSurface = {
+                        drawRoundRect(containerColor)
+                        if (borderColor != Color.Transparent) {
+                            drawRoundRect(borderColor, style = Stroke(1.dp.toPx()))
+                        }
+                    },
+                )
+                .clickable(
+                    enabled = enabled,
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                )
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            CompositionLocalProvider(LocalContentColor provides contentColor) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (leadingIcon != null) {
+                        leadingIcon()
+                    } else if (selected) {
+                        Text("✓", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                    }
+                    label()
+                    trailingIcon?.invoke()
+                }
+            }
         }
     }
 }
