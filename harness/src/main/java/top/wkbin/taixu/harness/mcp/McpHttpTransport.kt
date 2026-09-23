@@ -335,7 +335,7 @@ class McpHttpTransport(
         val client = if (longRunning) callClient else fastClient
         return client.newCall(request).executeCancellable().use { response ->
             if (!response.isSuccessful) throw McpHttpStatusException(response.code)
-            val rpc = readResponse(response, id)
+            val rpc = readResponse(response, id, isToolCall = method == "tools/call")
             rpc.error?.let { error("MCP JSON-RPC ${it.code}: ${it.message}") }
             StreamableExchange(rpc, response.header("Mcp-Session-Id"))
         }
@@ -409,11 +409,11 @@ class McpHttpTransport(
 
     // ---------- 响应解析 ----------
 
-    private fun readResponse(response: Response, requestId: String): JsonRpcResponse =
+    private fun readResponse(response: Response, requestId: String, isToolCall: Boolean = false): JsonRpcResponse =
         if (response.header("Content-Type").orEmpty().lowercase().startsWith("text/event-stream")) {
             readSse(response, requestId)
         } else {
-            val body = readLimited(response)
+            val body = readLimited(response, requestId, isToolCall)
             if (body.isBlank()) {
                 // B6: 202 Accepted 空体（服务器把结果放到 GET SSE 流上返回）时本客户端无法取回响应；
                 // 抛带 "MCP HTTP " 前缀的 IOException 使其归类为传输失败，tools/list 可重建会话重试。
@@ -426,11 +426,13 @@ class McpHttpTransport(
     private fun readSse(response: Response, requestId: String): JsonRpcResponse {
         val source = response.body.source()
         val data = mutableListOf<String>()
-        var bytes = 0
+        var bytes = 0L
         while (!source.exhausted()) {
             val line = source.readUtf8LineStrict(MAX_SSE_LINE_BYTES.toLong())
-            bytes += line.toByteArray().size + 1
-            require(bytes <= MAX_BYTES) { "MCP response is too large" }
+            bytes += line.length + 1
+            if (bytes > McpResponseSizeLimiter.DEFAULT_HARD_LIMIT_BYTES) {
+                throw IOException("[MCP SSE 响应熔断拦截：流事件累计已达 ${bytes / 1024 / 1024}MB，超过系统硬上限]")
+            }
             if (line.isBlank()) {
                 decodeSse(data, requestId)?.let { return it }
                 data.clear()
@@ -443,20 +445,28 @@ class McpHttpTransport(
         runCatching { json.decodeFromString(JsonRpcResponse.serializer(), lines.joinToString("\n")) }
             .getOrNull()?.takeIf { it.id == id }
 
-    private fun readLimited(response: Response): String {
-        val length = response.body.contentLength()
-        require(length < 0 || length <= MAX_BYTES) { "MCP response is too large" }
-        val output = java.io.ByteArrayOutputStream()
-        response.body.byteStream().use { input ->
-            val buffer = ByteArray(16 * 1024)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                require(output.size() + read <= MAX_BYTES) { "MCP response is too large" }
-                output.write(buffer, 0, read)
+    private fun readLimited(response: Response, requestId: String, isToolCall: Boolean = false): String {
+        return when (val payload = McpResponseSizeLimiter.readResponse(response)) {
+            is McpResponseSizeLimiter.Payload.Inline -> payload.text
+            is McpResponseSizeLimiter.Payload.Spilled -> {
+                if (isToolCall) {
+                    val escapedText = json.encodeToString(payload.formatForToolResult())
+                    val escapedId = json.encodeToString(requestId)
+                    """{"jsonrpc":"2.0","id":$escapedId,"result":{"content":[{"type":"text","text":$escapedText}],"isError":false}}"""
+                } else {
+                    throw IOException("[MCP 响应过大：元数据超出内存安全阈值 (${payload.totalBytes / 1024}KB)]")
+                }
+            }
+            is McpResponseSizeLimiter.Payload.CircuitBroken -> {
+                if (isToolCall) {
+                    val escapedText = json.encodeToString(payload.formatErrorMessage())
+                    val escapedId = json.encodeToString(requestId)
+                    """{"jsonrpc":"2.0","id":$escapedId,"result":{"content":[{"type":"text","text":$escapedText}],"isError":true}}"""
+                } else {
+                    throw IOException(payload.formatErrorMessage())
+                }
             }
         }
-        return output.toString(Charsets.UTF_8.name())
     }
 
     private fun modeLabel(mode: TransportMode) = when (mode) {

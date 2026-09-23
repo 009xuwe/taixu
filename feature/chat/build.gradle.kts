@@ -8,6 +8,7 @@ android {
 
 dependencies {
     implementation(project(":feature:theme"))
+    implementation(project(":core:common"))
     implementation(project(":core:database"))
     implementation(project(":core:datastore"))
     implementation(project(":runtime"))

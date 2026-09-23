@@ -33,6 +33,8 @@ import top.wkbin.taixu.harness.task.AgentStateMachine
 
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.session.SessionTreeStore
+import top.wkbin.taixu.harness.session.SessionTurnCoordinator
+import top.wkbin.taixu.harness.session.TurnPriority
 import top.wkbin.taixu.harness.effects.RetryPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
 import top.wkbin.taixu.harness.operation.OperationStatus
@@ -88,13 +90,13 @@ class HarnessLoop(
     private val rewindController: top.wkbin.taixu.harness.checkpoint.RewindController,
     private val branchSummarizer: top.wkbin.taixu.harness.compaction.BranchSummarizer,
     private val skillEvolutionAdvisor: top.wkbin.taixu.harness.skill.SkillEvolutionAdvisor? = null,
+    private val turnCoordinator: SessionTurnCoordinator,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val currentSessionId: StateFlow<String> get() = sessionTracker.currentSessionId
 
     private val sessionJobs = ConcurrentHashMap<String, Job>()
-    private val sessionMutexes = ConcurrentHashMap<String, Mutex>()
     private val sessionCancelEpochs = ConcurrentHashMap<String, AtomicLong>()
     private val foregroundLoadGeneration = AtomicLong()
     private val cancellingSessions = ConcurrentHashMap.newKeySet<String>()
@@ -204,9 +206,8 @@ class HarnessLoop(
         val job = loopScope.launch {
             val pending = runCatching { approvalRepository.pendingNow(sessId) }.getOrDefault(emptyList())
             if (pending.isEmpty()) {
-                val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
                 var settled = false
-                mutex.withLock {
+                turnCoordinator.withSessionMutex(sessId) {
                     settled = checkAndSettleExpiredApprovalsLocked(sessId)
                     if (settled) {
                         startNextQueuedLocked(sessId)
@@ -220,9 +221,8 @@ class HarnessLoop(
             val minExpiry = pending.minOf { it.expiresAt }
             val delayMs = (minExpiry - System.currentTimeMillis()).coerceAtLeast(0L)
             delay(delayMs)
-            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
             var settled = false
-            mutex.withLock {
+            turnCoordinator.withSessionMutex(sessId) {
                 settled = checkAndSettleExpiredApprovalsLocked(sessId)
                 if (settled) {
                     startNextQueuedLocked(sessId)
@@ -239,7 +239,7 @@ class HarnessLoop(
      * 检查并自愈已过期的等待审批：
      * 若会话无活跃 Job 且处于 WAITING_APPROVAL，清扫已过期的 pending 请求并补充超时 ToolResult。
      * 若已无合法 pending 审批，复位状态为 IDLE，返回 true；若仍有合法审批等待中，返回 false。
-     * 必须在持有会话互斥锁（sessionMutexes[sessId]）下调用。
+     * 必须在持有会话互斥锁（turnCoordinator.withSessionMutex(sessId)）下调用。
      */
     private suspend fun checkAndSettleExpiredApprovalsLocked(sessId: String): Boolean {
         if (sessionJobs[sessId]?.isActive == true) return false
@@ -366,8 +366,7 @@ class HarnessLoop(
             stateMirrors.setStatus(id, "等待用户批准")
             scheduleApprovalTimeout(id)
         } else {
-            val mutex = sessionMutexes.getOrPut(id) { Mutex() }
-            val settled = mutex.withLock {
+            val settled = turnCoordinator.withSessionMutex(id) {
                 val ok = checkAndSettleExpiredApprovalsLocked(id)
                 if (ok) {
                     startNextQueuedLocked(id)
@@ -451,9 +450,8 @@ class HarnessLoop(
             }
 
             if (!agentTaskStateMachine.markRecovering(task.id, "应用进程重启，正在从持久化检查点恢复")) continue
-            val mutex = sessionMutexes.getOrPut(sessionId) { Mutex() }
-            mutex.withLock {
-                if (isSessionBusy(sessionId) || tombstonedSessions.contains(sessionId)) return@withLock
+            turnCoordinator.withSessionMutex(sessionId) {
+                if (isSessionBusy(sessionId) || tombstonedSessions.contains(sessionId)) return@withSessionMutex
                 launchSessionJobLocked(
                     sessId = sessionId,
                     taskId = task.id,
@@ -478,8 +476,7 @@ class HarnessLoop(
         // Restart the first durable queue item for otherwise-idle sessions.
         for (sessionId in agentTaskStateMachine.queued().map { it.sessionId }.filter { it.isNotBlank() }.distinct()) {
             if (sessions.none { it.id == sessionId } || approvalRepository.pendingNow(sessionId).isNotEmpty()) continue
-            val mutex = sessionMutexes.getOrPut(sessionId) { Mutex() }
-            mutex.withLock {
+            turnCoordinator.withSessionMutex(sessionId) {
                 if (!isSessionBusy(sessionId) && startNextQueuedLocked(sessionId)) recovered++
             }
         }
@@ -541,7 +538,7 @@ class HarnessLoop(
         _sessionPendingMessages[id]?.value = emptyList()
         sessionJobs[id]?.cancelAndJoin()
         _sessionPendingMessages.remove(id)
-        sessionMutexes.remove(id)
+        turnCoordinator.evictSession(id)
         messageProjector.removeSession(id)
         stateMirrors.removeSession(id)
 
@@ -592,13 +589,12 @@ class HarnessLoop(
         val trimmed = text.trim()
         if (sessId.isBlank() || (trimmed.isBlank() && imageUrls.isEmpty())) return
         loopScope.launch {
-            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
-            mutex.withLock {
+            turnCoordinator.withSessionMutex(sessId) {
                 // 与 startSessionRun 同款幽灵会话防线：deleteSession 先删 DB 行、后移除 tombstone，
                 // 等锁的 steer/followUp 协程拿到锁时 tombstone 已不在——不查库就会给已删除会话
                 // 重建 durable task 并发起真实 LLM 调用（幽灵运行）。
-                if (tombstonedSessions.contains(sessId)) return@withLock
-                if (sessionDao.findById(sessId) == null) return@withLock
+                if (tombstonedSessions.contains(sessId)) return@withSessionMutex
+                if (sessionDao.findById(sessId) == null) return@withSessionMutex
                 checkAndSettleExpiredApprovalsLocked(sessId)
                 if (isSessionBusy(sessId)) {
                     // Steering/follow-up belongs to the currently active durable task.
@@ -756,8 +752,7 @@ class HarnessLoop(
         if (sessId.isBlank()) return
         stateMirrors.setStatus(sessId, "正在停止…")
         loopScope.launch {
-            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
-            val job = mutex.withLock {
+            val job = turnCoordinator.withSessionMutex(sessId) {
                 cancellingSessions += sessId
                 sessionCancelEpochs.getOrPut(sessId) { AtomicLong() }.incrementAndGet()
                 val queuedTaskIds = promptQueueManager.list(sessId, PromptQueue.NEXT_RUN)
@@ -767,7 +762,7 @@ class HarnessLoop(
                 sessionJobs[sessId]?.also { it.cancel() }
             }
             job?.cancelAndJoin()
-            val restarted = mutex.withLock {
+            val restarted = turnCoordinator.withSessionMutex(sessId) {
                 cancelApprovalTimeout(sessId)
                 var approvalsSettled = true
                 try {
@@ -852,12 +847,11 @@ class HarnessLoop(
     }
 
     private suspend fun finishRun(sessId: String, job: Job, runEpoch: Long) = withContext(NonCancellable) {
-        val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
-        mutex.withLock {
+        turnCoordinator.withSessionMutex(sessId) {
             sessionJobs.remove(sessId, job)
             val waitingApproval = stateMirrors.onRunFinished(sessId)
-            if (waitingApproval || tombstonedSessions.contains(sessId)) return@withLock
-            if (sessionCancelEpochs[sessId]?.get() != runEpoch || cancellingSessions.contains(sessId)) return@withLock
+            if (waitingApproval || tombstonedSessions.contains(sessId)) return@withSessionMutex
+            if (sessionCancelEpochs[sessId]?.get() != runEpoch || cancellingSessions.contains(sessId)) return@withSessionMutex
             startNextQueuedLocked(sessId)
         }
         refreshPendingProjection(sessId)
@@ -884,6 +878,7 @@ class HarnessLoop(
         taskId: String? = null,
         operationId: String? = null,
         incrementTaskAttempt: Boolean = true,
+        priority: TurnPriority = TurnPriority.NORMAL,
         block: suspend () -> RunResult,
     ) {
         // 占用护栏：已有活跃 Job 时拒绝再启动。审批恢复（startClaimedSessionRun）在
@@ -908,7 +903,7 @@ class HarnessLoop(
         }
         val epoch = sessionCancelEpochs.getOrPut(sessId) { AtomicLong() }.get()
         val job = loopScope.launch(start = CoroutineStart.LAZY) {
-            executeSessionRun(sessId, epoch, taskId, block)
+            executeSessionRun(sessId, epoch, taskId, priority, block)
         }
         sessionJobs[sessId] = job
         job.start()
@@ -933,15 +928,14 @@ class HarnessLoop(
         if (tombstonedSessions.contains(sessId)) return
         loopScope.launch {
             enqueueOnBusy?.taskId?.let { createDurableTask(sessId, enqueueOnBusy) }
-            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
             var refreshQueue = false
-            mutex.withLock {
-                if (tombstonedSessions.contains(sessId)) return@withLock
+            turnCoordinator.withSessionMutex(sessId) {
+                if (tombstonedSessions.contains(sessId)) return@withSessionMutex
                 // 幽灵复活防线：send() 的协程可能在 deleteSession 全部完成后才拿到锁，
                 // 此时 tombstone 已被移除、且并发方可能各自 getOrPut 出不同的 Mutex，
                 // tombstone 检查形同虚设。再查一次 DB：会话已删除则拒绝启动 runLoop，
                 // 否则会重建数据并发起真实的 LLM 调用。
-                if (sessionDao.findById(sessId) == null) return@withLock
+                if (sessionDao.findById(sessId) == null) return@withSessionMutex
                 val selfHealed = checkAndSettleExpiredApprovalsLocked(sessId)
                 if (selfHealed) {
                     refreshQueue = true
@@ -951,7 +945,7 @@ class HarnessLoop(
                         promptQueueManager.enqueue(sessId, PromptQueue.NEXT_RUN, it)
                         refreshQueue = true
                     }
-                    return@withLock
+                    return@withSessionMutex
                 }
                 if (promptQueueManager.list(sessId, PromptQueue.NEXT_RUN).isNotEmpty()) {
                     enqueueOnBusy?.let {
@@ -959,7 +953,7 @@ class HarnessLoop(
                         refreshQueue = true
                     }
                     startNextQueuedLocked(sessId)
-                    return@withLock
+                    return@withSessionMutex
                 }
                 launchSessionJobLocked(sessId, enqueueOnBusy?.taskId, block = block)
             }
@@ -979,13 +973,13 @@ class HarnessLoop(
     ) {
         if (tombstonedSessions.contains(sessId)) return
         loopScope.launch {
-            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
-            mutex.withLock {
-                if (tombstonedSessions.contains(sessId)) return@withLock
+            turnCoordinator.withSessionMutex(sessId) {
+                if (tombstonedSessions.contains(sessId)) return@withSessionMutex
                 launchSessionJobLocked(
                     sessId = sessId,
                     taskId = taskId,
                     incrementTaskAttempt = false,
+                    priority = TurnPriority.HIGH,
                     block = block,
                 )
             }
@@ -1006,7 +1000,9 @@ class HarnessLoop(
 
     /** Resolve a waiting approval as a cancelled tool call before allowing a new run. */
     private suspend fun rejectPendingApprovalsForCancel(sessId: String) {
-        var finalEntryId: String? = null
+        val pending = approvalRepository.pendingNow(sessId)
+        if (pending.isEmpty()) return
+        val now = now()
         for (request in approvalRepository.pendingNow(sessId)) {
             if (!approvalRepository.claimPending(
                     request.id,
@@ -1017,7 +1013,7 @@ class HarnessLoop(
             }
             val result = ToolResult(
                 id = newId(),
-                createdAt = now(),
+                createdAt = now,
                 toolCallId = request.toolCallId,
                 success = false,
                 output = "用户已停止本次运行，待审批工具未执行。",
@@ -1029,15 +1025,6 @@ class HarnessLoop(
             } else {
                 messageProjector.append(sessId, result)
             }
-            finalEntryId = result.id
-        }
-        if (finalEntryId != null) {
-            operationCoordinator.finish(
-                sessId,
-                "aborted",
-                finalEntryId = finalEntryId,
-                details = "cancelled while waiting for approval",
-            )
         }
     }
 
@@ -1048,45 +1035,48 @@ class HarnessLoop(
         sessId: String,
         runEpoch: Long,
         taskId: String?,
+        priority: TurnPriority = TurnPriority.NORMAL,
         block: suspend () -> RunResult,
     ) {
         val selfJob = requireNotNull(currentCoroutineContext()[Job])
-        stateMirrors.setRunState(sessId, SessionRunState.RUNNING)
-        stateMirrors.setError(sessId, null)
         try {
-            when (val result = block()) {
-                RunResult.Completed -> {
-                    taskId?.let { agentTaskStateMachine.markCompleted(it) }
-                    operationCoordinator.finish(sessId, "completed", messageProjector.messagesFlow(sessId).value.lastOrNull()?.id)
-                    stateMirrors.setRunState(sessId, SessionRunState.COMPLETED)
-                    // 「对话后技能进化」：一轮有效工作结束后异步分析是否值得沉淀新技能 /
-                    // 修复既有技能；失败与取消路径不触发，且内部全量容错不影响主对话。
-                    skillEvolutionAdvisor?.maybeSuggest(sessId)
-                }
-                RunResult.WaitingApproval -> {
-                    taskId?.let { agentTaskStateMachine.markWaitingApproval(it) }
-                    stateMirrors.setRunState(sessId, SessionRunState.WAITING_APPROVAL)
-                    scheduleApprovalTimeout(sessId)
-                }
-                RunResult.Cancelled -> {
-                    taskId?.let { agentTaskStateMachine.markCancelled(it) }
-                    operationCoordinator.finish(sessId, "aborted")
-                    stateMirrors.setRunState(sessId, SessionRunState.IDLE)
-                }
-                is RunResult.Failed -> {
-                    taskId?.let { agentTaskStateMachine.markFailed(it, result.message) }
-                    operationCoordinator.finish(sessId, "failed", details = result.message)
-                    stateMirrors.setError(sessId, result.message)
-                    stateMirrors.setRunState(sessId, SessionRunState.FAILED)
-                    // 确保错误在前台消息流中明确展示，消除发消息无回复的卡死假象
-                    messageProjector.append(
-                        sessId,
-                        AssistantText(
-                            id = newId(),
-                            createdAt = now(),
-                            text = "❌ 执行失败：${result.message}",
-                        ),
-                    )
+            turnCoordinator.withSessionTurn(sessId, priority) {
+                stateMirrors.setRunState(sessId, SessionRunState.RUNNING)
+                stateMirrors.setError(sessId, null)
+                when (val result = block()) {
+                    RunResult.Completed -> {
+                        taskId?.let { agentTaskStateMachine.markCompleted(it) }
+                        operationCoordinator.finish(sessId, "completed", messageProjector.messagesFlow(sessId).value.lastOrNull()?.id)
+                        stateMirrors.setRunState(sessId, SessionRunState.COMPLETED)
+                        // 「对话后技能进化」：一轮有效工作结束后异步分析是否值得沉淀新技能 /
+                        // 修复既有技能；失败与取消路径不触发，且内部全量容错不影响主对话。
+                        skillEvolutionAdvisor?.maybeSuggest(sessId)
+                    }
+                    RunResult.WaitingApproval -> {
+                        taskId?.let { agentTaskStateMachine.markWaitingApproval(it) }
+                        stateMirrors.setRunState(sessId, SessionRunState.WAITING_APPROVAL)
+                        scheduleApprovalTimeout(sessId)
+                    }
+                    RunResult.Cancelled -> {
+                        taskId?.let { agentTaskStateMachine.markCancelled(it) }
+                        operationCoordinator.finish(sessId, "aborted")
+                        stateMirrors.setRunState(sessId, SessionRunState.IDLE)
+                    }
+                    is RunResult.Failed -> {
+                        taskId?.let { agentTaskStateMachine.markFailed(it, result.message) }
+                        operationCoordinator.finish(sessId, "failed", details = result.message)
+                        stateMirrors.setError(sessId, result.message)
+                        stateMirrors.setRunState(sessId, SessionRunState.FAILED)
+                        // 确保错误在前台消息流中明确展示，消除发消息无回复的卡死假象
+                        messageProjector.append(
+                            sessId,
+                            AssistantText(
+                                id = newId(),
+                                createdAt = now(),
+                                text = "❌ 执行失败：${result.message}",
+                            ),
+                        )
+                    }
                 }
             }
         } catch (_: CancellationException) {

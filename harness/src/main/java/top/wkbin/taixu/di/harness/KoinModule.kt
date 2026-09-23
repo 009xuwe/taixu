@@ -60,6 +60,8 @@ import top.wkbin.taixu.harness.session.ApiContextAssembler
 import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.harness.session.SessionModelSwitcher
 import top.wkbin.taixu.harness.session.SessionTreeStore
+import top.wkbin.taixu.harness.session.SessionTurnCoordinator
+import top.wkbin.taixu.harness.session.SessionTurnCoordinatorImpl
 import top.wkbin.taixu.harness.skill.SkillEvolutionAdvisor
 import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
 import top.wkbin.taixu.harness.task.AgentStateMachine
@@ -97,6 +99,13 @@ val harnessModule = module {
 
     single<BuildScriptToolExecutor> { BuildScriptToolExecutor(repository = get()) }
 
+    single<SessionTurnCoordinator> {
+        SessionTurnCoordinatorImpl(
+            preferences = get(),
+            logger = get(),
+        )
+    }
+
     single<HarnessLoop> {
         HarnessLoop(
             workspaceRecommendations = get(),
@@ -127,6 +136,7 @@ val harnessModule = module {
             rewindController = get(),
             branchSummarizer = get(),
             skillEvolutionAdvisor = get(),
+            turnCoordinator = get(),
         )
     }
 

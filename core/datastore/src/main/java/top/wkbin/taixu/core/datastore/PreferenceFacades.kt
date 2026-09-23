@@ -170,8 +170,11 @@ class AgentPreferences(private val store: SettingsDataStore) {
     val providerModel get() = store.providerModel
     val environmentPrivacyMode get() = store.environmentPrivacyMode
     val allPlugins get() = store.allPlugins
+    val maxConcurrentAgentTurns get() = store.maxConcurrentAgentTurns
+    val defaultMaxConcurrentAgentTurns get() = SettingsDataStore.DEFAULT_MAX_CONCURRENT_AGENT_TURNS
     val defaultRoundLimitAutoContinuations get() = SettingsDataStore.DEFAULT_ROUND_LIMIT_AUTO_CONTINUATIONS
     val defaultBaseCommandTimeoutSeconds get() = DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS
+    suspend fun setMaxConcurrentAgentTurns(value: Int) = store.setMaxConcurrentAgentTurns(value)
     suspend fun setThinkingExpanded(value: Boolean) = store.setThinkingExpanded(value)
     suspend fun setThinkingAutoTranslate(value: Boolean) = store.setThinkingAutoTranslate(value)
     suspend fun setCommandOutputCompressionEnabled(value: Boolean) = store.setCommandOutputCompressionEnabled(value)

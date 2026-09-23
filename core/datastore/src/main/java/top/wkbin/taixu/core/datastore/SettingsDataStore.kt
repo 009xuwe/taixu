@@ -595,12 +595,21 @@ class SettingsDataStore(
 
     private val contextCompactionEnabledKey = booleanPreferencesKey("agent_context_compaction_enabled")
     private val contextCompactionThresholdKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_compaction_threshold")
+    private val maxConcurrentAgentTurnsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_concurrent_turns")
     private val maxToolRoundsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_tool_rounds")
     private val roundLimitAutoContinuationsKey =
         androidx.datastore.preferences.core.intPreferencesKey("agent_round_limit_auto_continuations")
     private val autoWorkspaceCwdKey = booleanPreferencesKey("agent_auto_workspace_cwd")
     private val commandOutputCompressionEnabledKey = booleanPreferencesKey("agent_command_output_compression_enabled")
     private val baseCommandTimeoutSecondsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_base_command_timeout_seconds")
+
+    /** 全局最大并发 Agent 轮次数（默认 2，受移动端性能/API 限流制约） */
+    val maxConcurrentAgentTurns: Flow<Int> = context.settingsDataStore.data.map {
+        it[maxConcurrentAgentTurnsKey] ?: DEFAULT_MAX_CONCURRENT_AGENT_TURNS
+    }
+    suspend fun setMaxConcurrentAgentTurns(value: Int) {
+        context.settingsDataStore.edit { it[maxConcurrentAgentTurnsKey] = value.coerceIn(1, 4) }
+    }
 
     val contextCompactionEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[contextCompactionEnabledKey] ?: true }
     suspend fun setContextCompactionEnabled(value: Boolean) { context.settingsDataStore.edit { it[contextCompactionEnabledKey] = value } }
@@ -931,7 +940,9 @@ class SettingsDataStore(
 
     companion object {
         private const val PROTECTED_VALUE_PREFIX = "enc:v1:"
+        const val DEFAULT_MAX_CONCURRENT_AGENT_TURNS = 2
         const val DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS = 10 * 60
+
         const val MIN_BASE_COMMAND_TIMEOUT_SECONDS = 60
         const val MAX_BASE_COMMAND_TIMEOUT_SECONDS = 60 * 60
         const val DEFAULT_ROUND_LIMIT_AUTO_CONTINUATIONS = 2
