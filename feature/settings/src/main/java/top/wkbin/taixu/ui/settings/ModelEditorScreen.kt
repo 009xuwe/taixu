@@ -287,8 +287,10 @@ private fun ModelEditorContent(
         keyList.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
     }
 
-    val candidateModels = remember(discovered, provider) {
-        (discovered + provider.recommendedModels).distinct().filter { it.isNotBlank() }
+    // 已选模型必须始终出现在候选列表中：否则厂商下架后刷新接口与预设都拿不到该模型，
+    // 它会隐身存在于 selectedModels 里，既看不到也无法取消
+    val candidateModels = remember(discovered, provider, selectedModels) {
+        (selectedModels + discovered + provider.recommendedModels).distinct().filter { it.isNotBlank() }
     }
     val filteredCandidateModels = remember(candidateModels, modelSearchQuery) {
         filterCandidateModels(candidateModels, modelSearchQuery)
