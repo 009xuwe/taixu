@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -117,6 +118,8 @@ fun AgentSettingsScreen(
     val isMarketLoading by viewModel.isMarketLoading.collectAsStateWithLifecycle()
     val isMarketOfflinePreset by viewModel.isMarketOfflinePreset.collectAsStateWithLifecycle()
     val pendingSkillInspection by viewModel.pendingSkillInspection.collectAsStateWithLifecycle()
+    val preparingSkillId by viewModel.preparingSkillId.collectAsStateWithLifecycle()
+    val isCommittingInstallation by viewModel.isCommittingInstallation.collectAsStateWithLifecycle()
 
     var showAddSkillDialog by remember { mutableStateOf(false) }
     var viewingSkillPrompt by remember { mutableStateOf<AgentSkill?>(null) }
@@ -548,6 +551,7 @@ fun AgentSettingsScreen(
                 items(marketSkills, key = { "clawhub_" + it.id }) { marketItem ->
                     ClawHubMarketSkillCard(
                         item = marketItem,
+                        isPreparing = preparingSkillId == marketItem.id,
                         onInstall = { viewModel.prepareInstallMarketSkill(marketItem.id) },
                     )
                 }
@@ -579,6 +583,7 @@ fun AgentSettingsScreen(
     pendingSkillInspection?.let { inspection ->
         top.wkbin.taixu.ui.settings.skill.SkillSecurityAuditDialog(
             inspection = inspection,
+            isCommitting = isCommittingInstallation,
             onConfirmInstall = viewModel::confirmSkillInstallation,
             onDismiss = viewModel::dismissSkillInspection,
         )
@@ -715,6 +720,7 @@ fun AgentSettingsScreen(
     pendingSkillInspection?.let { inspection ->
         top.wkbin.taixu.ui.settings.skill.SkillSecurityAuditDialog(
             inspection = inspection,
+            isCommitting = isCommittingInstallation,
             onConfirmInstall = viewModel::confirmSkillInstallation,
             onDismiss = viewModel::dismissSkillInspection,
         )
@@ -1308,6 +1314,7 @@ private fun ConsecutiveFailuresSliderRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SkillCard(
     skill: AgentSkill,
@@ -1321,40 +1328,41 @@ private fun SkillCard(
         borderColor = if (skill.isEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Text(
+                    skill.name,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shape = RoundedCornerShape(4.dp),
                 ) {
-                    Text(skill.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                    Text(
+                        skill.category,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                val cmd = skill.triggerCommand
+                if (cmd != null) {
                     Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                         shape = RoundedCornerShape(4.dp),
                     ) {
                         Text(
-                            skill.category,
-                            style = MaterialTheme.typography.labelSmall,
+                            cmd,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold),
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.primary,
                         )
-                    }
-                    val cmd = skill.triggerCommand
-                    if (cmd != null) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(4.dp),
-                        ) {
-                            Text(
-                                cmd,
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold),
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
                     }
                 }
             }
@@ -1407,9 +1415,11 @@ private fun SkillCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ClawHubMarketSkillCard(
     item: top.wkbin.taixu.core.model.skill.ClawHubMarketItem,
+    isPreparing: Boolean,
     onInstall: () -> Unit,
 ) {
     RuntimeCard(
@@ -1418,73 +1428,92 @@ private fun ClawHubMarketSkillCard(
         borderColor = MaterialTheme.colorScheme.outlineVariant,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Text(
+                    item.name,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shape = RoundedCornerShape(4.dp),
                 ) {
-                    Text(item.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        shape = RoundedCornerShape(4.dp),
-                    ) {
-                        Text(
-                            item.category,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Surface(
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(4.dp),
-                    ) {
-                        Text(
-                            "v${item.version}",
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+                    Text(
+                        item.category,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Text(
+                        "v${item.version}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
-
             Text(item.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     "作者: ${item.author} · ★ ${item.stars}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.weight(1f))
-                if (item.isInstalled) {
-                    OutlinedButton(
-                        onClick = {},
-                        enabled = false,
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    ) {
-                        Text("已安装", style = MaterialTheme.typography.labelSmall)
+                when {
+                    isPreparing -> {
+                        Button(
+                            onClick = {},
+                            enabled = false,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                                Text("审查中…", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
-                } else {
-                    Button(
-                        onClick = onInstall,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            RuntimeIcon(name = RuntimeIconName.Shield, modifier = Modifier.size(14.dp))
-                            Text("审查并安装", style = MaterialTheme.typography.labelSmall)
+                    item.isInstalled -> {
+                        OutlinedButton(
+                            onClick = {},
+                            enabled = false,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Text("已安装", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    else -> {
+                        Button(
+                            onClick = onInstall,
+                            enabled = !isPreparing,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RuntimeIcon(name = RuntimeIconName.Shield, modifier = Modifier.size(14.dp))
+                                Text("审查并安装", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
                 }

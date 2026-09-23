@@ -839,7 +839,11 @@ class SettingsViewModel(
     private val _isPreparingInstall = MutableStateFlow(false)
     val isPreparingInstall: StateFlow<Boolean> = _isPreparingInstall.asStateFlow()
 
+    private val _preparingSkillId = MutableStateFlow<String?>(null)
+    val preparingSkillId: StateFlow<String?> = _preparingSkillId.asStateFlow()
+
     private val _isCommittingInstallation = MutableStateFlow(false)
+    val isCommittingInstallation: StateFlow<Boolean> = _isCommittingInstallation.asStateFlow()
 
     private val _pendingSkillInspection = MutableStateFlow<top.wkbin.taixu.core.tools.skill.SkillInstallInspection?>(null)
     val pendingSkillInspection: StateFlow<top.wkbin.taixu.core.tools.skill.SkillInstallInspection?> = _pendingSkillInspection.asStateFlow()
@@ -873,6 +877,7 @@ class SettingsViewModel(
         if (_isPreparingInstall.value) return
         viewModelScope.launch {
             _isPreparingInstall.value = true
+            _preparingSkillId.value = skillId
             when (val res = installer.prepareMarketSkill(skillId)) {
                 is top.wkbin.taixu.core.common.result.AppResult.Success -> {
                     _pendingSkillInspection.value = res.data
@@ -883,6 +888,7 @@ class SettingsViewModel(
                 }
             }
             _isPreparingInstall.value = false
+            _preparingSkillId.value = null
         }
     }
 

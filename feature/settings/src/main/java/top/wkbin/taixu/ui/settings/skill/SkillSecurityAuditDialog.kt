@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import top.wkbin.taixu.core.model.skill.AuditLevel
 import top.wkbin.taixu.core.model.skill.CompatibilityLevel
@@ -48,6 +49,7 @@ import top.wkbin.taixu.ui.components.RuntimeOutlinedButton
 @Composable
 fun SkillSecurityAuditDialog(
     inspection: SkillInstallInspection,
+    isCommitting: Boolean,
     onConfirmInstall: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -110,13 +112,16 @@ fun SkillSecurityAuditDialog(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
                                 text = pkg.manifest.name,
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
                             Surface(
                                 color = badgeColor.copy(alpha = 0.15f),
@@ -136,8 +141,9 @@ fun SkillSecurityAuditDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Row(
+                        FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
                             modifier = Modifier.padding(top = 4.dp),
                         ) {
                             Text(
@@ -149,6 +155,9 @@ fun SkillSecurityAuditDialog(
                                 text = "作者: ${pkg.manifest.author}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
                             )
                         }
                     }
@@ -293,11 +302,21 @@ fun SkillSecurityAuditDialog(
             } else {
                 RuntimeButton(
                     onClick = onConfirmInstall,
+                    enabled = !isCommitting,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (audit.hasWarnings) Color(0xFFF59E0B) else MaterialTheme.colorScheme.primary,
                     ),
                 ) {
-                    Text(if (audit.hasWarnings) "了解风险并确认安装" else "通过审查并安装")
+                    if (isCommitting) {
+                        top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                        Text("正在安装…")
+                    } else {
+                        Text(if (audit.hasWarnings) "了解风险并确认安装" else "通过审查并安装")
+                    }
                 }
             }
         },
