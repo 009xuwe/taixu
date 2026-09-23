@@ -170,6 +170,7 @@ class SkillInstallationManager(
 
     companion object {
         // 与 SkillPackageParser.sanitizeSkillId 的输出字符集保持一致（清洗结果可能以 _ 开头）
-        private val SKILL_ID_PATTERN = Regex("[a-z0-9_-]+")
+        // 显式全锚定：即便未来调用方误用 containsMatchIn/find 语义，也不会放行 "../../etc" 类路径穿越串
+        private val SKILL_ID_PATTERN = Regex("^[a-z0-9_-]+$")
     }
 }

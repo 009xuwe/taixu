@@ -71,8 +71,10 @@ class McpResponseSizeLimiterTest {
     }
 
     @Test
-    fun unusableSpillDirectoryDegradesToCircuitBreakerInsteadOfThrowing() {
-        // 传入一个普通文件充当"目录"：mkdirs 必然失败，验证降级为熔断而非抛 IOException
+    fun unusableSpillDirectoryReturnsSpillUnavailableInsteadOfThrowing() {
+        // 传入一个普通文件充当"目录"：mkdirs 必然失败。
+        // 落盘不可用是本机环境问题而非「响应过大」，必须返回 SpillUnavailable
+        // 而不是 CircuitBroken，否则配置错误会被伪装成服务端问题误导重试决策
         val notADirectory = File.createTempFile("mcp_test_not_a_dir_", ".txt")
         try {
             val input = ByteArrayInputStream("A".repeat(1000).toByteArray(Charsets.UTF_8))
@@ -83,9 +85,10 @@ class McpResponseSizeLimiterTest {
                 spillDirectory = notADirectory,
             )
 
-            assertTrue("Expected CircuitBroken payload, was $result", result is McpResponseSizeLimiter.Payload.CircuitBroken)
-            val breaker = result as McpResponseSizeLimiter.Payload.CircuitBroken
-            assertTrue(breaker.formatErrorMessage().contains("熔断拦截"))
+            assertTrue("Expected SpillUnavailable payload, was $result", result is McpResponseSizeLimiter.Payload.SpillUnavailable)
+            val unavailable = result as McpResponseSizeLimiter.Payload.SpillUnavailable
+            assertTrue(unavailable.formatErrorMessage().contains("转存失败"))
+            assertTrue(unavailable.formatErrorMessage().contains("本机"))
         } finally {
             notADirectory.delete()
         }

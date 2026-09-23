@@ -1,5 +1,6 @@
 package top.wkbin.taixu.harness.mcp
 
+import java.io.EOFException
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -431,7 +432,16 @@ class McpHttpTransport(
         val data = mutableListOf<String>()
         var bytes = 0L
         while (!source.exhausted()) {
-            val line = source.readUtf8LineStrict(MAX_SSE_LINE_BYTES.toLong())
+            val line = try {
+                source.readUtf8LineStrict(MAX_SSE_LINE_BYTES.toLong())
+            } catch (_: EOFException) {
+                // readUtf8LineStrict 单行超限时抛裸 EOFException：转换为与累积流熔断同口径的
+                // 结构化异常，避免一个巨大的 tools/call 结果让整个响应以传输故障的面目失败
+                throw IOException(
+                    "[MCP SSE 响应熔断拦截：单条 SSE 事件行超过 ${MAX_SSE_LINE_BYTES / 1024 / 1024}MB 硬上限，" +
+                        "已强制中断流式传输以保护应用内存]",
+                )
+            }
             bytes += line.utf8Size() + 1
             if (bytes > McpResponseSizeLimiter.DEFAULT_HARD_LIMIT_BYTES) {
                 throw IOException("[MCP SSE 响应熔断拦截：流事件累计已达 ${bytes / 1024 / 1024}MB，超过系统硬上限]")
@@ -468,6 +478,11 @@ class McpHttpTransport(
                 } else {
                     throw IOException(payload.formatErrorMessage())
                 }
+            }
+            is McpResponseSizeLimiter.Payload.SpillUnavailable -> {
+                // 本机落盘环境问题：即便 isToolCall 也直接抛传输异常——
+                // 返回 isError=true 会让模型误以为是响应过大而去缩小请求范围重试，永远无法恢复
+                throw IOException(payload.formatErrorMessage())
             }
         }
     }
@@ -615,7 +630,9 @@ class McpHttpTransport(
     companion object {
         private const val ACCEPT = "application/json, text/event-stream"
         private const val MAX_BYTES = 4 * 1024 * 1024
-        private const val MAX_SSE_LINE_BYTES = 1 * 1024 * 1024
+        // 单行上限与 SSE 累积硬顶（DEFAULT_HARD_LIMIT_BYTES）同值：一个完整的 tools/call
+        // JSON 结果通常被压成单条 data 行，1MiB 的旧行限会让合法大结果直接失败
+        private const val MAX_SSE_LINE_BYTES = McpResponseSizeLimiter.DEFAULT_HARD_LIMIT_BYTES.toInt()
 
         /** B6: 握手/列表超时从 5s 放宽到 20s：慢网络/冷启动下 5s 偏紧导致 tools/list 频繁失败 */
         private const val FAST_TIMEOUT_MS = 20_000L

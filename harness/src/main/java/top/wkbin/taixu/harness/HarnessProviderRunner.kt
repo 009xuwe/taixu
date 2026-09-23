@@ -278,6 +278,8 @@ class HarnessProviderRunner(
                 val pendingImages = requestMessages.sumOf { it.imageUrls.size }
                 if (!imageStripped && pendingImages > 0) {
                     imageStripped = true
+                    // 故意不调 assembleFor 重算：走到这里说明紧急压缩已失败/无效（持久层消息仍带图片），
+                    // 重新组装会把图片原样带回，立即再次超限。内存剥离是唯一能真正降低请求体积的手段
                     requestMessages = requestMessages.map { it.copy(imageUrls = emptyList()) }
                     agentEventLogger.log(
                         sessId,

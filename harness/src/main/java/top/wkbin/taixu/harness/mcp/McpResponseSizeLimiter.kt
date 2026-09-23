@@ -28,11 +28,20 @@ object McpResponseSizeLimiter {
     /** 允许流式落盘转存的最大上限 / 熔断阈值：4MB */
     const val DEFAULT_MAX_SPILL_BYTES = 4L * 1024 * 1024
 
-    /** 硬件熔断绝对硬顶：8MB（针对 SSE 累积流等特殊场景） */
+    /**
+     * SSE 路径的累积流硬顶：8MB（仅 McpHttpTransport 的 SSE 读取使用）。
+     * 非 SSE 路径没有这一级：内联超限后直接进入落盘区，落盘超 [DEFAULT_MAX_SPILL_BYTES] 即熔断。
+     */
     const val DEFAULT_HARD_LIMIT_BYTES = 8L * 1024 * 1024
 
     /** 轻量文本预览字符上限 */
     const val PREVIEW_MAX_CHARS = 2048
+
+    /** spill 目录总容量配额（与 ToolOutputSpillStore 对齐） */
+    private const val MAX_SPILL_DIR_BYTES = 64L * 1024 * 1024
+
+    /** spill 目录文件数配额 */
+    private const val MAX_SPILL_DIR_FILES = 64
 
     sealed interface Payload {
         /** 安全内联字符串数据 */
@@ -62,6 +71,19 @@ object McpResponseSizeLimiter {
         ) : Payload {
             fun formatErrorMessage(): String =
                 "[MCP 响应熔断拦截：$reason（已观测 $bytesObserved 字节），已强制中断流式传输以保护应用内存]"
+        }
+
+        /**
+         * 落盘转存不可用：本机环境/配置问题（未注入 spillDirectory、临时目录不可写等）。
+         * 与 [CircuitBroken] 语义严格区分——这不是「对方数据过大」，重试或缩小请求范围都无法恢复，
+         * 上层应把原因如实透出给用户/模型，而不是让配置错误被伪装成响应过大。
+         */
+        data class SpillUnavailable(
+            val reason: String,
+            val bytesObserved: Long,
+        ) : Payload {
+            fun formatErrorMessage(): String =
+                "[MCP 响应转存失败：$reason（已观测 $bytesObserved 字节）。这是本机落盘环境问题而非响应过大，重试无法恢复，请检查 MCP 传输的落盘目录配置]"
         }
     }
 
@@ -107,12 +129,12 @@ object McpResponseSizeLimiter {
         val preview = inlineText.take(PREVIEW_MAX_CHARS)
 
         val targetDir = resolveSpillDirectory(spillDirectory)
-            ?: return Payload.CircuitBroken(
+            ?: return Payload.SpillUnavailable(
                 reason = "无可用的落盘转存目录（未注入 spillDirectory 且系统临时目录不可写）",
                 bytesObserved = totalBytesRead,
             )
         if (!targetDir.isDirectory && !targetDir.mkdirs()) {
-            return Payload.CircuitBroken(
+            return Payload.SpillUnavailable(
                 reason = "落盘转存目录创建失败: ${targetDir.absolutePath}",
                 bytesObserved = totalBytesRead,
             )
@@ -121,7 +143,7 @@ object McpResponseSizeLimiter {
         val spillFile = try {
             File.createTempFile(spillFilePrefix, ".txt", targetDir)
         } catch (_: Throwable) {
-            return Payload.CircuitBroken(
+            return Payload.SpillUnavailable(
                 reason = "落盘转存文件创建失败: ${targetDir.absolutePath}",
                 bytesObserved = totalBytesRead,
             )
@@ -169,12 +191,32 @@ object McpResponseSizeLimiter {
         return if (tmp != null && tmp.isDirectory && tmp.canWrite()) File(tmp, "taixu_mcp_spills") else null
     }
 
-    private fun cleanupOldSpills(dir: File, prefix: String, maxAgeMs: Long = 24 * 60 * 60 * 1000L) {
+    /**
+     * 落盘配额回收：先按过期时间清理，再按「总量 + 条数」上限从最旧开始淘汰。
+     * 仅靠 24h 过期回收的话，短时间连续大响应可累积 N × 4MB，撑爆移动端磁盘。
+     */
+    private fun cleanupOldSpills(
+        dir: File,
+        prefix: String,
+        maxAgeMs: Long = 24 * 60 * 60 * 1000L,
+        maxTotalBytes: Long = MAX_SPILL_DIR_BYTES,
+        maxFiles: Int = MAX_SPILL_DIR_FILES,
+    ) {
         runCatching {
             val now = System.currentTimeMillis()
-            dir.listFiles()?.forEach { f ->
-                if (f.isFile && f.name.startsWith(prefix) && now - f.lastModified() > maxAgeMs) {
-                    f.delete()
+            val spills = dir.listFiles()
+                ?.filter { it.isFile && it.name.startsWith(prefix) }
+                .orEmpty()
+            spills.filter { now - it.lastModified() > maxAgeMs }.forEach { it.delete() }
+
+            val remaining = spills.filter { it.exists() }.sortedBy { it.lastModified() }
+            var total = remaining.sumOf { it.length() }
+            var count = remaining.size
+            for (file in remaining) {
+                if (total <= maxTotalBytes && count <= maxFiles) break
+                if (file.delete()) {
+                    total -= file.length()
+                    count--
                 }
             }
         }
