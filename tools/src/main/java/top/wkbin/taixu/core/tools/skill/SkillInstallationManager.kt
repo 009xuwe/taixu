@@ -103,24 +103,41 @@ class SkillInstallationManager(
             throw SkillSecurityBlockedException(inspection.auditReport)
         }
 
+        // 提交前对内存中的包体重新审计，防止调用方传入被篡改的审查结论
         val pkg = inspection.pkg
+        val reReport = inspector.inspect(pkg)
+        if (reReport.isBlocked) {
+            throw SkillSecurityBlockedException(reReport)
+        }
+
         val skillId = pkg.manifest.id
-        val targetDir = File(targetSkillsDir, skillId).apply { mkdirs() }
+        if (!SKILL_ID_PATTERN.matches(skillId)) {
+            throw SecurityException("技能 id 含非法字符，已拒绝安装: $skillId")
+        }
+
+        // 先写入独立暂存目录，成功后整体重命名：回滚时只需删除暂存目录，绝不触碰其他技能
+        val stagingDir = File(targetSkillsDir, "$skillId.staging_${java.util.UUID.randomUUID().toString().take(8)}").apply { mkdirs() }
+        var renamed = false
+        val targetDir = File(targetSkillsDir, skillId)
+        val canonicalTarget = stagingDir.canonicalPath
 
         try {
-            // 安全落盘所有资产
             pkg.rawFiles.forEach { (relPath, bytes) ->
                 val safePath = relPath.trimStart('/')
-                val destFile = File(targetDir, safePath)
-                // 再次防御路径逃逸
+                val destFile = File(stagingDir, safePath)
                 val canonicalDest = destFile.canonicalPath
-                val canonicalTarget = targetDir.canonicalPath
-                if (!canonicalDest.startsWith(canonicalTarget + File.separator) && canonicalDest != canonicalTarget) {
+                if (!canonicalDest.startsWith(canonicalTarget + File.separator)) {
                     throw SecurityException("检测到非法的文件写入逃逸: $relPath")
                 }
                 destFile.parentFile?.mkdirs()
                 destFile.writeBytes(bytes)
             }
+
+            if (targetDir.exists()) targetDir.deleteRecursively()
+            if (!stagingDir.renameTo(targetDir)) {
+                throw java.io.IOException("技能目录暂存重命名失败: ${stagingDir.absolutePath} -> ${targetDir.absolutePath}")
+            }
+            renamed = true
 
             val guestPath = guestPrefix.trimEnd('/') + "/$skillId"
             val composedPrompt = pkg.templates.composeSystemPrompt(resourceGuestPath = guestPath)
@@ -142,9 +159,17 @@ class SkillInstallationManager(
             agentSkillRepository.addCustom(agentSkill)
             return agentSkill
         } catch (e: Throwable) {
-            // 失败时安全回滚清理已写入的目录
-            targetDir.deleteRecursively()
+            if (renamed) {
+                targetDir.deleteRecursively()
+            } else {
+                stagingDir.deleteRecursively()
+            }
             throw e
         }
+    }
+
+    companion object {
+        // 与 SkillPackageParser.sanitizeSkillId 的输出字符集保持一致（清洗结果可能以 _ 开头）
+        private val SKILL_ID_PATTERN = Regex("[a-z0-9_-]+")
     }
 }

@@ -272,6 +272,13 @@ fun SkillSecurityAuditDialog(
                     }
                 }
             }
+
+            Text(
+                text = "⚠ 静态审计仅为初步防线，无法识别所有混淆与恶意行为；安装后该技能脚本的实际执行仍会逐条申请审批。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         },
         confirmButton = {
             if (isBlocked) {

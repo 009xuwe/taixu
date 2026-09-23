@@ -288,7 +288,21 @@ class HarnessProviderRunner(
                     resetStreamBaseline()
                     continue
                 }
-                messageProjector.remove(sessId, assistantId)
+                // 与 ModelError 路径一致：已流式产出的半截内容先落库保留，避免静默丢弃
+                if (streamText.length > 0) {
+                    persistAssistant(
+                        sessId,
+                        assistantId,
+                        assistantAt,
+                        streamText.toString(),
+                        streamReasoning.toString().ifBlank { null },
+                        totalMs = now() - startedAt,
+                        operationId = operationId,
+                        round = round,
+                    )
+                } else {
+                    messageProjector.remove(sessId, assistantId)
+                }
                 agentEventLogger.log(
                     sessId,
                     "ContextOverflowUnrecoverable",

@@ -71,6 +71,27 @@ class McpResponseSizeLimiterTest {
     }
 
     @Test
+    fun unusableSpillDirectoryDegradesToCircuitBreakerInsteadOfThrowing() {
+        // 传入一个普通文件充当"目录"：mkdirs 必然失败，验证降级为熔断而非抛 IOException
+        val notADirectory = File.createTempFile("mcp_test_not_a_dir_", ".txt")
+        try {
+            val input = ByteArrayInputStream("A".repeat(1000).toByteArray(Charsets.UTF_8))
+            val result = McpResponseSizeLimiter.readBounded(
+                input = input,
+                maxInlineBytes = 200,
+                maxSpillBytes = 2000,
+                spillDirectory = notADirectory,
+            )
+
+            assertTrue("Expected CircuitBroken payload, was $result", result is McpResponseSizeLimiter.Payload.CircuitBroken)
+            val breaker = result as McpResponseSizeLimiter.Payload.CircuitBroken
+            assertTrue(breaker.formatErrorMessage().contains("熔断拦截"))
+        } finally {
+            notADirectory.delete()
+        }
+    }
+
+    @Test
     fun cleanupSpillsDoesNotDeleteForeignFiles() {
         val tempDir = File.createTempFile("mcp_test_dir_foreign_", "").apply {
             delete()

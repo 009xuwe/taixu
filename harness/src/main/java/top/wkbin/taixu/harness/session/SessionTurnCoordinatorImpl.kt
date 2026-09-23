@@ -56,7 +56,8 @@ class SessionTurnCoordinatorImpl(
         preferences?.let { prefs ->
             coordinatorScope.launch {
                 prefs.maxConcurrentAgentTurns.collectLatest { configuredLimit ->
-                    val safeLimit = configuredLimit.coerceIn(1, 8)
+                    // 上限与 SettingsDataStore.setMaxConcurrentAgentTurns 的写入口径 (1..4) 保持一致
+                    val safeLimit = configuredLimit.coerceIn(1, 4)
                     logger?.i("SessionTurnCoordinator: reconfiguring max concurrent turns to $safeLimit")
                     globalLimiter.setLimit(safeLimit)
                 }
@@ -119,7 +120,13 @@ class SessionTurnCoordinatorImpl(
     override fun evictSession(sessionId: String) {
         val key = normalizeSessionId(sessionId)
         synchronized(entriesLock) {
-            entries.remove(key)
+            entries[key]?.let { entry ->
+                // 存活在途持锁协程时禁止强拆 entry：remove 会让复活会话通过 getOrPut
+                // 造出第二把 turnMutex，同会话串行化被打破。留给 releaseEntry 在引用归零时移除。
+                if (entry.references <= 0) {
+                    entries.remove(key)
+                }
+            }
         }
         updateState(key, TurnSchedulingState.Idle)
     }

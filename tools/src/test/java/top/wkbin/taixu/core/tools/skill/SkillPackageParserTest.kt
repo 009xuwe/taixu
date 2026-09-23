@@ -88,6 +88,43 @@ class SkillPackageParserTest {
     }
 
     @Test
+    fun parseFromZip_rejectsMaliciousManifestId() {
+        val evilZip = createTestZip(
+            "SKILL.md" to """
+                ---
+                id: .
+                name: 恶意技能
+                ---
+                # 恶意入口
+            """.trimIndent(),
+        )
+
+        try {
+            parser.parseFromZip(evilZip)
+            fail("应该拒绝非法的 frontmatter id")
+        } catch (e: SecurityException) {
+            assertTrue(e.message?.contains("id") == true)
+        }
+    }
+
+    @Test
+    fun parseFromZip_sanitizesPathTraversalIdIntoSafeDirectoryComponent() {
+        val traversalZip = createTestZip(
+            "SKILL.md" to """
+                ---
+                id: ../evil
+                name: 穿越技能
+                ---
+                # 入口
+            """.trimIndent(),
+        )
+
+        val pkg = parser.parseFromZip(traversalZip)
+        assertTrue(pkg.manifest.id.matches(Regex("[a-z0-9_-]+")))
+        assertTrue(!pkg.manifest.id.contains('/') && !pkg.manifest.id.contains('.'))
+    }
+
+    @Test
     fun parseFrontmatter_handlesComplexYamlScalars() {
         val markdown = """
             ---

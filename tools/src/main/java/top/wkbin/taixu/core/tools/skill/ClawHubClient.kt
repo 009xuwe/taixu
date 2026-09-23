@@ -1,5 +1,7 @@
 package top.wkbin.taixu.core.tools.skill
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import top.wkbin.taixu.core.common.files.BoundedStreamCopy
@@ -8,6 +10,7 @@ import top.wkbin.taixu.core.model.skill.ClawHubMarketDetail
 import top.wkbin.taixu.core.model.skill.ClawHubMarketItem
 import top.wkbin.taixu.core.model.skill.SkillPermission
 import java.io.ByteArrayOutputStream
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -20,6 +23,11 @@ class ClawHubClient(
     private val hubRegistryBaseUrl: String = DEFAULT_CLAWHUB_URL,
 ) {
 
+    /** 最近一次 [fetchMarketCatalog] 是否使用了内置离线精选降级（远端市场未接入或不可达）。 */
+    @Volatile
+    var lastCatalogUsedOfflineFallback: Boolean = true
+        private set
+
     /**
      * 获取市场技能列表（支持搜索与分类过滤，网络不可达时自动降级到精选离线库）。
      */
@@ -28,7 +36,9 @@ class ClawHubClient(
         category: String? = null,
     ): AppResult<List<ClawHubMarketItem>> {
         val remoteResult = runCatching { fetchRemoteCatalog() }
-        val catalog = remoteResult.getOrNull()?.takeIf { it.isNotEmpty() } ?: BUILTIN_PRESET_ITEMS
+        val remote = remoteResult.getOrNull()?.takeIf { it.isNotEmpty() }
+        lastCatalogUsedOfflineFallback = remote == null
+        val catalog = remote ?: BUILTIN_PRESET_ITEMS
 
         val filtered = catalog.filter { item ->
             val matchesQuery = query.isNullOrBlank() ||
@@ -78,32 +88,34 @@ class ClawHubClient(
 
         // 尝试从网络下载
         return runCatching {
-            val url = "$hubRegistryBaseUrl/packages/$skillId.zip"
+            val url = "$hubRegistryBaseUrl/packages/${URLEncoder.encode(skillId, StandardCharsets.UTF_8.name())}.zip"
             val request = Request.Builder().url(url).build()
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    error("从 ClawHub 下载技能包失败，HTTP 状态码: ${response.code}")
+            withContext(Dispatchers.IO) {
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        error("从 ClawHub 下载技能包失败，HTTP 状态码: ${response.code}")
+                    }
+                    val body = response.body
+                    val contentLength = body.contentLength()
+                    if (contentLength > SkillPackageParser.MAX_ZIP_TOTAL_BYTES) {
+                        error("远程技能包体积 (${contentLength / 1024 / 1024}MB) 超过系统上限 (${SkillPackageParser.MAX_ZIP_TOTAL_BYTES / 1024 / 1024}MB)")
+                    }
+                    val bos = ByteArrayOutputStream()
+                    BoundedStreamCopy.copy(
+                        input = body.byteStream(),
+                        output = bos,
+                        maxBytes = SkillPackageParser.MAX_ZIP_TOTAL_BYTES,
+                        policy = BoundedStreamCopy.OverflowPolicy.ABORT,
+                    )
+                    AppResult.Success(bos.toByteArray())
                 }
-                val body = response.body
-                val contentLength = body.contentLength()
-                if (contentLength > SkillPackageParser.MAX_ZIP_TOTAL_BYTES) {
-                    error("远程技能包体积 (${contentLength / 1024 / 1024}MB) 超过系统上限 (${SkillPackageParser.MAX_ZIP_TOTAL_BYTES / 1024 / 1024}MB)")
-                }
-                val bos = ByteArrayOutputStream()
-                BoundedStreamCopy.copy(
-                    input = body.byteStream(),
-                    output = bos,
-                    maxBytes = SkillPackageParser.MAX_ZIP_TOTAL_BYTES,
-                    policy = BoundedStreamCopy.OverflowPolicy.ABORT,
-                )
-                AppResult.Success(bos.toByteArray())
             }
         }.getOrElse { err ->
             AppResult.Failure(top.wkbin.taixu.core.common.result.AppError(top.wkbin.taixu.core.common.result.ErrorCode.DOWNLOAD, err.message ?: "下载技能失败", err))
         }
     }
 
-    private fun fetchRemoteCatalog(): List<ClawHubMarketItem>? {
+    private suspend fun fetchRemoteCatalog(): List<ClawHubMarketItem>? {
         // 当配置了有效的外部 API 时发送网络请求
         if (hubRegistryBaseUrl.isBlank() || hubRegistryBaseUrl.startsWith("mock://")) {
             return null
@@ -112,10 +124,12 @@ class ClawHubClient(
             .url("$hubRegistryBaseUrl/catalog.json")
             .header("Accept", "application/json")
             .build()
-        return httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            // 如后续接入 ClawHub 后端，此处进行 JSON 反序列化解析；当前优雅 fallback
-            null
+        return withContext(Dispatchers.IO) {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                // 如后续接入 ClawHub 后端，此处进行 JSON 反序列化解析；当前优雅 fallback
+                null
+            }
         }
     }
 

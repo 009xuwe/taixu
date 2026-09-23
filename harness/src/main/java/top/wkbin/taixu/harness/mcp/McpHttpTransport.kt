@@ -1,5 +1,6 @@
 package top.wkbin.taixu.harness.mcp
 
+import java.io.File
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -53,6 +54,7 @@ class McpHttpTransport(
     private val json: Json,
     private val logger: AppLogger,
     private val oauthTokens: McpOAuthTokenProvider? = null,
+    private val spillDirectory: File? = null,
 ) : McpTransport {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -447,7 +449,7 @@ class McpHttpTransport(
             .getOrNull()?.takeIf { it.id == id }
 
     private fun readLimited(response: Response, requestId: String, isToolCall: Boolean = false): String {
-        return when (val payload = McpResponseSizeLimiter.readResponse(response)) {
+        return when (val payload = McpResponseSizeLimiter.readResponse(response, spillDirectory = spillDirectory)) {
             is McpResponseSizeLimiter.Payload.Inline -> payload.text
             is McpResponseSizeLimiter.Payload.Spilled -> {
                 if (isToolCall) {

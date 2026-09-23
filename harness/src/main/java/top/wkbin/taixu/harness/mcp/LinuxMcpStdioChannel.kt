@@ -52,6 +52,9 @@ class LinuxMcpStdioChannel(
         scope.launch {
             val buf = StringBuilder()
             var skippingOversized = false
+            // 同一段连续超长输出只广播一条熔断错误帧：首帧已能触发在途请求失败，
+            // 若每条超长行都发帧，会被协议层连续计数放大为通道级中毒断连
+            var reportedOversizedFrame = false
             try {
                 session.output.collect { output ->
                     val chunk = output.text
@@ -71,11 +74,14 @@ class LinuxMcpStdioChannel(
                         val partLength = end - start
                         if (buf.length + partLength > maxFrameChars) {
                             skippingOversized = true
-                            val idJson = ID_REGEX.find(buf)?.groups?.get(1)?.value ?: "null"
+                            if (!reportedOversizedFrame) {
+                                val idJson = ID_REGEX.find(buf)?.groups?.get(1)?.value ?: "null"
+                                reportedOversizedFrame = true
+                                lines.send(
+                                    """{"jsonrpc":"2.0","id":$idJson,"error":{"code":-32603,"message":"MCP STDIO 单行输出超过安全上限 (${maxFrameChars / 1024 / 1024}MB)，已触发移动端熔断保护"}}""",
+                                )
+                            }
                             buf.clear()
-                            lines.send(
-                                """{"jsonrpc":"2.0","id":$idJson,"error":{"code":-32603,"message":"MCP STDIO 单行输出超过安全上限 (${maxFrameChars / 1024 / 1024}MB)，已触发移动端熔断保护"}}""",
-                            )
                             if (newline >= 0) {
                                 skippingOversized = false
                                 start = newline + 1
@@ -88,6 +94,7 @@ class LinuxMcpStdioChannel(
                         if (newline < 0) break
                         val line = buf.toString().trim()
                         buf.clear()
+                        reportedOversizedFrame = false
                         if (line.startsWith("{")) lines.send(line)
                         start = newline + 1
                     }

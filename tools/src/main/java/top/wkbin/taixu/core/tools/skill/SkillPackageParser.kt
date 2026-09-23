@@ -123,9 +123,16 @@ class SkillPackageParser {
         val scripts = files.keys.filter { it.startsWith("scripts/", ignoreCase = true) }
         val references = files.keys.filter { it.startsWith("references/", ignoreCase = true) }
 
+        // id 用于构造安装目录名，必须清洗为安全字符集，防止 "../"、"." 等注入路径
         val id = frontmatter["id"]
             ?.takeIf { it.isNotBlank() }
-            ?: fallbackId.lowercase().replace(Regex("[^a-z0-9_-]"), "_")
+            ?.let(::sanitizeSkillId)
+            ?: run {
+                // fallback（目录名/调用方提供）清洗失败时不阻断解析，回退到生成的稳定 id
+                runCatching { sanitizeSkillId(fallbackId) }.getOrElse {
+                    "skill_" + UUID.randomUUID().toString().take(8)
+                }
+            }
 
         val name = frontmatter["name"]
             ?: extractFirstHeading(rawSkillMarkdown)
@@ -194,6 +201,14 @@ class SkillPackageParser {
             references = references,
             rawFiles = files,
         )
+    }
+
+    private fun sanitizeSkillId(raw: String): String {
+        val sanitized = raw.lowercase().replace(Regex("[^a-z0-9_-]"), "_")
+        if (sanitized.isBlank() || sanitized.all { it == '_' }) {
+            throw SecurityException("技能包声明的 id 非法，已拒绝解析: $raw")
+        }
+        return sanitized
     }
 
     private fun findTextContent(files: Map<String, ByteArray>, fileName: String): String? {

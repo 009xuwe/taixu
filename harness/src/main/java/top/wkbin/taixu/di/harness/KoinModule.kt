@@ -1,6 +1,8 @@
 package top.wkbin.taixu.di.harness
 
 import org.koin.dsl.module
+import android.content.Context
+import java.io.File
 import top.wkbin.taixu.harness.AgentContextExecutor
 import top.wkbin.taixu.harness.ApprovalPolicyEngine
 import top.wkbin.taixu.harness.BuildScriptToolExecutor
@@ -334,6 +336,7 @@ val harnessModule = module {
             json = get(),
             logger = get(),
             oauthTokens = get(),
+            spillDirectory = File(get<Context>().cacheDir, "taixu_mcp_spills"),
         )
     }
 

@@ -143,6 +143,35 @@ class SessionTurnCoordinatorTest {
     }
 
     @Test
+    fun evictSessionDuringInFlightTurnPreservesSessionSerialization() = runBlocking {
+        val coordinator: SessionTurnCoordinator = SessionTurnCoordinatorImpl(initialMaxConcurrentTurns = 2)
+        val log = mutableListOf<String>()
+
+        val inFlight = launch {
+            coordinator.withSessionTurn("session-evict") {
+                log.add("T1-start")
+                delay(200)
+                log.add("T1-end")
+            }
+        }
+        delay(30) // 确保 T1 已持有会话 turnMutex
+
+        // 会话删除/复活场景：在 T1 仍在执行时 evict
+        coordinator.evictSession("session-evict")
+
+        val revived = launch {
+            coordinator.withSessionTurn("session-evict") {
+                log.add("T2-start")
+            }
+        }
+
+        revived.join()
+        // T2 必须等 T1 释放同一把 turnMutex 后才开始：串行化未被 evict 打破
+        assertEquals(listOf("T1-start", "T1-end", "T2-start"), log)
+        inFlight.join()
+    }
+
+    @Test
     fun highPriorityTurnJumpsAheadOfNormalPriorityInGlobalQueue() = runBlocking {
         // 全局槽位只有 1 个
         val coordinator: SessionTurnCoordinator = SessionTurnCoordinatorImpl(initialMaxConcurrentTurns = 1)

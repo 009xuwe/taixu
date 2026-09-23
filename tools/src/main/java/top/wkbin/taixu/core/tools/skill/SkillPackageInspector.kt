@@ -181,35 +181,27 @@ class SkillPackageInspector {
 
     private fun checkPromptInjections(filename: String, text: String, findings: MutableList<AuditFinding>) {
         PROMPT_INJECTION_PATTERNS.forEach { pattern ->
-            val match = pattern.find(text)
-            if (match != null) {
-                val snippet = extractSnippet(text, match.range.first)
-                findings.add(
-                    AuditFinding(
-                        level = AuditLevel.BLOCKED,
-                        ruleId = "INJ-001",
-                        title = "检测到恶意 Prompt 注入或越狱指令",
-                        detail = "命中高危注入模式: \"${match.value.take(40)}\"",
-                        targetFile = filename,
-                        snippet = snippet,
-                    ),
+            reportMatches(filename, text, pattern, findings) { match ->
+                AuditFinding(
+                    level = AuditLevel.BLOCKED,
+                    ruleId = "INJ-001",
+                    title = "检测到恶意 Prompt 注入或越狱指令",
+                    detail = "命中高危注入模式: \"${match.value.take(40)}\"",
+                    targetFile = filename,
+                    snippet = extractSnippet(text, match.range.first),
                 )
             }
         }
 
         PROMPT_LEAK_PATTERNS.forEach { pattern ->
-            val match = pattern.find(text)
-            if (match != null) {
-                val snippet = extractSnippet(text, match.range.first)
-                findings.add(
-                    AuditFinding(
-                        level = AuditLevel.DANGER,
-                        ruleId = "INJ-002",
-                        title = "可疑的系统提示词泄露探针",
-                        detail = "检测到尝试提取模型 System Prompt 或隐藏指令的诱导语句",
-                        targetFile = filename,
-                        snippet = snippet,
-                    ),
+            reportMatches(filename, text, pattern, findings) { match ->
+                AuditFinding(
+                    level = AuditLevel.DANGER,
+                    ruleId = "INJ-002",
+                    title = "可疑的系统提示词泄露探针",
+                    detail = "检测到尝试提取模型 System Prompt 或隐藏指令的诱导语句",
+                    targetFile = filename,
+                    snippet = extractSnippet(text, match.range.first),
                 )
             }
         }
@@ -232,18 +224,28 @@ class SkillPackageInspector {
 
     private fun checkDestructiveCommands(filename: String, text: String, findings: MutableList<AuditFinding>) {
         DESTRUCTIVE_COMMAND_PATTERNS.forEach { pattern ->
-            val match = pattern.find(text)
-            if (match != null) {
-                val snippet = extractSnippet(text, match.range.first)
-                findings.add(
-                    AuditFinding(
-                        level = AuditLevel.BLOCKED,
-                        ruleId = "CMD-001",
-                        title = "破坏性沙箱或系统命令",
-                        detail = "检测到可能导致系统/沙箱损坏的危险指令: \"${match.value.trim()}\"",
-                        targetFile = filename,
-                        snippet = snippet,
-                    ),
+            reportMatches(filename, text, pattern, findings) { match ->
+                AuditFinding(
+                    level = AuditLevel.BLOCKED,
+                    ruleId = "CMD-001",
+                    title = "破坏性沙箱或系统命令",
+                    detail = "检测到可能导致系统/沙箱损坏的危险指令: \"${match.value.trim()}\"",
+                    targetFile = filename,
+                    snippet = extractSnippet(text, match.range.first),
+                )
+            }
+        }
+
+        // 静态混淆样本不直接阻断，但必须显著提示人工复核
+        OBFUSCATION_HINT_PATTERNS.forEach { pattern ->
+            reportMatches(filename, text, pattern, findings) { match ->
+                AuditFinding(
+                    level = AuditLevel.WARNING,
+                    ruleId = "CMD-004",
+                    title = "检测到可疑的指令混淆或编码变体",
+                    detail = "文本包含常见混淆执行模式（base64 解码管道 / eval 嵌套 / \${IFS} 拼接 / 十六进制编码 / 引号拆分），静态审计无法判定其真实意图: \"${match.value.trim().take(60)}\"",
+                    targetFile = filename,
+                    snippet = extractSnippet(text, match.range.first),
                 )
             }
         }
@@ -251,18 +253,14 @@ class SkillPackageInspector {
 
     private fun checkReverseShellAndPipes(filename: String, text: String, findings: MutableList<AuditFinding>) {
         REVERSE_SHELL_PATTERNS.forEach { pattern ->
-            val match = pattern.find(text)
-            if (match != null) {
-                val snippet = extractSnippet(text, match.range.first)
-                findings.add(
-                    AuditFinding(
-                        level = AuditLevel.BLOCKED,
-                        ruleId = "CMD-002",
-                        title = "恶意反弹 Shell 或外部脚本静默管道",
-                        detail = "检测到高危网络远程执行指令: \"${match.value.trim()}\"",
-                        targetFile = filename,
-                        snippet = snippet,
-                    ),
+            reportMatches(filename, text, pattern, findings) { match ->
+                AuditFinding(
+                    level = AuditLevel.BLOCKED,
+                    ruleId = "CMD-002",
+                    title = "恶意反弹 Shell 或外部脚本静默管道",
+                    detail = "检测到高危网络远程执行指令: \"${match.value.trim()}\"",
+                    targetFile = filename,
+                    snippet = extractSnippet(text, match.range.first),
                 )
             }
         }
@@ -270,20 +268,29 @@ class SkillPackageInspector {
 
     private fun checkSensitiveFileProbes(filename: String, text: String, findings: MutableList<AuditFinding>) {
         SENSITIVE_PROBE_PATTERNS.forEach { pattern ->
-            val match = pattern.find(text)
-            if (match != null) {
-                val snippet = extractSnippet(text, match.range.first)
-                findings.add(
-                    AuditFinding(
-                        level = AuditLevel.DANGER,
-                        ruleId = "CMD-003",
-                        title = "宿主/沙箱私密敏感文件嗅探",
-                        detail = "检测到尝试读取 SSH 私钥、凭证或系统敏感密码文件的指令",
-                        targetFile = filename,
-                        snippet = snippet,
-                    ),
+            reportMatches(filename, text, pattern, findings) { match ->
+                AuditFinding(
+                    level = AuditLevel.DANGER,
+                    ruleId = "CMD-003",
+                    title = "宿主/沙箱私密敏感文件嗅探",
+                    detail = "检测到尝试读取 SSH 私钥、凭证或系统敏感密码文件的指令",
+                    targetFile = filename,
+                    snippet = extractSnippet(text, match.range.first),
                 )
             }
+        }
+    }
+
+    private fun reportMatches(
+        filename: String,
+        text: String,
+        pattern: Regex,
+        findings: MutableList<AuditFinding>,
+        maxReportsPerPattern: Int = 3,
+        build: (MatchResult) -> AuditFinding,
+    ) {
+        pattern.findAll(text).take(maxReportsPerPattern).forEach { match ->
+            findings.add(build(match))
         }
     }
 
@@ -360,17 +367,29 @@ class SkillPackageInspector {
         private val DESTRUCTIVE_COMMAND_PATTERNS = listOf(
             Regex("""(?i)\brm\s+(-[a-z0-9_-]*[rf][a-z0-9_-]*\s+|--recursive\s+|--force\s+)*(--no-preserve-root\s+)?(/|/\*|~|~/|~/\*|\$\{?HOME\}?|\$\{?HOME\}?/(|\*))(?=\s*($|[;\n&|)]|\s))"""),
             Regex("""\bmkfs(\.[a-z0-9]+)?\s+"""),
-            Regex("""\bdd\s+if=/dev/zero\s+of="""),
+            Regex("""\bdd\s+.*\bof=/dev/(sd|hd|nvme|mmcblk|disk|zero)"""),
             Regex("""(?i)\bchmod\s+(-[a-z0-9_-]*[R][a-z0-9_-]*\s+)?777\s+(/|/etc|/bin|/usr|/var|/root)(/)?(?=\s*($|[;\n&|)]|\s))"""),
             Regex(""":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"""), // Fork Bomb
+            Regex("""(?i)(bash|sh|zsh)\s+<\(\s*(curl|wget)\b"""), // 进程替换执行远程脚本
         )
 
         private val REVERSE_SHELL_PATTERNS = listOf(
-            Regex("""bash\s+-i\s+>&\s+/dev/tcp/"""),
+            Regex("""bash\s+-i\s+>&\s*/dev/tcp/"""),
             Regex("""nc(\.traditional)?\s+.*-e\s+(/bin/)?(bash|sh)"""),
             Regex("""(?i)\bcurl\s+.*\|\s*(sudo\s+)?(bash|sh)\b"""),
             Regex("""(?i)\bwget\s+.*\|\s*(sudo\s+)?(bash|sh)\b"""),
             Regex("""python[0-9.]*\s+-c\s+.*import\s+socket,subprocess"""),
+        )
+
+        /**
+         * 常见静态混淆执行变体：黑名单无法穷举，仅作 WARNING 级人工复核提示。
+         */
+        private val OBFUSCATION_HINT_PATTERNS = listOf(
+            Regex("""(?i)\bbase64\s+(-[a-z]+\s+)*-d.*\|\s*(sudo\s+)?(ba|z|da)?sh\b"""),
+            Regex("""(?i)\beval\s+["']?\$\("""),
+            Regex("""\$\{?IFS\}?"""),
+            Regex("""(?i)printf\s+['"](\\x[0-9a-f]{2}){4,}"""),
+            Regex("""\b[a-z]{1,6}(['"])\s*\1[a-z]{1,6}\b"""), // 相邻引号片段拆分命令名: r""m → rm
         )
 
         private val SENSITIVE_PROBE_PATTERNS = listOf(

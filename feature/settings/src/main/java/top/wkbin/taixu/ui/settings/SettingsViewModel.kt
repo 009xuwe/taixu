@@ -818,6 +818,15 @@ class SettingsViewModel(
     private val _isMarketLoading = MutableStateFlow(false)
     val isMarketLoading: StateFlow<Boolean> = _isMarketLoading.asStateFlow()
 
+    /** 当前市场列表是否来自内置离线精选包（远端 ClawHub 未接入或不可达）。 */
+    private val _isMarketOfflinePreset = MutableStateFlow(true)
+    val isMarketOfflinePreset: StateFlow<Boolean> = _isMarketOfflinePreset.asStateFlow()
+
+    private val _isPreparingInstall = MutableStateFlow(false)
+    val isPreparingInstall: StateFlow<Boolean> = _isPreparingInstall.asStateFlow()
+
+    private val _isCommittingInstallation = MutableStateFlow(false)
+
     private val _pendingSkillInspection = MutableStateFlow<top.wkbin.taixu.core.tools.skill.SkillInstallInspection?>(null)
     val pendingSkillInspection: StateFlow<top.wkbin.taixu.core.tools.skill.SkillInstallInspection?> = _pendingSkillInspection.asStateFlow()
 
@@ -831,6 +840,7 @@ class SettingsViewModel(
                     _clawHubMarketSkills.value = res.data.map { item ->
                         item.copy(isInstalled = item.id in installedIds || "custom_${item.id}" in allSkills.value.map { it.id }.toSet())
                     }
+                    _isMarketOfflinePreset.value = client.lastCatalogUsedOfflineFallback
                 }
                 is top.wkbin.taixu.core.common.result.AppResult.Failure -> {
                     logger.w("加载 ClawHub 技能市场失败: ${res.error.message}", res.error.cause)
@@ -846,8 +856,9 @@ class SettingsViewModel(
             _skillArchiveMessageIsError.value = true
             return
         }
+        if (_isPreparingInstall.value) return
         viewModelScope.launch {
-            _isMarketLoading.value = true
+            _isPreparingInstall.value = true
             when (val res = installer.prepareMarketSkill(skillId)) {
                 is top.wkbin.taixu.core.common.result.AppResult.Success -> {
                     _pendingSkillInspection.value = res.data
@@ -857,7 +868,7 @@ class SettingsViewModel(
                     _skillArchiveMessageIsError.value = true
                 }
             }
-            _isMarketLoading.value = false
+            _isPreparingInstall.value = false
         }
     }
 
@@ -889,6 +900,7 @@ class SettingsViewModel(
     fun confirmSkillInstallation() {
         val inspection = _pendingSkillInspection.value ?: return
         val installer = skillInstallationManager ?: return
+        if (!_isCommittingInstallation.compareAndSet(expect = false, update = true)) return
         viewModelScope.launch {
             try {
                 val skillsDir = File(pathManager.attachmentsDir, "skills").apply { mkdirs() }
@@ -900,6 +912,8 @@ class SettingsViewModel(
             } catch (e: Throwable) {
                 _skillArchiveMessage.value = "安装失败: ${e.message}"
                 _skillArchiveMessageIsError.value = true
+            } finally {
+                _isCommittingInstallation.value = false
             }
         }
     }

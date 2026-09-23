@@ -6,7 +6,6 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.util.UUID
 
 /**
  * MCP 协议报文大小熔断与流式转存限制器（借鉴 PalmClaw McpResponseSizeLimiter 设计）。
@@ -107,20 +106,25 @@ object McpResponseSizeLimiter {
         val inlineText = memoryBuffer.toString(Charsets.UTF_8.name())
         val preview = inlineText.take(PREVIEW_MAX_CHARS)
 
-        val targetDir = spillDirectory ?: run {
-            val defaultTmp = System.getProperty("java.io.tmpdir")?.takeIf { it.isNotBlank() }?.let { File(it) }
-            val baseDir = if (defaultTmp != null && defaultTmp.exists() && defaultTmp.canWrite()) {
-                File(defaultTmp, "taixu_mcp_spills")
-            } else {
-                File(".", "taixu_mcp_spills")
-            }
-            baseDir.apply { mkdirs() }
+        val targetDir = resolveSpillDirectory(spillDirectory)
+            ?: return Payload.CircuitBroken(
+                reason = "无可用的落盘转存目录（未注入 spillDirectory 且系统临时目录不可写）",
+                bytesObserved = totalBytesRead,
+            )
+        if (!targetDir.isDirectory && !targetDir.mkdirs()) {
+            return Payload.CircuitBroken(
+                reason = "落盘转存目录创建失败: ${targetDir.absolutePath}",
+                bytesObserved = totalBytesRead,
+            )
         }
         cleanupOldSpills(targetDir, spillFilePrefix)
         val spillFile = try {
             File.createTempFile(spillFilePrefix, ".txt", targetDir)
         } catch (_: Throwable) {
-            File(targetDir, "${spillFilePrefix}${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}.txt")
+            return Payload.CircuitBroken(
+                reason = "落盘转存文件创建失败: ${targetDir.absolutePath}",
+                bytesObserved = totalBytesRead,
+            )
         }
 
         var completedCleanly = false
@@ -157,6 +161,12 @@ object McpResponseSizeLimiter {
                 runCatching { spillFile.delete() }
             }
         }
+    }
+
+    private fun resolveSpillDirectory(spillDirectory: File?): File? {
+        spillDirectory?.let { return it }
+        val tmp = System.getProperty("java.io.tmpdir")?.takeIf { it.isNotBlank() }?.let { File(it) }
+        return if (tmp != null && tmp.isDirectory && tmp.canWrite()) File(tmp, "taixu_mcp_spills") else null
     }
 
     private fun cleanupOldSpills(dir: File, prefix: String, maxAgeMs: Long = 24 * 60 * 60 * 1000L) {

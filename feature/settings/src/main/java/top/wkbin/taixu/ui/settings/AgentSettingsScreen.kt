@@ -113,6 +113,7 @@ fun AgentSettingsScreen(
     val skillEvolutionSuggestions by viewModel.skillEvolutionSuggestions.collectAsStateWithLifecycle()
     val marketSkills by viewModel.clawHubMarketSkills.collectAsStateWithLifecycle()
     val isMarketLoading by viewModel.isMarketLoading.collectAsStateWithLifecycle()
+    val isMarketOfflinePreset by viewModel.isMarketOfflinePreset.collectAsStateWithLifecycle()
     val pendingSkillInspection by viewModel.pendingSkillInspection.collectAsStateWithLifecycle()
 
     var showAddSkillDialog by remember { mutableStateOf(false) }
@@ -520,7 +521,11 @@ fun AgentSettingsScreen(
             item {
                 SectionHeader(
                     title = "ClawHub 技能生态市场",
-                    subtitle = "精选社区标准生态技能包，下载前由本地引擎执行静态安全与兼容性审查",
+                    subtitle = if (isMarketOfflinePreset) {
+                        "离线精选模式：以下为内置精选生态包（远端市场暂未接入）；安装前仍由本地引擎执行静态安全与兼容性审查"
+                    } else {
+                        "精选社区标准生态技能包，下载前由本地引擎执行静态安全与兼容性审查"
+                    },
                 )
             }
 
