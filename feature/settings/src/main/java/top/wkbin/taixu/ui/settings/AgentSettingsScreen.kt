@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -59,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -128,6 +130,7 @@ fun AgentSettingsScreen(
     var deletingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
     var deletingSkill by remember { mutableStateOf<AgentSkill?>(null) }
     var subagentQuery by rememberSaveable { mutableStateOf("") }
+    var skillQuery by rememberSaveable { mutableStateOf("") }
     var expandedDepartmentIds by rememberSaveable { mutableStateOf(listOf<String>()) }
     val visibleSubagentGroups = remember(subagents, subagentQuery) {
         val query = subagentQuery.trim().lowercase()
@@ -139,6 +142,17 @@ fun AgentSettingsScreen(
             .groupBy { it.departmentId }
             .entries
             .sortedBy { AgentDepartments.find(it.key).sortOrder }
+    }
+    val visibleSkills = remember(skills, skillQuery) {
+        val query = skillQuery.trim().lowercase()
+        if (query.isBlank()) {
+            skills
+        } else {
+            skills.filter { skill ->
+                skill.name.lowercase().contains(query) || skill.id.lowercase().contains(query) ||
+                    skill.description.lowercase().contains(query) || skill.category.lowercase().contains(query)
+            }
+        }
     }
     val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.size == 1) {
@@ -517,13 +531,36 @@ fun AgentSettingsScreen(
                 }
             }
 
-            items(skills, key = { it.id }) { skill ->
+            item {
+                OutlinedTextField(
+                    value = skillQuery,
+                    onValueChange = { skillQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("搜索 Skill") },
+                    placeholder = { Text("名称、标识、分类或描述") },
+                    leadingIcon = { RuntimeIcon(RuntimeIconName.Search, Modifier.size(18.dp)) },
+                    singleLine = true,
+                )
+            }
+
+            items(visibleSkills, key = { it.id }) { skill ->
                 SkillCard(
                     skill = skill,
                     onToggle = { enabled -> viewModel.toggleSkill(skill.id, enabled) },
                     onViewPrompt = { viewingSkillPrompt = skill },
                     onDelete = if (!skill.isBuiltin) { { deletingSkill = skill } } else null,
                 )
+            }
+            if (visibleSkills.isEmpty()) {
+                item {
+                    Text(
+                        text = "没有匹配 \"${skillQuery.trim()}\" 的技能",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
 
             // ---- 模块 4.5：ClawHub 技能生态市场 ----
@@ -1522,6 +1559,7 @@ private fun ClawHubMarketSkillCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PluginCard(
     plugin: AgentPlugin,
@@ -1538,12 +1576,27 @@ private fun PluginCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(plugin.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(
+                            plugin.name,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
                         Text("v${plugin.version}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("作者: ${plugin.author}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "作者: ${plugin.author}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 Switch(
                     checked = plugin.isEnabled,
@@ -1558,14 +1611,44 @@ private fun PluginCard(
             Text(plugin.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             if (plugin.permissions.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("权限:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    plugin.permissions.forEach { perm ->
+                val visiblePermissions = plugin.permissions.take(4)
+                val hiddenCount = plugin.permissions.size - visiblePermissions.size
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "权限:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    visiblePermissions.forEach { perm ->
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceContainerHighest,
                             shape = RoundedCornerShape(4.dp),
                         ) {
-                            Text(perm, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                perm,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 140.dp).padding(horizontal = 4.dp, vertical = 2.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (hiddenCount > 0) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            shape = RoundedCornerShape(4.dp),
+                        ) {
+                            Text(
+                                "等 ${plugin.permissions.size} 项权限",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
