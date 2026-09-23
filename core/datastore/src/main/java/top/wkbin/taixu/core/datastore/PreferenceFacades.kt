@@ -157,7 +157,6 @@ class AgentPreferences(private val store: SettingsDataStore) {
     val thinkingAutoTranslate get() = store.thinkingAutoTranslate
     val defaultReasoningDepth get() = store.defaultReasoningDepth
     val contextCompactionEnabled get() = store.contextCompactionEnabled
-    val contextCompactionThreshold get() = store.contextCompactionThreshold
     val maxToolRounds get() = store.maxToolRounds
     val roundLimitAutoContinuations get() = store.roundLimitAutoContinuations
     val autoWorkspaceCwd get() = store.autoWorkspaceCwd
@@ -185,7 +184,6 @@ class AgentPreferences(private val store: SettingsDataStore) {
     suspend fun setAgentLoggingEnabled(value: Boolean) = store.setAgentLoggingEnabled(value)
     suspend fun setDefaultReasoningDepth(value: String) = store.setDefaultReasoningDepth(value)
     suspend fun setContextCompactionEnabled(value: Boolean) = store.setContextCompactionEnabled(value)
-    suspend fun setContextCompactionThreshold(value: Int) = store.setContextCompactionThreshold(value)
     suspend fun setMaxToolRounds(value: Int) = store.setMaxToolRounds(value)
     suspend fun setRoundLimitAutoContinuations(value: Int) = store.setRoundLimitAutoContinuations(value)
     suspend fun setAutoWorkspaceCwd(value: Boolean) = store.setAutoWorkspaceCwd(value)

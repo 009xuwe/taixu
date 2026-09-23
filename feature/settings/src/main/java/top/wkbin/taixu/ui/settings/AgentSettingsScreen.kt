@@ -90,7 +90,6 @@ fun AgentSettingsScreen(
     val customSystemPromptEnabled by viewModel.customSystemPromptEnabled.collectAsStateWithLifecycle()
     val customSystemPrompt by viewModel.customSystemPrompt.collectAsStateWithLifecycle()
     val compactionEnabled by viewModel.contextCompactionEnabled.collectAsStateWithLifecycle()
-    val compactionThreshold by viewModel.contextCompactionThreshold.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
     val roundLimitAutoContinuations by viewModel.roundLimitAutoContinuations.collectAsStateWithLifecycle()
     val autoWorkspaceCwd by viewModel.autoWorkspaceCwd.collectAsStateWithLifecycle()
@@ -292,16 +291,11 @@ fun AgentSettingsScreen(
                     AgentToggleRow(
                         icon = RuntimeIconName.Compress,
                         title = "开启上下文智能压缩 (Context Compaction)",
-                        subtitle = "多轮工具调用超出阈值时，自动压缩历史中间工具输出日志，保留任务首尾与关键状态",
+                        subtitle = "历史超过 Token 折叠线时自动生成结构化摘要，保留近期原文、任务状态与关键文件足迹",
                         checked = compactionEnabled,
                         onCheckedChange = viewModel::setContextCompactionEnabled,
                     )
                     if (compactionEnabled) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        ThresholdSliderRow(
-                            currentThreshold = compactionThreshold,
-                            onThresholdChange = viewModel::setContextCompactionThreshold,
-                        )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         ContextBudgetSliderRow(
                             currentValue = contextBudgetTokens,
@@ -1035,45 +1029,6 @@ private fun AutoContinuationSliderRow(
             onValueChangeFinished = { onValueChange(sliderVal.toInt()) },
             valueRange = 0f..10f,
             steps = 9, // 0, 1, 2 ... 10
-        )
-    }
-}
-
-@Composable
-private fun ThresholdSliderRow(
-    currentThreshold: Int,
-    onThresholdChange: (Int) -> Unit,
-) {
-    var sliderVal by remember(currentThreshold) { mutableFloatStateOf(currentThreshold.toFloat()) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("压缩触发阈值（用户轮次）", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-            Text(
-                "${sliderVal.toInt()} 轮",
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        Text(
-            "当会话历史超过该轮数时，启动智能剪裁，最近 4 轮保持无损",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Slider(
-            value = sliderVal,
-            onValueChange = { sliderVal = it },
-            onValueChangeFinished = { onThresholdChange(sliderVal.toInt()) },
-            valueRange = 5f..40f,
-            steps = 6,
         )
     }
 }

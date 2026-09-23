@@ -736,9 +736,6 @@ class SettingsViewModel(
     val contextCompactionEnabled: StateFlow<Boolean> = agentPreferences.contextCompactionEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
-    val contextCompactionThreshold: StateFlow<Int> = agentPreferences.contextCompactionThreshold
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 15)
-
     val maxToolRounds: StateFlow<Int> = agentPreferences.maxToolRounds
         .stateIn(viewModelScope, SharingStarted.Eagerly, 100)
 
@@ -837,10 +834,6 @@ class SettingsViewModel(
 
     fun setContextCompactionEnabled(value: Boolean) {
         viewModelScope.launch { agentPreferences.setContextCompactionEnabled(value) }
-    }
-
-    fun setContextCompactionThreshold(value: Int) {
-        viewModelScope.launch { agentPreferences.setContextCompactionThreshold(value) }
     }
 
     fun setMaxToolRounds(value: Int) {

@@ -594,7 +594,6 @@ class SettingsDataStore(
     // ==================== Agent 智能体核心配置 ====================
 
     private val contextCompactionEnabledKey = booleanPreferencesKey("agent_context_compaction_enabled")
-    private val contextCompactionThresholdKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_compaction_threshold")
     private val maxConcurrentAgentTurnsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_concurrent_turns")
     private val maxToolRoundsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_tool_rounds")
     private val roundLimitAutoContinuationsKey =
@@ -613,10 +612,6 @@ class SettingsDataStore(
 
     val contextCompactionEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[contextCompactionEnabledKey] ?: true }
     suspend fun setContextCompactionEnabled(value: Boolean) { context.settingsDataStore.edit { it[contextCompactionEnabledKey] = value } }
-
-    /** 触发上下文压缩的历史轮数阈值（默认 15 轮） */
-    val contextCompactionThreshold: Flow<Int> = context.settingsDataStore.data.map { it[contextCompactionThresholdKey] ?: 15 }
-    suspend fun setContextCompactionThreshold(value: Int) { context.settingsDataStore.edit { it[contextCompactionThresholdKey] = value.coerceIn(5, 50) } }
 
     /** 最大工具执行轮次（默认 100 轮） */
     val maxToolRounds: Flow<Int> = context.settingsDataStore.data.map { it[maxToolRoundsKey] ?: 100 }

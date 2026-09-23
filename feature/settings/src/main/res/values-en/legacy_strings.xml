@@ -218,7 +218,6 @@
     <string name="settings_text_0070" formatted="false">Uninstall</string>
     <string name="settings_text_0071" formatted="false">Uninstall Tool</string>
     <string name="settings_text_0072" formatted="false">Compression Strategy</string>
-    <string name="settings_text_0073" formatted="false">Compression Trigger Threshold (User Round)</string>
     <string name="settings_text_0074" formatted="false">Parameters (space delimited)</string>
     <string name="settings_text_0075" formatted="false">You can call Taihui Agent to independently troubleshoot and self-heal in the PRoot sandbox</string>
     <string name="settings_text_0076" formatted="false">Updatable</string>
@@ -240,7 +239,7 @@
     <string name="settings_text_0092" formatted="false">Copy JSON</string>
     <string name="settings_text_0093" formatted="false">Complex and parallel tasks will be dispatched at the discretion of the master agent</string>
     <string name="settings_text_0094" formatted="false">Multi-sandbox coexistence and dynamic switching</string>
-    <string name="settings_text_0095" formatted="false">Automatically compress the history intermediate tool output log when multiple rounds of tool calls exceed the threshold, preserving the start and end of the task and the critical state</string>
+    <string name="settings_text_0095" formatted="false">Generate a structured summary when history crosses the token folding line, preserving recent messages, task state, and key file activity</string>
     <string name="settings_text_0096" formatted="false">e.g. sqlite/github/fetch</string>
     <string name="settings_text_0097" formatted="false">Install</string>
     <string name="settings_text_0098" formatted="false">Installing</string>
