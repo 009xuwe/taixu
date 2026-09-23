@@ -2,6 +2,7 @@ package top.wkbin.taixu.ui.settings
 
 import org.koin.compose.viewmodel.koinViewModel
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -110,6 +111,9 @@ fun AgentSettingsScreen(
     val skillArchiveMessage by viewModel.skillArchiveMessage.collectAsStateWithLifecycle()
     val skillArchiveMessageIsError by viewModel.skillArchiveMessageIsError.collectAsStateWithLifecycle()
     val skillEvolutionSuggestions by viewModel.skillEvolutionSuggestions.collectAsStateWithLifecycle()
+    val marketSkills by viewModel.clawHubMarketSkills.collectAsStateWithLifecycle()
+    val isMarketLoading by viewModel.isMarketLoading.collectAsStateWithLifecycle()
+    val pendingSkillInspection by viewModel.pendingSkillInspection.collectAsStateWithLifecycle()
 
     var showAddSkillDialog by remember { mutableStateOf(false) }
     var viewingSkillPrompt by remember { mutableStateOf<AgentSkill?>(null) }
@@ -130,7 +134,13 @@ fun AgentSettingsScreen(
             .entries
             .sortedBy { AgentDepartments.find(it.key).sortOrder }
     }
-    val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) viewModel.importSkillArchives(uris) }
+    val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.size == 1) {
+            viewModel.inspectLocalSkillZip(uris.first())
+        } else if (uris.isNotEmpty()) {
+            viewModel.importSkillArchives(uris)
+        }
+    }
     val skillDirPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) viewModel.importSkillsFromTree(uri) }
 
     Scaffold(
@@ -506,6 +516,32 @@ fun AgentSettingsScreen(
                 )
             }
 
+            // ---- 模块 4.5：ClawHub 技能生态市场 ----
+            item {
+                SectionHeader(
+                    title = "ClawHub 技能生态市场",
+                    subtitle = "精选社区标准生态技能包，下载前由本地引擎执行静态安全与兼容性审查",
+                )
+            }
+
+            if (isMarketLoading && marketSkills.isEmpty()) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                }
+            } else {
+                items(marketSkills, key = { "clawhub_" + it.id }) { marketItem ->
+                    ClawHubMarketSkillCard(
+                        item = marketItem,
+                        onInstall = { viewModel.prepareInstallMarketSkill(marketItem.id) },
+                    )
+                }
+            }
+
             // ---- 模块 5：Plugin 插件生态管理 ----
             item {
                 SectionHeader(
@@ -527,6 +563,14 @@ fun AgentSettingsScreen(
 
             item { Spacer(Modifier.height(16.dp)) }
         }
+    }
+
+    pendingSkillInspection?.let { inspection ->
+        top.wkbin.taixu.ui.settings.skill.SkillSecurityAuditDialog(
+            inspection = inspection,
+            onConfirmInstall = viewModel::confirmSkillInstallation,
+            onDismiss = viewModel::dismissSkillInspection,
+        )
     }
 
     skillArchiveMessage?.let { message ->
@@ -654,6 +698,14 @@ fun AgentSettingsScreen(
             dismissButton = {
                 TextButton(onClick = { deletingSubagent = null }) { Text("取消") }
             },
+        )
+    }
+
+    pendingSkillInspection?.let { inspection ->
+        top.wkbin.taixu.ui.settings.skill.SkillSecurityAuditDialog(
+            inspection = inspection,
+            onConfirmInstall = viewModel::confirmSkillInstallation,
+            onDismiss = viewModel::dismissSkillInspection,
         )
     }
 }
@@ -1338,6 +1390,92 @@ private fun SkillCard(
                             checkedTrackColor = MaterialTheme.colorScheme.primary,
                         ),
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClawHubMarketSkillCard(
+    item: top.wkbin.taixu.core.model.skill.ClawHubMarketItem,
+    onInstall: () -> Unit,
+) {
+    RuntimeCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = MaterialTheme.colorScheme.outlineVariant,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(item.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Text(
+                            item.category,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Text(
+                            "v${item.version}",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+
+            Text(item.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "作者: ${item.author} · ★ ${item.stars}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                if (item.isInstalled) {
+                    OutlinedButton(
+                        onClick = {},
+                        enabled = false,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    ) {
+                        Text("已安装", style = MaterialTheme.typography.labelSmall)
+                    }
+                } else {
+                    Button(
+                        onClick = onInstall,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            RuntimeIcon(name = RuntimeIconName.Shield, modifier = Modifier.size(14.dp))
+                            Text("审查并安装", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
         }

@@ -61,30 +61,32 @@ class RuntimeLifecycleSupervisor(
      * @return 租约句柄；调用 [ProcessingPowerLease.close] 释放。
      */
     fun acquireLease(holderId: String): ProcessingPowerLease {
-        val wasEmpty: Boolean
+        val totalHolders: Int
         synchronized(this) {
-            wasEmpty = holders.isEmpty()
+            val wasEmpty = holders.isEmpty()
             holders.add(holderId)
+            if (wasEmpty) {
+                acquireLocks()
+            }
+            totalHolders = holders.size
         }
-        if (wasEmpty) {
-            acquireLocks()
-        }
-        Log.d(TAG, "Lease acquired by '$holderId' (total holders: ${holderCount()})")
+        Log.d(TAG, "Lease acquired by '$holderId' (total holders: $totalHolders)")
         return object : ProcessingPowerLease {
             override val holderId: String = holderId
             private var released = false
 
             override fun close() {
+                val remaining: Int
                 synchronized(this@RuntimeLifecycleSupervisor) {
                     if (released) return
                     released = true
                     holders.remove(holderId)
+                    if (holders.isEmpty()) {
+                        releaseLocks()
+                    }
+                    remaining = holders.size
                 }
-                val nowEmpty = holderCount() == 0
-                Log.d(TAG, "Lease released by '$holderId' (remaining: ${holderCount()})")
-                if (nowEmpty) {
-                    releaseLocks()
-                }
+                Log.d(TAG, "Lease released by '$holderId' (remaining: $remaining)")
             }
         }
     }

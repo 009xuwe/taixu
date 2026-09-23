@@ -1003,7 +1003,7 @@ class HarnessLoop(
         val pending = approvalRepository.pendingNow(sessId)
         if (pending.isEmpty()) return
         val now = now()
-        for (request in approvalRepository.pendingNow(sessId)) {
+        for (request in pending) {
             if (!approvalRepository.claimPending(
                     request.id,
                     top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
@@ -1026,6 +1026,7 @@ class HarnessLoop(
                 messageProjector.append(sessId, result)
             }
         }
+        operationCoordinator.finish(sessId, "aborted")
     }
 
     private fun isCurrentLoad(sessionId: String, generation: Long): Boolean =

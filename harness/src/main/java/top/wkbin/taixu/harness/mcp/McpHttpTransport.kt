@@ -28,6 +28,7 @@ import okhttp3.Callback
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.utf8Size
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.model.BuiltinMcpPresets
 import top.wkbin.taixu.core.model.McpServerConfig
@@ -429,7 +430,7 @@ class McpHttpTransport(
         var bytes = 0L
         while (!source.exhausted()) {
             val line = source.readUtf8LineStrict(MAX_SSE_LINE_BYTES.toLong())
-            bytes += line.length + 1
+            bytes += line.utf8Size() + 1
             if (bytes > McpResponseSizeLimiter.DEFAULT_HARD_LIMIT_BYTES) {
                 throw IOException("[MCP SSE 响应熔断拦截：流事件累计已达 ${bytes / 1024 / 1024}MB，超过系统硬上限]")
             }

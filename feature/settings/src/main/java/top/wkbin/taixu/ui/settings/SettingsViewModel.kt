@@ -94,6 +94,8 @@ class SettingsViewModel(
     private val webChatBridgeServer: top.wkbin.taixu.runtime.webchat.WebChatBridgeServer? = null,
     private val browserPrefs: BrowserPreferences,
     private val translationManager: top.wkbin.taixu.core.common.translation.TranslationManager,
+    private val skillInstallationManager: top.wkbin.taixu.core.tools.skill.SkillInstallationManager? = null,
+    private val clawHubClient: top.wkbin.taixu.core.tools.skill.ClawHubClient? = null,
 ) : ViewModel() {
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
@@ -115,6 +117,7 @@ class SettingsViewModel(
             agentSkillRepository.ensureInitialized()
             mcpServerRepository.ensureInitialized()
             quickPhraseRepository.ensureInitialized()
+            loadClawHubMarket()
         }
         viewModelScope.launch {
             combine(linuxRuntime.state, linuxRuntime.activeDistroId) { state, distroId ->
@@ -807,6 +810,103 @@ class SettingsViewModel(
     /** Skill 归档导入结果是否失败（类型化标记，避免 UI 用字符串匹配判断样式）。 */
     private val _skillArchiveMessageIsError = MutableStateFlow(false)
     val skillArchiveMessageIsError: StateFlow<Boolean> = _skillArchiveMessageIsError.asStateFlow()
+
+    // ClawHub 市场与端侧静态安全审计状态
+    private val _clawHubMarketSkills = MutableStateFlow<List<top.wkbin.taixu.core.model.skill.ClawHubMarketItem>>(emptyList())
+    val clawHubMarketSkills: StateFlow<List<top.wkbin.taixu.core.model.skill.ClawHubMarketItem>> = _clawHubMarketSkills.asStateFlow()
+
+    private val _isMarketLoading = MutableStateFlow(false)
+    val isMarketLoading: StateFlow<Boolean> = _isMarketLoading.asStateFlow()
+
+    private val _pendingSkillInspection = MutableStateFlow<top.wkbin.taixu.core.tools.skill.SkillInstallInspection?>(null)
+    val pendingSkillInspection: StateFlow<top.wkbin.taixu.core.tools.skill.SkillInstallInspection?> = _pendingSkillInspection.asStateFlow()
+
+    fun loadClawHubMarket(query: String? = null, category: String? = null) {
+        val client = clawHubClient ?: return
+        viewModelScope.launch {
+            _isMarketLoading.value = true
+            when (val res = client.fetchMarketCatalog(query, category)) {
+                is top.wkbin.taixu.core.common.result.AppResult.Success -> {
+                    val installedIds = allSkills.value.map { it.id.removePrefix("custom_") }.toSet()
+                    _clawHubMarketSkills.value = res.data.map { item ->
+                        item.copy(isInstalled = item.id in installedIds || "custom_${item.id}" in allSkills.value.map { it.id }.toSet())
+                    }
+                }
+                is top.wkbin.taixu.core.common.result.AppResult.Failure -> {
+                    logger.w("加载 ClawHub 技能市场失败: ${res.error.message}", res.error.cause)
+                }
+            }
+            _isMarketLoading.value = false
+        }
+    }
+
+    fun prepareInstallMarketSkill(skillId: String) {
+        val installer = skillInstallationManager ?: run {
+            _skillArchiveMessage.value = "技能安全审计与安装引擎未就绪"
+            _skillArchiveMessageIsError.value = true
+            return
+        }
+        viewModelScope.launch {
+            _isMarketLoading.value = true
+            when (val res = installer.prepareMarketSkill(skillId)) {
+                is top.wkbin.taixu.core.common.result.AppResult.Success -> {
+                    _pendingSkillInspection.value = res.data
+                }
+                is top.wkbin.taixu.core.common.result.AppResult.Failure -> {
+                    _skillArchiveMessage.value = "准备技能失败: ${res.error.message}"
+                    _skillArchiveMessageIsError.value = true
+                }
+            }
+            _isMarketLoading.value = false
+        }
+    }
+
+    fun inspectLocalSkillZip(uri: Uri) {
+        val installer = skillInstallationManager ?: run {
+            importSkillArchives(listOf(uri))
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val bos = java.io.ByteArrayOutputStream()
+                application.contentResolver.openInputStream(uri)?.use { stream ->
+                    top.wkbin.taixu.core.common.files.BoundedStreamCopy.copy(
+                        input = stream,
+                        output = bos,
+                        maxBytes = top.wkbin.taixu.core.tools.skill.SkillPackageParser.MAX_ZIP_TOTAL_BYTES,
+                        policy = top.wkbin.taixu.core.common.files.BoundedStreamCopy.OverflowPolicy.ABORT,
+                    )
+                } ?: error("无法读取所选 ZIP 文件")
+                val inspection = installer.inspectZipBytes(bos.toByteArray(), fallbackId = "custom_zip")
+                _pendingSkillInspection.value = inspection
+            } catch (e: Throwable) {
+                _skillArchiveMessage.value = "解析或审计技能包失败: ${e.message}"
+                _skillArchiveMessageIsError.value = true
+            }
+        }
+    }
+
+    fun confirmSkillInstallation() {
+        val inspection = _pendingSkillInspection.value ?: return
+        val installer = skillInstallationManager ?: return
+        viewModelScope.launch {
+            try {
+                val skillsDir = File(pathManager.attachmentsDir, "skills").apply { mkdirs() }
+                val skill = installer.commitInstallation(inspection, skillsDir)
+                _skillArchiveMessage.value = "技能“${skill.name}”已通过端侧静态审查并成功安装！"
+                _skillArchiveMessageIsError.value = false
+                _pendingSkillInspection.value = null
+                loadClawHubMarket()
+            } catch (e: Throwable) {
+                _skillArchiveMessage.value = "安装失败: ${e.message}"
+                _skillArchiveMessageIsError.value = true
+            }
+        }
+    }
+
+    fun dismissSkillInspection() {
+        _pendingSkillInspection.value = null
+    }
 
     val autoSubagentDelegationEnabled: StateFlow<Boolean> = subagentRepository.autoDelegationEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
