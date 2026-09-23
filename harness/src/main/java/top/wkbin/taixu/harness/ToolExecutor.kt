@@ -16,6 +16,7 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.harness.checkpoint.CheckpointStore
 import top.wkbin.taixu.harness.effects.OutputRetention
 import top.wkbin.taixu.harness.effects.ToolOutputRetention
+import top.wkbin.taixu.harness.effects.foldOverlongLines
 import top.wkbin.taixu.harness.effects.keepHeadWholeLines
 import top.wkbin.taixu.harness.effects.keepTailWholeLines
 import top.wkbin.taixu.harness.compaction.CompressAnchorResult
@@ -215,13 +216,16 @@ class ToolExecutor(
         toolName: String?,
         fileAccess: WorkspaceFileAccess?,
     ): String {
-        if (output.length <= MAX_OUTPUT_LENGTH) return output
+        // 超长单行先折叠（混淆/压缩文件）：否则单行预算退化成保留 60k 字符的整行，
+        // 一条 tool result 就可能超出单条消息的传输上限导致连接被重置。落盘仍用原始全量。
+        val folded = foldOverlongLines(output)
+        if (folded.length <= MAX_OUTPUT_LENGTH) return folded
         val spillPath = fileAccess?.let { ToolOutputSpillStore.spill(it, toolName, output) }
         // 差异化截断：命令/构建/日志保留尾部（报错在末尾），读取/搜索保留头部。
         val retention = ToolOutputRetention.forTool(toolName)
         val kept = when (retention) {
-            OutputRetention.TAIL -> keepTailWholeLines(output, TRUNCATE_KEEP_LENGTH)
-            OutputRetention.HEAD -> keepHeadWholeLines(output, TRUNCATE_KEEP_LENGTH)
+            OutputRetention.TAIL -> keepTailWholeLines(folded, TRUNCATE_KEEP_LENGTH)
+            OutputRetention.HEAD -> keepHeadWholeLines(folded, TRUNCATE_KEEP_LENGTH)
         }
         val totalLines = output.count { it == '\n' } + 1
         val keptLines = kept.count { it == '\n' } + 1
