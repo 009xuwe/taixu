@@ -173,6 +173,8 @@ class SettingsDataStore(
     private val preferredExecutionModeKey = stringPreferencesKey("preferred_execution_mode")
     private val customSystemPromptEnabledKey = booleanPreferencesKey("custom_system_prompt_enabled")
     private val customSystemPromptKey = stringPreferencesKey("custom_system_prompt")
+    private val agentCharNameKey = stringPreferencesKey("agent_char_name")
+    private val agentUserNameKey = stringPreferencesKey("agent_user_name")
     private val legacyEnvironmentVariablesKey = stringPreferencesKey("environment_variables_json")
     private val environmentPrivacyModeKey = booleanPreferencesKey("environment_privacy_mode")
 
@@ -258,6 +260,28 @@ class SettingsDataStore(
     suspend fun setCustomSystemPrompt(prompt: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[customSystemPromptKey] = prompt
+        }
+    }
+
+    /** 模型自称（{{char}} 宏与默认提示词人设名），空串回退默认。 */
+    val agentCharName: Flow<String> = context.settingsDataStore.data.map { preferences ->
+        preferences[agentCharNameKey].orEmpty().ifBlank { DEFAULT_AGENT_CHAR_NAME }
+    }
+
+    suspend fun setAgentCharName(name: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[agentCharNameKey] = name.trim()
+        }
+    }
+
+    /** 模型对用户的称呼（{{user}}/{{nickname}} 宏），空串回退默认。 */
+    val agentUserName: Flow<String> = context.settingsDataStore.data.map { preferences ->
+        preferences[agentUserNameKey].orEmpty().ifBlank { DEFAULT_AGENT_USER_NAME }
+    }
+
+    suspend fun setAgentUserName(name: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[agentUserNameKey] = name.trim()
         }
     }
 
@@ -936,6 +960,8 @@ class SettingsDataStore(
     companion object {
         private const val PROTECTED_VALUE_PREFIX = "enc:v1:"
         const val DEFAULT_MAX_CONCURRENT_AGENT_TURNS = 2
+        const val DEFAULT_AGENT_CHAR_NAME = "太墟智枢"
+        const val DEFAULT_AGENT_USER_NAME = "用户"
         const val DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS = 10 * 60
 
         const val MIN_BASE_COMMAND_TIMEOUT_SECONDS = 60

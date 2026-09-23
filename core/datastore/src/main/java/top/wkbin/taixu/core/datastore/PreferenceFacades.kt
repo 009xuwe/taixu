@@ -151,6 +151,8 @@ class AgentPreferences(private val store: SettingsDataStore) {
 
     val customSystemPromptEnabled get() = store.customSystemPromptEnabled
     val customSystemPrompt get() = store.customSystemPrompt
+    val agentCharName get() = store.agentCharName
+    val agentUserName get() = store.agentUserName
     val agentLoggingEnabled get() = store.agentLoggingEnabled
     val selectedDistribution get() = store.selectedDistribution
     val thinkingExpanded get() = store.thinkingExpanded
@@ -181,6 +183,8 @@ class AgentPreferences(private val store: SettingsDataStore) {
     suspend fun setEnvironmentPrivacyMode(value: Boolean) = store.setEnvironmentPrivacyMode(value)
     suspend fun setCustomSystemPromptEnabled(value: Boolean) = store.setCustomSystemPromptEnabled(value)
     suspend fun setCustomSystemPrompt(value: String) = store.setCustomSystemPrompt(value)
+    suspend fun setAgentCharName(value: String) = store.setAgentCharName(value)
+    suspend fun setAgentUserName(value: String) = store.setAgentUserName(value)
     suspend fun setAgentLoggingEnabled(value: Boolean) = store.setAgentLoggingEnabled(value)
     suspend fun setDefaultReasoningDepth(value: String) = store.setDefaultReasoningDepth(value)
     suspend fun setContextCompactionEnabled(value: Boolean) = store.setContextCompactionEnabled(value)

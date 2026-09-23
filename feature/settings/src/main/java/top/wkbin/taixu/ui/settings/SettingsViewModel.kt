@@ -733,6 +733,20 @@ class SettingsViewModel(
         viewModelScope.launch { agentPreferences.setCustomSystemPrompt(prompt) }
     }
 
+    val agentCharName: StateFlow<String> = agentPreferences.agentCharName
+        .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.datastore.SettingsDataStore.DEFAULT_AGENT_CHAR_NAME)
+
+    fun setAgentCharName(name: String) {
+        viewModelScope.launch { agentPreferences.setAgentCharName(name) }
+    }
+
+    val agentUserName: StateFlow<String> = agentPreferences.agentUserName
+        .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.datastore.SettingsDataStore.DEFAULT_AGENT_USER_NAME)
+
+    fun setAgentUserName(name: String) {
+        viewModelScope.launch { agentPreferences.setAgentUserName(name) }
+    }
+
     val defaultReasoningDepth: StateFlow<String> = agentPreferences.defaultReasoningDepth
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 

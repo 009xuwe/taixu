@@ -500,6 +500,15 @@ private fun legacyStringResource(source: String): Int? = when (source) {
         "防止复杂任务中模型陷入死循环；达到轮次后进入下方的自动续跑检查点" -> R.string.settings_text_0337
         "轮次用尽后自动续跑" -> R.string.settings_text_0338
         "轮次用尽即停下等待用户确认；适合希望逐段把关的场景" -> R.string.settings_text_0339
+        "称呼与人设" -> R.string.settings_text_0342
+        "查看默认系统提示词" -> R.string.settings_text_0343
+        "模型自称" -> R.string.settings_text_0344
+        "太墟智枢" -> R.string.settings_text_0345
+        "对用户的称呼" -> R.string.settings_text_0346
+        "用户" -> R.string.settings_text_0347
+        "修改后立即对所有对话生效（留空恢复默认）；自定义提示词中的 {{char}} / {{user}} 宏变量也将使用这两个值。" -> R.string.settings_text_0348
+        "默认系统提示词 (core.md)" -> R.string.settings_text_0349
+        "（默认系统提示词加载失败）" -> R.string.settings_text_0350
         ", target.sizeBytes.toDouble() / (1024 * 1024))} MB 空间）。/workspace 工作区中的代码文件不会受到任何影响。" -> R.string.settings_long_001
         "1. 分析上述 PRoot 沙箱内的失败报错（如 dpkg 依赖破损、锁残留、网络下载受阻、commandLinks 软链接缺失或环境缺失）；" -> R.string.settings_long_002
         "2. 直接调用 base 工具执行针对性的修复命令（如清理 /var/lib/dpkg 锁、dpkg --configure -a、apt-get --fix-broken install、手动从备用源拉取或补齐软链接）；" -> R.string.settings_long_003

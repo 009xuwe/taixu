@@ -90,6 +90,8 @@ fun AgentSettingsScreen(
     val thinkingAutoTranslate by viewModel.thinkingAutoTranslate.collectAsStateWithLifecycle()
     val customSystemPromptEnabled by viewModel.customSystemPromptEnabled.collectAsStateWithLifecycle()
     val customSystemPrompt by viewModel.customSystemPrompt.collectAsStateWithLifecycle()
+    val agentCharName by viewModel.agentCharName.collectAsStateWithLifecycle()
+    val agentUserName by viewModel.agentUserName.collectAsStateWithLifecycle()
     val compactionEnabled by viewModel.contextCompactionEnabled.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
     val roundLimitAutoContinuations by viewModel.roundLimitAutoContinuations.collectAsStateWithLifecycle()
@@ -284,6 +286,10 @@ fun AgentSettingsScreen(
                     onEnabledChange = viewModel::setCustomSystemPromptEnabled,
                     prompt = customSystemPrompt,
                     onPromptChange = viewModel::setCustomSystemPrompt,
+                    charName = agentCharName,
+                    onCharNameChange = viewModel::setAgentCharName,
+                    userName = agentUserName,
+                    onUserNameChange = viewModel::setAgentUserName,
                 )
             }
 
@@ -1761,6 +1767,10 @@ private fun SystemPromptCustomCard(
     onEnabledChange: (Boolean) -> Unit,
     prompt: String,
     onPromptChange: (String) -> Unit,
+    charName: String,
+    onCharNameChange: (String) -> Unit,
+    userName: String,
+    onUserNameChange: (String) -> Unit,
 ) {
     // 仅在首次进入时以持久化值初始化缓冲，避免 remember(prompt) 键在每次 Datastore 回写时重置输入；
     // 输入经 400ms 防抖后再写入 Datastore，避免每次按键都落盘
@@ -1772,8 +1782,57 @@ private fun SystemPromptCustomCard(
         }
     }
 
+    // 称呼输入同样走 400ms 防抖落盘；留空即回退默认值
+    var charNameBuffer by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(charName) }
+    androidx.compose.runtime.LaunchedEffect(charNameBuffer) {
+        if (charNameBuffer != charName) {
+            kotlinx.coroutines.delay(400)
+            onCharNameChange(charNameBuffer)
+        }
+    }
+    var userNameBuffer by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(userName) }
+    androidx.compose.runtime.LaunchedEffect(userNameBuffer) {
+        if (userNameBuffer != userName) {
+            kotlinx.coroutines.delay(400)
+            onUserNameChange(userNameBuffer)
+        }
+    }
+
+    var showDefaultPromptDialog by remember { mutableStateOf(false) }
+    var defaultPromptAsset by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    val androidContext = androidx.compose.ui.platform.LocalContext.current
+    if (showDefaultPromptDialog) {
+        androidx.compose.runtime.LaunchedEffect(showDefaultPromptDialog) {
+            if (defaultPromptAsset.isBlank()) {
+                defaultPromptAsset = runCatching {
+                    androidContext.assets.open("prompts/system/core.md").bufferedReader().use { it.readText() }
+                }.getOrDefault("（默认系统提示词加载失败）")
+            }
+        }
+        RuntimeAlertDialog(
+            onDismissRequest = { showDefaultPromptDialog = false },
+            title = { Text("默认系统提示词 (core.md)", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text(
+                        defaultPromptAsset,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDefaultPromptDialog = false }) { Text("知道了") }
+            },
+        )
+    }
+
     val defaultPromptTemplate = """
 You are a helpful and expert AI assistant called {{char}}, based on model {{model_name}}.
+
+## Persona
+- You refer to yourself as {{char}} in conversations.
+- You address the user as {{user}}.
 
 ## System & Device Context
 - Time: {{cur_datetime}}
@@ -1833,6 +1892,54 @@ You are a helpful and expert AI assistant called {{char}}, based on model {{mode
                     onCheckedChange = onEnabledChange,
                 )
             }
+
+            // 称呼配置独立于自定义提示词开关：默认提示词同样生效
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("称呼与人设", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                TextButton(
+                    onClick = { showDefaultPromptDialog = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        RuntimeIcon(RuntimeIconName.Visibility, Modifier.size(12.dp))
+                        Text("查看默认系统提示词", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = charNameBuffer,
+                    onValueChange = { charNameBuffer = it },
+                    label = { Text("模型自称") },
+                    placeholder = { Text("太墟智枢") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = userNameBuffer,
+                    onValueChange = { userNameBuffer = it },
+                    label = { Text("对用户的称呼") },
+                    placeholder = { Text("用户") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Text(
+                "修改后立即对所有对话生效（留空恢复默认）；自定义提示词中的 {{char}} / {{user}} 宏变量也将使用这两个值。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             if (enabled) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
