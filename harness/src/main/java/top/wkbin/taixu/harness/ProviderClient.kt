@@ -1124,6 +1124,12 @@ class ProviderClient(
                     "API 免费额度已耗尽 (HTTP 403)：请前往模型服务商控制台充值、关闭免费层限制，或在太墟中切换其他可用模型。"
                 code == 401 || lowerMsg.contains("invalid api key") || lowerMsg.contains("unauthorized") ->
                     "API Key 无效或未授权 (HTTP 401)：请在模型设置中检查并更新该服务商的 API Key。"
+                // 402 与直述"余额/额度"的文案：不少厂商（DeepSeek、多数中转站）用 402 而非 429
+                // 回报余额耗尽。原实现会把它并入泛化 4xx（IllegalStateException），既不重试也不给
+                // 充值引导，用户侧表现为"每次发送都瞬间失败、且不知道原因"。
+                code == 402 || lowerMsg.contains("insufficient balance") ||
+                    lowerMsg.contains("余额") || lowerMsg.contains("额度已用尽") ->
+                    "API 余额/额度已耗尽 (HTTP $code)：请前往模型服务商控制台充值，或在太墟中切换其他可用模型。$errorMsg"
                 code == 429 || lowerMsg.contains("rate limit") || lowerMsg.contains("insufficient_quota") || lowerMsg.contains("quota") ->
                     "API 额度已用尽或请求频率超限 (HTTP $code)：$errorMsg"
                 code == 404 ->

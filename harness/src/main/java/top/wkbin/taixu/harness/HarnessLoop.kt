@@ -1081,11 +1081,34 @@ class HarnessLoop(
                 }
             }
         } catch (_: CancellationException) {
+            // cancel() 先入 cancellingSessions 再 cancel job、cancelAndJoin 之后才移除，
+            // 因此在本 catch（属于被取消 job 的收尾段，join 会等它跑完）里该集合的
+            // 成员关系可判定"是否用户主动停止"。会话删除走 tombstoneSessions 而非
+            // cancellingSessions，据此避免在正在销毁的会话上补写消息。
+            val userInitiated = cancellingSessions.contains(sessId)
+            val tombstoned = tombstonedSessions.contains(sessId)
             withContext(NonCancellable) {
                 repairDanglingToolCalls(sessId, interrupted = true)
                 taskId?.let { agentTaskStateMachine.markCancelled(it) }
                 operationCoordinator.finish(sessId, "aborted", details = "cancelled")
+                // 原实现只把状态置回 IDLE，前台消息流里什么都不留，用户看到的是
+                // "消息发出去就没了"，与"发送总是中断"的反馈完全吻合。
+                if (userInitiated && !tombstoned) {
+                    messageProjector.append(
+                        sessId,
+                        AssistantText(
+                            id = newId(),
+                            createdAt = now(),
+                            text = "⏹ 已停止本次运行。",
+                        ),
+                    )
+                }
             }
+            logger.logAgent(
+                sessId,
+                "Cancelled",
+                if (userInitiated) "本次运行被用户主动停止" else "本次运行被系统取消（非用户停止）",
+            )
             logger.i("Harness loop cancelled for session $sessId")
             stateMirrors.setRunState(sessId, SessionRunState.IDLE)
         } catch (_: ApprovalPauseException) {
@@ -1151,6 +1174,13 @@ class HarnessLoop(
                     is RunResult.Failed -> "failed"
                 },
             )
+            // 失败原因必须与 RunMetrics 同源、同等地不受日志开关门控地落盘：
+            // agentLoggingEnabled 默认关闭，而 74/545 次运行以 Rounds=1/ToolCalls=0
+            // 的形态瞬间 failed，用户侧只表现为"发送消息总是中断"。只留指标没有原因，
+            // 这类投诉永远无法定位。此处记录的是唯一的可行动线索。
+            if (result is RunResult.Failed) {
+                logger.logAgent(sessId, "RunFailure", "运行终止（failed）：${result.message}")
+            }
             return result
         } catch (cancellation: CancellationException) {
             metrics.finish("cancelled")
@@ -1160,6 +1190,12 @@ class HarnessLoop(
             throw pause
         } catch (throwable: Throwable) {
             metrics.finish("error")
+            logger.logAgent(
+                sessId,
+                "RunFailure",
+                "运行异常终止（error）：${throwable::class.simpleName}: ${throwable.message}",
+                throwable,
+            )
             throw throwable
         } finally {
             logger.logAgent(sessId, "RunMetrics", metrics.summary())
