@@ -313,6 +313,33 @@ class ChatApiTest {
     }
 
     @Test
+    fun `empty stream fails loudly and carries the raw response head`() = runBlocking {
+        // 上游 200 但只发了 [DONE]：此前会被判定为"模型答完了"，前台表现为没有任何回复。
+        server.enqueue(MockResponse().setBody("data: [DONE]"))
+        val thrown = runCatching { api.chatStream(model(), emptyList()) { } }.exceptionOrNull()
+        assertTrue(thrown is LlmEmptyResponseException)
+        val msg = thrown!!.message.orEmpty()
+        assertTrue("Expected empty-response guidance, got: $msg", msg.contains("空响应"))
+        assertTrue("Expected raw response head for diagnosis, got: $msg", msg.contains("[DONE]"))
+    }
+
+    @Test
+    fun `non sse json body is recovered instead of silently dropped`() = runBlocking {
+        // 部分 OpenAI 兼容网关忽略 stream:true，直接返回整段 JSON 补全：
+        // 这种 body 没有 data: 行，此前被逐行丢弃，最终表现为空回复。
+        server.enqueue(
+            MockResponse().setBody(
+                """{"choices":[{"message":{"role":"assistant","content":"兜底解析回来的回复"}}],
+                   "usage":{"prompt_tokens":12,"completion_tokens":8}}""",
+            ),
+        )
+        val result = api.chatStream(model(), emptyList()) { }
+        assertEquals("兜底解析回来的回复", result.content)
+        assertEquals(12L, result.usage.inputTokens)
+        assertEquals(8L, result.usage.outputTokens)
+    }
+
+    @Test
     fun `html response is reported with a friendly message instead of a serialization stack`() = runBlocking {
         // 模拟代理/CDN 返回 HTML 登录页 (与 runtime.log 里 Model discovery 那条同源)。
         server.enqueue(

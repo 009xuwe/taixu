@@ -59,6 +59,11 @@ class ApiContextAssembler(
             providerId = model.provider,
         )
         val toolCallMode = if (model.pureChatMode) ToolCallMode.DISABLED else model.toolCallMode
+        // 折叠线的工具 schema 预留按模式取：不外发 tools 的会话不该白留这 5,600 token
+        val toolSchemaReserveTokens = ContextWindowPolicy.toolSchemaReserveTokensFor(
+            pureChat = model.pureChatMode,
+            toolDisabled = toolCallMode == ToolCallMode.DISABLED,
+        )
 
         var compactedContext = compactionManager.project(sessId)
         var msgs = compactedContext.messages
@@ -141,6 +146,7 @@ class ApiContextAssembler(
                     keepRecentTokens = model.compactionKeepRecentTokens ?: 0,
                     reserveTokens = model.compactionReserveTokens,
                     foldingRatioPercent = foldingRatioPercent,
+                    toolSchemaReserveTokens = toolSchemaReserveTokens,
                 )
             } else {
                 0
@@ -185,6 +191,7 @@ class ApiContextAssembler(
                             ContextWindowPolicy.estimateTokens(compactedContext.summaryLayer) +
                             recallTokens,
                         reserveTokens = model.compactionReserveTokens,
+                        toolSchemaReserveTokens = toolSchemaReserveTokens,
                     ),
                 )
             }

@@ -7,7 +7,15 @@ import kotlinx.serialization.json.jsonPrimitive
 /** Pure context-budget and historical-folding policy used by the provider mapper and UI. */
 object ContextWindowPolicy {
     internal const val RESERVED_OUTPUT_TOKENS = 8_192
-    internal const val TOOL_SCHEMA_RESERVE_TOKENS = 4_096
+    /**
+     * 折叠线为 provider 可见 tools 数组预留的 token。
+     *
+     * 口径与 [estimateToolDefinitionTokens] 一致，实测对象是 `ProviderClient.TOOLS`：
+     * 2026-09-24 实测 5,493（20 个内置工具），取 5,600 留约 2% 余量。
+     * 旧值 4,096 低于实测约 1,400，这段缺口会直接从折叠线余量里挖走（溢出风险）。
+     * 增删或放大工具后须用 ContextWindowPolicyTest 的一致性测试重新校准（低于实测即失败）。
+     */
+    internal const val TOOL_SCHEMA_RESERVE_TOKENS = 5_600
     private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
     private const val MIN_SYSTEM_PROMPT_TOKENS = 512
     /** 超过此 token 数的用户消息才参与巨型消息截断（普通消息交给折叠线，避免误伤）。 */
@@ -58,6 +66,11 @@ object ContextWindowPolicy {
         ratioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
         systemTokens: Int = 0,
         reserveTokens: Int? = null,
+        /**
+         * 本次请求要预留的工具 schema token，用 [toolSchemaReserveTokensFor] 按模式取。
+         * 默认值即满预留，漏传的调用点只会多留（折叠略早），不会少留。
+         */
+        toolSchemaReserveTokens: Int = TOOL_SCHEMA_RESERVE_TOKENS,
     ): Int {
         if (budget <= 0) return 0
         val safeRatio = ratioPercent.coerceIn(MIN_FOLDING_RATIO_PERCENT, MAX_FOLDING_RATIO_PERCENT)
@@ -65,8 +78,18 @@ object ContextWindowPolicy {
         return scaledBudget -
             systemTokens.coerceAtLeast(0) -
             (reserveTokens ?: RESERVED_OUTPUT_TOKENS) -
-            TOOL_SCHEMA_RESERVE_TOKENS
+            toolSchemaReserveTokens.coerceAtLeast(0)
     }
+
+    /**
+     * 按调用模式取工具 schema 预留，模式布尔与 [estimateReservedPromptTokens] 同一组。
+     *
+     * NATIVE（独立 tools 数组）与 JSON_TEXT（schema 以文本注入 system/instructions）都会把
+     * schema 真正塞进请求，必须预留；纯聊天与工具禁用模式下 provider 面没有任何 tools，
+     * 预留这段只会白占历史预算、让折叠线无谓提前（这段空间本该留给历史）。
+     */
+    fun toolSchemaReserveTokensFor(pureChat: Boolean, toolDisabled: Boolean): Int =
+        if (pureChat || toolDisabled) 0 else TOOL_SCHEMA_RESERVE_TOKENS
 
     /**
      * Compaction threshold (in characters) per tool type. `read`/`base` commonly
@@ -240,26 +263,51 @@ object ContextWindowPolicy {
         return (cjk / 1.8f + ascii / 2.5f + punctuation / 2.8f).toInt().coerceAtLeast(1)
     }
 
-    /** Central estimate for the provider-facing ApiMessage representation. */
-    fun estimateApiMessages(messages: List<ApiMessage>): Int = messages.sumOf { message ->
-        // Keep a small per-message framing allowance; provider tokenizers count role and
-        // content-part markers too, while our fallback tokenizer cannot see them.
-        4 + estimateTokens(message.content.orEmpty()) +
-            estimateTokens(message.reasoning_content.orEmpty()) +
-            message.imageUrls.sumOf { image ->
-                if (image.startsWith("data:image/", ignoreCase = true)) {
-                    (image.length / 3).coerceAtLeast(ESTIMATED_IMAGE_TOKENS)
-                } else ESTIMATED_IMAGE_TOKENS
-            } +
-            message.tool_calls.orEmpty().sumOf { call ->
-                estimateTokens(call.function.name) + estimateTokens(call.function.arguments) + 4
-            }
+    /**
+     * Provider 可见工具 schema 的 token 估算（与 [SystemPromptBuilder] 用量快照同一算法）。
+     *
+     * 为什么需要它：tools 数组不在这批 ApiMessage 里，任何只统计 messages 的估算
+     * （[estimateApiMessages]、[outputBudget]）都必须显式把它加回来，否则真实输入
+     * 会比估算多出整个 schema 的量，把折叠线余量悄悄吃掉，最终以 400/413 溢出。
+     */
+    fun estimateToolDefinitionTokens(tools: List<ApiToolDefinition>): Int = tools.sumOf { tool ->
+        estimateTokens(tool.function.name) +
+            estimateTokens(tool.function.description) +
+            estimateTokens(tool.function.parameters.toString()) +
+            4
     }
+
+    /**
+     * Central estimate for the provider-facing ApiMessage representation.
+     *
+     * @param toolSchemaTokens 同一次请求里 tools 数组的 token（见 [estimateToolDefinitionTokens]）。
+     *   非 NATIVE 模式或 schema 已内联进 messages 时传 0，避免重复计数。
+     */
+    fun estimateApiMessages(messages: List<ApiMessage>, toolSchemaTokens: Int = 0): Int =
+        toolSchemaTokens.coerceAtLeast(0) + messages.sumOf { message ->
+            // Keep a small per-message framing allowance; provider tokenizers count role and
+            // content-part markers too, while our fallback tokenizer cannot see them.
+            4 + estimateTokens(message.content.orEmpty()) +
+                estimateTokens(message.reasoning_content.orEmpty()) +
+                message.imageUrls.sumOf { image ->
+                    if (image.startsWith("data:image/", ignoreCase = true)) {
+                        (image.length / 3).coerceAtLeast(ESTIMATED_IMAGE_TOKENS)
+                    } else ESTIMATED_IMAGE_TOKENS
+                } +
+                message.tool_calls.orEmpty().sumOf { call ->
+                    estimateTokens(call.function.name) + estimateTokens(call.function.arguments) + 4
+                }
+        }
 
     /** Runtime-safe profile value: null and non-positive values mean provider default. */
     fun normalizeOutputTokens(value: Int?, providerDefault: Int): Int =
         (value?.takeIf { it > 0 } ?: providerDefault).coerceAtLeast(1)
-    /** One output budget calculation used by all provider request builders. */
+    /**
+     * One output budget calculation used by all provider request builders.
+     *
+     * @param toolSchemaTokens 同一次请求里 tools 数组的 token。必须与输入估算扣同一笔账：
+     *   漏扣时 `available` 会把越线的输入当成可用输出额度补回来，输入+输出一起撞上窗口上限。
+     */
     fun outputBudget(
         configured: Int?,
         providerDefault: Int,
@@ -267,12 +315,13 @@ object ContextWindowPolicy {
         contextTokens: Int?,
         modelId: String? = null,
         providerId: String? = null,
+        toolSchemaTokens: Int = 0,
     ): Int {
         val requested = normalizeOutputTokens(configured, providerDefault)
         val resolvedContext = contextTokens ?: ModelContextWindows.resolve(modelId, providerId)
         val context = resolvedContext?.takeIf { it > 0 }?.coerceIn(1, MAX_CONTEXT_BUDGET)
             ?: return requested
-        val available = (context - estimateApiMessages(messages)).coerceAtLeast(1)
+        val available = (context - estimateApiMessages(messages, toolSchemaTokens)).coerceAtLeast(1)
         return minOf(requested, available).coerceAtLeast(1)
     }
 
@@ -344,9 +393,17 @@ object ContextWindowPolicy {
         subagentTokens: Int = 0,
         /** 历史折叠线比例（%，默认 [DEFAULT_FOLDING_RATIO_PERCENT]）。透传给 computeKeepFromIndex。 */
         foldingRatioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
+        /** 工具 schema 预留，透传给 computeKeepFromIndex（见 [toolSchemaReserveTokensFor]）。 */
+        toolSchemaReserveTokens: Int = TOOL_SCHEMA_RESERVE_TOKENS,
     ): EffectiveContextUsage {
         val keepFrom = if (compactionEnabled) {
-            computeKeepFromIndex(messages, budget, systemTokens, foldingRatioPercent = foldingRatioPercent)
+            computeKeepFromIndex(
+                messages,
+                budget,
+                systemTokens,
+                foldingRatioPercent = foldingRatioPercent,
+                toolSchemaReserveTokens = toolSchemaReserveTokens,
+            )
         } else {
             0
         }
@@ -427,6 +484,8 @@ object ContextWindowPolicy {
          * 比例仅用于主动提前折叠省 token，不会再被额外的 75% 输入比例或 96K 硬顶二次截断。
          */
         foldingRatioPercent: Int = DEFAULT_FOLDING_RATIO_PERCENT,
+        /** 工具 schema 预留，透传给 [foldingLimitFor]（见 [toolSchemaReserveTokensFor]）。 */
+        toolSchemaReserveTokens: Int = TOOL_SCHEMA_RESERVE_TOKENS,
     ): Int {
         if (messages.size <= 1) return 0
         if (budget <= 0) {
@@ -439,6 +498,7 @@ object ContextWindowPolicy {
             ratioPercent = safeRatio,
             systemTokens = systemTokens,
             reserveTokens = reserveTokens,
+            toolSchemaReserveTokens = toolSchemaReserveTokens,
         )
         // 小预算模型的 rawLimit 必须能落到 <= 0，才能触发最小保留兜底；
         // 不再对 limit 做下限抬升，否则历史折叠永不触发。

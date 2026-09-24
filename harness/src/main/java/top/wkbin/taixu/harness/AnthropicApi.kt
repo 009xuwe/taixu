@@ -401,6 +401,15 @@ internal class AnthropicApi(
             }
         }
 
+        val dynamicTools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools()
+        // NATIVE 模式下 tools 数组独立于 messages，输出预算必须显式扣掉 schema
+        val toolSchemaTokens =
+            if (!model.pureChatMode && model.toolCallMode == ToolCallMode.NATIVE) {
+                ContextWindowPolicy.estimateToolDefinitionTokens(dynamicTools)
+            } else {
+                0
+            }
+
         val requestBody = buildJsonObject {
             put("model", model.model)
             // Anthropic 必填；未配置时用安全默认值
@@ -411,6 +420,7 @@ internal class AnthropicApi(
                 model.contextTokens,
                 model.model,
                 model.provider,
+                toolSchemaTokens,
             )
             put("max_tokens", effectiveMaxTokens)
             // 推理开关/强度：thinking enabled 时 Anthropic 强制要求 temperature=1（省略即默认），
@@ -423,7 +433,6 @@ internal class AnthropicApi(
                 model.topP?.let { put("top_p", it) }
             }
             put("stream", stream)
-            val dynamicTools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools()
             if (!model.pureChatMode && model.toolCallMode == ToolCallMode.JSON_TEXT && dynamicTools.isNotEmpty()) {
                 // JSON 文本模式：工具定义写进 system，模型用文本输出工具调用
                 systemPrompt.append("\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n")

@@ -302,12 +302,15 @@ class SystemPromptBuilder(
             val mcpTokens = tokens(mcpCapabilitySection)
             val subagentTokens = tokens(subagentSection)
             val promptTokens = tokens(prompt)
-            val toolDefinitionTokens = if (toolCallMode == ToolCallMode.NATIVE) {
-                ProviderClient.TOOLS.sumOf { tool ->
-                    tokens(tool.function.name) + tokens(tool.function.description) +
-                        tokens(tool.function.parameters.toString()) + 4
-                }
-            } else 0
+            // 与请求构造共用同一算法（输出预算也要扣这一笔），避免两处口径再次分化。
+            // NATIVE 走独立 tools 数组，JSON_TEXT 把同一批 schema 以文本注入 system——
+            // 实测 5,493 vs 5,566（差 1.3%），共用同一口径即可，都占真实上下文。
+            // 只有 DISABLED（含纯聊天）不注入任何 schema，才记 0，否则面板会漏算这 5.5k。
+            val toolDefinitionTokens = if (toolCallMode == ToolCallMode.DISABLED) {
+                0
+            } else {
+                ContextWindowPolicy.estimateToolDefinitionTokens(ProviderClient.TOOLS)
+            }
             val snapshot = PromptUsageSnapshot(
                 toolCallMode = toolCallMode,
                 systemTokens = (promptTokens - skillsTokens - rulesTokens - mcpTokens - subagentTokens).coerceAtLeast(0),

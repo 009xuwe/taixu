@@ -354,9 +354,14 @@ class ContextWindowPolicyTest {
             }
         }
 
-        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10, foldingRatioPercent = 70)
+        // 预算必须高过固定预留（输出 8,192 + 工具 schema 预留）后仍有正的折叠线，
+        // 否则只会走最小保留兜底，测不到轮内切割。
+        val budget = 24_000
+        val limit = ContextWindowPolicy.foldingLimitFor(budget, ratioPercent = 70, systemTokens = 10)
+        assertTrue("fixture 预算必须让折叠线为正，limit=$limit", limit > 0)
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = budget, systemTokens = 10, foldingRatioPercent = 70)
 
-        // 旧行为会把整个巨型轮次保留（keepFrom == 2 起点且 kept 超限）；split-turn 必须切在轮内
+        // 旧行为会把整个巨型轮次保留（keepFrom == 2 起点且 kept 超限）；必须在轮内切
         assertTrue(keepFrom > 2)
         val firstKept = messages[keepFrom]
         assertTrue(
@@ -372,7 +377,7 @@ class ContextWindowPolicyTest {
                 else -> 0
             }
         }
-        assertTrue("kept tokens $keptTokens must fit the limit", keptTokens < 18_000 * 0.75)
+        assertTrue("kept tokens $keptTokens must fit the limit $limit", keptTokens <= limit)
     }
 
     @Test
@@ -662,6 +667,32 @@ class ContextWindowPolicyTest {
     }
 
     @Test
+    fun `tool schema reserve follows the call mode`() {
+        // 纯聊天 / 工具禁用：provider 面没有 tools，预留为 0（这段预算留给历史）
+        assertEquals(0, ContextWindowPolicy.toolSchemaReserveTokensFor(pureChat = true, toolDisabled = true))
+        assertEquals(0, ContextWindowPolicy.toolSchemaReserveTokensFor(pureChat = false, toolDisabled = true))
+        // NATIVE（独立 tools 数组）与 JSON_TEXT（schema 注入 system）都要预留
+        assertEquals(
+            ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS,
+            ContextWindowPolicy.toolSchemaReserveTokensFor(pureChat = false, toolDisabled = false),
+        )
+
+        // 折叠线随之放宽：同一预算下，不外发 tools 的触发线正好高出整个 schema 预留
+        val budget = 128_000
+        val withTools = ContextWindowPolicy.foldingLimitFor(budget, 100, systemTokens = 0)
+        val withoutTools = ContextWindowPolicy.foldingLimitFor(
+            budget,
+            100,
+            systemTokens = 0,
+            toolSchemaReserveTokens = ContextWindowPolicy.toolSchemaReserveTokensFor(
+                pureChat = false,
+                toolDisabled = true,
+            ),
+        )
+        assertEquals(ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS, withoutTools - withTools)
+    }
+
+    @Test
     fun `default ratio 100 folding line matches mainstream formula`() {
         val budget = 128_000
         val systemTokens = 10
@@ -832,6 +863,18 @@ class ContextWindowPolicyTest {
         assertTrue(
             "两者差距必须显著，否则本测试无判别力（$projected vs $unprojected）",
             unprojected - projected > unprojected / 2,
+        )
+    }
+
+    @Test
+    fun `tool schema reserve covers the real provider-visible schema`() {
+        // 折叠线用常量 TOOL_SCHEMA_RESERVE_TOKENS 支付 tools schema；常量低于实测值时，
+        // 缺口会直接从余量里挖走（真实输入超出折叠线 → 400/413）。加工具后本测试会立刻失败。
+        val actual = ContextWindowPolicy.estimateToolDefinitionTokens(ProviderClient.TOOLS)
+        val reserve = ContextWindowPolicy.TOOL_SCHEMA_RESERVE_TOKENS
+        assertTrue(
+            "TOOL_SCHEMA_RESERVE_TOKENS=$reserve 低于实测 schema=$actual（${ProviderClient.TOOLS.size} 个工具），需同步抬升",
+            actual <= reserve,
         )
     }
 

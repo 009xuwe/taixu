@@ -91,10 +91,11 @@ class SessionModelSwitcher(
             settingsDataStore.contextCompactionEnabled.first()
         }.getOrDefault(true)
         val context = compactionManager.project(sessionId)
+        val toolDisabled = profile.pureChatMode ||
+            profile.toolCallMode.equals("disabled", ignoreCase = true)
         val systemTokens = ContextWindowPolicy.estimateReservedPromptTokens(
             pureChat = profile.pureChatMode,
-            toolDisabled = profile.pureChatMode ||
-                profile.toolCallMode.equals("disabled", ignoreCase = true),
+            toolDisabled = toolDisabled,
             summaryTokens = ContextWindowPolicy.estimateTokens(context.summaryLayer),
         )
         val keepFrom = if (compactionEnabled) {
@@ -104,6 +105,11 @@ class SessionModelSwitcher(
                 systemTokens,
                 keepRecentTokens = profile.compactionKeepRecentTokens ?: 0,
                 reserveTokens = profile.compactionReserveTokens,
+                // 与请求组装同口径：不外发 tools 的会话不为 schema 预留历史预算
+                toolSchemaReserveTokens = ContextWindowPolicy.toolSchemaReserveTokensFor(
+                    pureChat = profile.pureChatMode,
+                    toolDisabled = toolDisabled,
+                ),
             )
         } else {
             0

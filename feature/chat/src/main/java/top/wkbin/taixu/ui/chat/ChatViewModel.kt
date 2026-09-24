@@ -588,7 +588,9 @@ class ChatViewModel(
         val snapshot = snapshots[sessionId]?.takeIf { it.toolCallMode == toolCallMode }
 
         val systemPromptTokens = if (pureChat) 0 else snapshot?.systemTokens ?: ContextWindowPolicy.DEFAULT_SYSTEM_PROMPT_TOKENS
-        val toolDefinitionTokens = if (toolCallMode != ToolCallMode.NATIVE) 0 else
+        // NATIVE 的 tools 数组与 JSON_TEXT 注入 system 的 schema 都占真实上下文，
+        // 只有纯聊天 / 工具禁用（toolDisabled）才为 0；按 toolCallMode != NATIVE 归零会漏算 JSON_TEXT 的 5.5k。
+        val toolDefinitionTokens = if (toolDisabled) 0 else
             snapshot?.toolDefinitionTokens ?: ContextWindowPolicy.DEFAULT_NATIVE_TOOL_TOKENS
         val rulesTokens = if (pureChat) 0 else snapshot?.rulesTokens ?: ContextWindowPolicy.DEFAULT_RULES_TOKENS
         // 技能正文仅在被 @ 提及后注入。尚无请求快照时不把所有已启用技能误算为常驻正文。
@@ -598,9 +600,11 @@ class ChatViewModel(
 
         val totalSystemTokens = systemPromptTokens + toolDefinitionTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
         // 折叠线只扣除持续占据上下文且不在 messages 内的真实提示开销；
-        // toolDefinitionTokens 已由 foldingLimitFor 内部的 TOOL_SCHEMA_RESERVE_TOKENS 支付，
-        // 不能在这里再扣一次（旧实现双重扣减，会把 1M 模型错误压到 67K 左右）。
+        // toolDefinitionTokens 已由 foldingLimitFor 内部的工具 schema 预留支付（NATIVE/JSON_TEXT 才预留，
+        // 纯聊天与工具禁用时为 0），不能在这里再扣一次（旧实现双重扣减，会把 1M 模型错误压到 67K 左右）。
         val promptOverheadTokens = systemPromptTokens + rulesTokens + skillTokens + mcpTokens + subagentTokens
+        // 与引擎 ApiContextAssembler 同口径按模式取工具 schema 预留
+        val toolSchemaReserveTokens = ContextWindowPolicy.toolSchemaReserveTokensFor(pureChat, toolDisabled)
         val declaredTokens = activeModel?.contextTokens
         val effectiveContextWindow = ContextWindowPolicy.resolveContextWindow(
             declaredContextTokens = declaredTokens,
@@ -653,6 +657,7 @@ class ChatViewModel(
             mcpTokens = mcpTokens,
             subagentTokens = subagentTokens,
             foldingRatioPercent = foldingRatioPercent,
+            toolSchemaReserveTokens = toolSchemaReserveTokens,
         )
         val totalPromptTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.promptTokens?.toLong() }.sum()
         val totalCachedTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.cachedTokens?.toLong() }.sum()
@@ -664,6 +669,7 @@ class ChatViewModel(
             budget = budget,
             ratioPercent = foldingRatioPercent,
             systemTokens = foldingOverheadTokens,
+            toolSchemaReserveTokens = toolSchemaReserveTokens,
         ).coerceAtLeast(1)
 
         // 引擎会把召回后缀追加到 user 消息上随请求发送，因此「已用」总量与对话细分都应计入

@@ -55,4 +55,13 @@ data class NormalizedProviderResponse(
     val textToolCallCount: Int,
     val invalidMarkerCount: Int,
     val hasUnresolvedMarkers: Boolean,
-)
+) {
+    /**
+     * 完全空的一轮：模型没产出正文、推理，也没有（原生或文本）工具调用。
+     *
+     * 判据取 rawText 而非 result.content：rawText 是流式累积的真实回包，两者应当一致，
+     * 但工具协议解析失败时 displayText 会被清空而 rawText 保留原文，此时不属于"空响应"。
+     */
+    val isBlankResponse: Boolean
+        get() = rawText.isBlank() && result.reasoningContent.isNullOrBlank() && toolCalls.isEmpty()
+}

@@ -42,6 +42,10 @@ class RunMetrics(
     private val totalInputTokens = AtomicLong()
     private val totalCacheReadTokens = AtomicLong()
 
+    // 输入估算/实际对照：估算低于实际即系统性低估，低估会把折叠线余量悄悄吃光（400/413 溢出）。
+    // 与 totalInputTokens 在同一批轮次上累计，故 summary 里的比值可直接判读。
+    private val estimatedInputTokens = AtomicLong()
+
     fun roundStarted() { rounds.incrementAndGet() }
     fun toolCallRecorded(failed: Boolean) {
         toolCalls.incrementAndGet()
@@ -70,6 +74,14 @@ class RunMetrics(
         }
     }
 
+    /**
+     * 记录一轮请求发出前引擎自己估算的输入 token 数（含工具 schema）。
+     * 调用点必须与 [recordUsage] 落在同一批成功轮次上，否则比值会被失败轮污染。
+     */
+    fun recordEstimatedInput(tokens: Int) {
+        if (tokens > 0) estimatedInputTokens.addAndGet(tokens.toLong())
+    }
+
     fun summary(): String = buildString {
         append("Rounds=").append(rounds.get())
         append(", ToolCalls=").append(toolCalls.get())
@@ -92,6 +104,16 @@ class RunMetrics(
             "n/a"
         }
         append(", CacheHit=").append(cacheHitStr)
+        // EstAccuracy = 估算/实际；< 100% 即低估（越低越危险：折叠线余量被悄悄吃光后溢出）
+        val estimatedToks = estimatedInputTokens.get()
+        append(", EstInput=").append(estimatedToks)
+        append(", EstAccuracy=").append(
+            when {
+                estimatedToks <= 0 -> "n/a"
+                inputToks <= 0 -> "n/a (no usage)"
+                else -> "${estimatedToks * 100L / inputToks}%"
+            },
+        )
         append(", Outcome=").append(outcome)
     }
 }

@@ -352,6 +352,13 @@ internal class ResponsesApi(
             systemPrompt.append("\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n")
                 .append(ProviderClient.buildToolsTextDescription(dynamicTools))
         }
+        // NATIVE 模式下 tools 数组独立于 input，输出预算必须显式扣掉 schema
+        val toolSchemaTokens =
+            if (!model.pureChatMode && model.toolCallMode == ToolCallMode.NATIVE) {
+                ContextWindowPolicy.estimateToolDefinitionTokens(dynamicTools)
+            } else {
+                0
+            }
 
         val requestBody = buildJsonObject {
             put("model", model.model)
@@ -366,6 +373,7 @@ internal class ResponsesApi(
                 model.contextTokens,
                 model.model,
                 model.provider,
+                toolSchemaTokens,
             ))
             // 推理开关/强度：Responses 专用 reasoning.effort 格式
             ReasoningAdapter.responsesFields(model).forEach { (key, value) -> put(key, value) }

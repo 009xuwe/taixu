@@ -411,13 +411,19 @@ class HarnessLoop(
         // Tasks whose restart budget/authority is exhausted remain visible and resumable by the
         // user, but are never silently executed again.
         agentTaskStateMachine.exhaustedRecoverable().forEach { task ->
-            agentTaskStateMachine.markSuspended(
-                task.id,
-                when {
-                    task.sessionId.isBlank() -> "旧任务未绑定会话，需手动重新发起"
-                    !task.autoResume -> "任务未授权进程重启后自动继续"
-                    else -> "已达到进程恢复尝试上限（${task.attemptCount}/${task.maxAttempts}）"
-                },
+            val detail = when {
+                task.sessionId.isBlank() -> "旧任务未绑定会话，需手动重新发起"
+                !task.autoResume -> "任务未授权进程重启后自动继续"
+                else -> "已达到进程恢复尝试上限（${task.attemptCount}/${task.maxAttempts}）"
+            }
+            agentTaskStateMachine.markSuspended(task.id, detail)
+            // 此分支是"自动续跑"的终点：挂起后任务不再产生任何事件，若不落盘则日志里毫无痕迹，
+            // 用户侧只表现为"这条消息永远没有回复"。与 RunFailure 同理，走 AppLogger 不受
+            // agentLoggingEnabled 门控。
+            logger.logAgent(
+                task.sessionId,
+                "DurableTaskSuspended",
+                "taskId=${task.id}, reason=$detail, 不再自动恢复（可在任务列表手动重新发起）",
             )
         }
 

@@ -117,7 +117,15 @@ class HarnessProviderRunner(
         var requestMessages = assembleFor(model)
         var imageStripped = false
         var overflowRecovered = false
-        val estimatedRequestTokens = estimateTokens(requestMessages)
+        // 与请求构造同口径：messages + provider 可见 tools schema（仅 NATIVE 模式独立于 messages）。
+        // 漏掉 schema 会低估真实输入规模，余量被吃光后以 400/413 溢出。
+        val toolSchemaTokens =
+            if (!model.pureChatMode && model.toolCallMode == ToolCallMode.NATIVE) {
+                ContextWindowPolicy.estimateToolDefinitionTokens(ProviderClient.buildDynamicTools())
+            } else {
+                0
+            }
+        val estimatedRequestTokens = estimateTokens(requestMessages) + toolSchemaTokens
         val maxNetworkRetries = maxNetworkRetriesFor(estimatedRequestTokens, retryPolicy.maxRetries)
         val maxAttempts = maxNetworkRetries + 1
         if (maxNetworkRetries < retryPolicy.maxRetries) {
@@ -315,6 +323,27 @@ class HarnessProviderRunner(
                     "上下文超出模型窗口，自动压缩后仍无法恢复。" +
                         "可以让模型用 compress 工具手动压缩，或切换到更大上下文窗口的模型后重试。",
                 )
+            } catch (empty: LlmEmptyResponseException) {
+                // 必须位于 IOException 之前：LlmEmptyResponseException 继承 IOException。
+                // 空响应多为上游瞬时异常（网关提前断流、配额抖动），原样重发通常即可恢复；
+                // 超出预算则明确失败并给出原始响应首部——绝不返回"什么都没有"，
+                // 否则上层会走"无工具调用 → 收尾 → Outcome=completed"，前台零提示。
+                currentCoroutineContext().ensureActive()
+                netRetry++
+                if (netRetry > EMPTY_RESPONSE_MAX_RETRIES) {
+                    stateMirrors.setThinkingLive(sessId, false)
+                    messageProjector.remove(sessId, assistantId)
+                    agentEventLogger.log(sessId, "EmptyModelResponse", empty.message.orEmpty(), empty)
+                    // 文案已按长度受控（正文 + 截断首部），此处不套 friendly() 的 200 字截断，
+                    // 否则尾部的原始响应首部会被整段砍掉，等于失去唯一线索。
+                    return TurnProviderOutcome.Failed(empty.message.orEmpty().ifBlank { ProviderClient.EMPTY_RESPONSE_MESSAGE })
+                }
+                metrics.streamRetry()
+                stateMirrors.setThinkingLive(sessId, false)
+                stateMirrors.setStatus(sessId, "模型返回空响应，正在重试（$netRetry/$EMPTY_RESPONSE_MAX_RETRIES）")
+                agentEventLogger.log(sessId, "EmptyModelResponseRetry", "第 $netRetry 次空响应，重试上限 $EMPTY_RESPONSE_MAX_RETRIES")
+                resetStreamBaseline()
+                delay(retryPolicy.delayForRetry(netRetry).milliseconds)
             } catch (io: IOException) {
                 // 用户取消会主动关闭 socket，通常以 IOException 形式抛出：先按取消语义保留已生成内容，再传播取消。
                 if (!currentCoroutineContext().isActive) {
@@ -383,6 +412,8 @@ class HarnessProviderRunner(
                 return TurnProviderOutcome.Failed(friendly(throwable))
             }
         }
+        // 仅在本轮请求真正成功后记录估算值，与 HarnessLoop 里 recordUsage 的计量轮次对齐
+        metrics.recordEstimatedInput(estimatedRequestTokens)
         messageProjector.endStreaming(sessId)
         return TurnProviderOutcome.Success(streamed, streamText.toString())
     }
@@ -402,6 +433,11 @@ class HarnessProviderRunner(
                 emergencyFoldBudget(model),
                 systemTokens = 0,
                 reserveTokens = 0,
+                // 紧急折叠仍按真实请求口径预留 schema：不外发 tools 时预留 0，折得更狠
+                toolSchemaReserveTokens = ContextWindowPolicy.toolSchemaReserveTokensFor(
+                    pureChat = model.pureChatMode,
+                    toolDisabled = model.toolCallMode == ToolCallMode.DISABLED,
+                ),
             )
             if (keepFrom < 1) return null
             val compacted = compactionManager.compact(sessId, context, keepFrom, model = null)
@@ -542,6 +578,13 @@ class HarnessProviderRunner(
 
         /** 瞬态故障（断线 / 5xx 等）的保底重试次数，不受大上下文降级影响。 */
         private const val TRANSIENT_MAX_RETRIES = 3
+
+        /**
+         * 空响应（HTTP 200 但无正文/推理/工具调用）的重发上限。
+         * 单次空响应多数是上游瞬时抖动，重发即可恢复；连续多次仍是空则判定为模型/网关
+         * 侧问题，明确失败并附上原始响应首部，而不是让用户面对"没有任何回复"。
+         */
+        private const val EMPTY_RESPONSE_MAX_RETRIES = 2
 
         /** 紧急压缩目标：把历史折到正常预算的 25%（computeKeepFromIndex 内部再扣输出/schema 预留）。 */
         private const val EMERGENCY_FOLD_RATIO_PERCENT = 25

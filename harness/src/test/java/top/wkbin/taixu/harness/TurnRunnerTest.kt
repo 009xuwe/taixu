@@ -183,4 +183,24 @@ class TurnRunnerTest {
         assertEquals(TurnOutcome.Complete, outcome)
         assertEquals(marker, published)
     }
+
+    @Test
+    fun `blank provider response fails instead of completing silently`() = runBlocking {
+        var published = false
+        var consumed = false
+        val outcome = runner.run(
+            toolsEnabled = true,
+            callProvider = { TurnProviderOutcome.Success(ChatResult(null, emptyList()), "") },
+            observeResponse = {},
+            persistAssistant = { published = true },
+            consumeFollowUps = { consumed = true; 0 },
+            enforceToolLimit = { calls, _ -> calls },
+            executeTools = { _, _ -> error("must not execute") },
+        )
+
+        // 空响应必须变成可见失败：不能走"无工具调用 → Complete"，否则前台零提示。
+        assertEquals(TurnOutcome.Failed(ProviderClient.EMPTY_RESPONSE_MESSAGE), outcome)
+        assertTrue(published)
+        assertFalse(consumed)
+    }
 }

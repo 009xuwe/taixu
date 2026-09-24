@@ -55,6 +55,14 @@ class LlmContextOverflowException(message: String) : IOException(message)
 /** Provider rejected the requested output-token parameter, not the input context. */
 class LlmInvalidOutputTokensException(message: String) : IOException(message)
 
+/**
+ * 上游以 HTTP 200 返回了"什么都没有"的一轮（无正文、无推理、无工具调用）。
+ *
+ * 这类响应若不显式识别，会被上层当成"模型答完了"正常收尾，前台表现为
+ * 「消息发出去没有任何回复」——既不报错也没有内容，正是最无从定位的一种形态。
+ */
+class LlmEmptyResponseException(message: String) : IOException(message)
+
 /** 可独立测试的 HTTP 层：OpenAI 兼容 chat/completions 请求与响应解析。 */
 internal class ChatApi(
     private val okHttpClient: OkHttpClient,
@@ -86,22 +94,7 @@ internal class ChatApi(
                     }
                     val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), body)
                     val message = parsed.choices.firstOrNull()?.message ?: ChatResponseMessage()
-                    val calls = message.tool_calls.orEmpty().mapNotNull { call ->
-                        call.function.let { fn ->
-                            if (fn.name.isBlank()) null else ApiToolCallSpec(
-                                call.id.ifBlank { ToolCallIdNormalizer.normalize(null) },
-                                fn.name,
-                                fn.arguments.ifBlank { "{}" },
-                            )
-                        }
-                    }
-                    val (extractedContent, extractedReasoning) = ProviderClient.extractThinkTags(message.content, message.reasoning_content)
-                    ChatResult(
-                        content = extractedContent,
-                        toolCalls = calls,
-                        reasoningContent = extractedReasoning,
-                        usage = parsed.usage?.toChatUsage() ?: ChatUsage(),
-                    )
+                    message.toChatResult(parsed.usage?.toChatUsage() ?: ChatUsage())
                 }
             } finally {
                 cancelHandle?.dispose()
@@ -175,9 +168,30 @@ internal class ChatApi(
                 val demuxer = ThinkTagStreamDemuxer(onReasoning, onDelta)
                 val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
                 var usage = ChatUsage()
+                // 空响应诊断首部：只缓冲到出现首个 data: 行为止（或到上限），
+                // 既不把整段流式正文留在内存，又能在"什么都没收到"时把上游真实返回写进错误。
+                val rawHead = StringBuilder()
+                var sawSseData = false
+                // 非 SSE 响应体：部分 OpenAI 兼容网关忽略 stream:true，直接返回整段 JSON 补全。
+                // 此前这种 body 因"没有 data: 行"被逐行丢弃，最终表现为空回复。
+                var nonSseBody: String? = null
                 while (true) {
                     val line = source.readUtf8Line() ?: break
-                    if (!line.startsWith("data:")) continue
+                    if (!sawSseData && rawHead.length < ProviderClient.RESPONSE_HEAD_CAPTURE_CHARS) {
+                        rawHead.append(line).append('\n')
+                    }
+                    if (!line.startsWith("data:")) {
+                        val trimmed = line.trimStart()
+                        val sseField = trimmed.isEmpty() ||
+                            trimmed.startsWith("event:") || trimmed.startsWith("id:") ||
+                            trimmed.startsWith("retry:") || trimmed.startsWith(":")
+                        if (!sawSseData && !sseField) {
+                            nonSseBody = line + "\n" + source.readUtf8()
+                            break
+                        }
+                        continue
+                    }
+                    sawSseData = true
                     val data = line.removePrefix("data:").trim()
                     if (data == "[DONE]") break
                     val root = runCatching { json.parseToJsonElement(data) as? JsonObject }.getOrNull()
@@ -243,7 +257,16 @@ internal class ChatApi(
                     toolCalls = calls,
                     reasoningContent = demuxer.fullReasoning.toString().ifEmpty { null },
                     usage = usage,
-                )
+                ).let { streamed ->
+                    // HTTP 200 却什么都没产出：先按非流式 JSON 兜底解析，仍拿不到内容就明确报错。
+                    // 绝不允许空响应继续往下走——它会一路"无工具调用 → 收尾 → Outcome=completed"，
+                    // 前台看不到任何内容也没有任何错误，即用户反馈的「发消息没有回复」。
+                    if (streamed.isBlankResponse) {
+                        resolveBlankStreamResult(nonSseBody, rawHead.toString())
+                    } else {
+                        streamed
+                    }
+                }
             }
         } catch (io: IOException) {
             if (firstEventState.get() == ProviderClient.FIRST_EVENT_TIMED_OUT) {
@@ -256,6 +279,53 @@ internal class ChatApi(
             firstEventWatchdog.cancel()
             cancelHandle?.dispose()
         }
+    }
+
+    /** 非流式补全消息 → 统一 [ChatResult]（与 [chat] 同一口径，供兜底解析复用）。 */
+    private fun ChatResponseMessage.toChatResult(usage: ChatUsage): ChatResult {
+        val calls = tool_calls.orEmpty().mapNotNull { call ->
+            call.function.let { fn ->
+                if (fn.name.isBlank()) null else ApiToolCallSpec(
+                    call.id.ifBlank { ToolCallIdNormalizer.normalize(null) },
+                    fn.name,
+                    fn.arguments.ifBlank { "{}" },
+                )
+            }
+        }
+        val (extractedContent, extractedReasoning) =
+            ProviderClient.extractThinkTags(content, reasoning_content)
+        return ChatResult(
+            content = extractedContent,
+            toolCalls = calls,
+            reasoningContent = extractedReasoning,
+            usage = usage,
+        )
+    }
+
+    /**
+     * 流式请求拿到了完全空的一轮（HTTP 200，但无正文/推理/工具调用）。
+     *
+     * 先按非流式 JSON 补全兜底解析：[nonSseBody] 非空说明响应体根本不是 SSE
+     * （网关忽略了 `stream: true`），此前这种 body 会被逐行丢弃、最终表现为"空回复"。
+     * 兜底仍无内容时抛 [LlmEmptyResponseException]，并附上原始响应首部——
+     * 把一次"什么都没有"变成可定位、可重试的失败。
+     */
+    private fun resolveBlankStreamResult(nonSseBody: String?, rawHead: String): ChatResult {
+        val body = nonSseBody?.trim().orEmpty()
+        if (body.isNotEmpty() && ProviderClient.looksLikeJsonResponse(body)) {
+            val parsed = runCatching {
+                json.decodeFromString(ChatCompletionResponse.serializer(), body)
+            }.getOrNull()
+            if (parsed != null) {
+                val recovered = (parsed.choices.firstOrNull()?.message ?: ChatResponseMessage())
+                    .toChatResult(parsed.usage?.toChatUsage() ?: ChatUsage())
+                if (!recovered.isBlankResponse) return recovered
+            }
+        }
+        throw LlmEmptyResponseException(
+            ProviderClient.EMPTY_RESPONSE_MESSAGE +
+                ProviderClient.describeResponseHead(body.ifEmpty { rawHead }),
+        )
     }
 
     /** 手工解析流式 chunk 顶层 usage（各 Provider 字段不统一，DTO 反而脆）。 */
@@ -292,6 +362,14 @@ internal class ChatApi(
         } else {
             messages
         }
+        // NATIVE 模式下 tools 数组独立于 messages，输出预算必须显式扣掉 schema；
+        // JSON_TEXT 模式下 schema 已内联进 effectiveMessages，由 messages 口径覆盖，故传 0。
+        val toolSchemaTokens =
+            if (!model.pureChatMode && model.toolCallMode == ToolCallMode.NATIVE) {
+                ContextWindowPolicy.estimateToolDefinitionTokens(tools)
+            } else {
+                0
+            }
         val requestJson = kotlinx.serialization.json.buildJsonObject {
             put("model", kotlinx.serialization.json.JsonPrimitive(model.model))
             put("stream", kotlinx.serialization.json.JsonPrimitive(stream))
@@ -306,10 +384,11 @@ internal class ChatApi(
                 ContextWindowPolicy.outputBudget(
                     model.maxTokens,
                     8_192,
-                    messages,
+                    effectiveMessages,
                     model.contextTokens,
                     model.model,
                     model.provider,
+                    toolSchemaTokens,
                 ),
             ))
             model.topP?.let { put("top_p", kotlinx.serialization.json.JsonPrimitive(it)) }
@@ -568,6 +647,14 @@ data class ChatResult(
     val reasoningMs: Long? = null,
 ) {
     val hasToolCalls: Boolean get() = toolCalls.isNotEmpty()
+
+    /**
+     * 完全空的一轮：没有正文、没有推理、也没有任何工具调用。
+     * 用于把"上游空响应"与"模型只想调工具/只给了思考"区分开：前者必须显式报错，
+     * 后者是正常形态（如 reasoning 后直接调工具）。
+     */
+    val isBlankResponse: Boolean
+        get() = content.isNullOrBlank() && reasoningContent.isNullOrBlank() && toolCalls.isEmpty()
 }
 
 /**
@@ -998,6 +1085,36 @@ class ProviderClient(
 
         /** 流式增量上屏的发布间隔：SSE chunk 频率远高于帧率，逐 chunk 全量发布是 O(n²) 分配。 */
         const val STREAM_PUBLISH_INTERVAL_MS = 100L
+
+        /**
+         * 空响应的用户可见文案（唯一来源：流式层报错与 turn 层兜底共用同一句）。
+         * 只描述可观察现象与可执行动作，不猜测具体厂商原因。
+         */
+        internal const val EMPTY_RESPONSE_MESSAGE =
+            "模型返回了空响应（HTTP 200，正文、推理与工具调用均为空）。" +
+                "常见原因是该模型名在服务端不可用、被网关/风控拦截，或上游临时异常。" +
+                "请检查模型配置，或切换其他模型后重试。"
+
+        /** 空响应诊断时缓冲的原始响应首部上限（字符）：只用于报错与兜底判定，不参与正文累积。 */
+        internal const val RESPONSE_HEAD_CAPTURE_CHARS = 2_000
+
+        /** 错误文案里展示的响应首部长度。 */
+        private const val RESPONSE_HEAD_DISPLAY_CHARS = 160
+
+        /**
+         * 把原始响应首部压成单行诊断片段：转义换行、截断。
+         * 目的是让"上游到底回了什么"能从错误文案里直接读到，而不是只有一句"空响应"。
+         */
+        internal fun describeResponseHead(raw: String): String {
+            val compact = raw.replace('\n', ' ').replace('\r', ' ').trim()
+            if (compact.isEmpty()) return ""
+            val clipped = if (compact.length > RESPONSE_HEAD_DISPLAY_CHARS) {
+                compact.take(RESPONSE_HEAD_DISPLAY_CHARS) + "…"
+            } else {
+                compact
+            }
+            return " 原始响应首部：$clipped"
+        }
 
         /** Room 实体 → 运行配置：推理参数原样透传，协议按 Base URL / 厂商名自动推断。 */
         private suspend fun top.wkbin.taixu.core.database.AiModelEntity.toModelConfig(
