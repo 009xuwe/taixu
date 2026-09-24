@@ -298,7 +298,8 @@ class WorkflowGuiPilot(
                 }
                 else -> appendLog("未知动作：$kind")
             }
-            delay(900)
+            // 不再固定等待：无障碍服务可用时按窗口变化事件判断界面是否已稳定，无服务则回退 900ms
+            gui.awaitUiSettled()
         }
 
         // 步数耗尽且模型未宣布 done：目标未达成，必须判 FAILED（exitCode 非零），

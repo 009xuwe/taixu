@@ -80,8 +80,27 @@ object AccessibilityGestureBridge {
 }
 
 /**
+ * 最近的窗口状态变化时间戳（uptimeMillis），用作"界面是否已经变了"的轻量信号。
+ * 复用 service 已订阅的 typeWindowStateChanged，不额外订阅高频的 ContentChanged
+ * （滚动时事件量极大，会带来功耗与卡顿），也不抓取任何节点。
+ */
+internal object UiSettleSignal {
+    @Volatile
+    private var lastEventAt = 0L
+
+    fun mark() {
+        lastEventAt = android.os.SystemClock.uptimeMillis()
+    }
+
+    fun lastEventAt(): Long = lastEventAt
+
+    fun hasSignal(): Boolean = lastEventAt > 0L
+}
+
+/**
  * Thin accessibility service used only as a global gesture injector.
  * Does not scrape UI; screen observation still uses privileged uiautomator dump.
+ * 事件回调仅记录时间戳，供 [HostGuiController.awaitUiSettled] 判断界面稳定。
  */
 class TaiXuGuiAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
@@ -91,7 +110,9 @@ class TaiXuGuiAccessibilityService : AccessibilityService() {
         Log.i(TAG, "GUI accessibility gesture service connected")
     }
 
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
+        UiSettleSignal.mark()
+    }
 
     override fun onInterrupt() = Unit
 

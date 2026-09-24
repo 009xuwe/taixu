@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -29,14 +30,34 @@ data class ScreenObservation(
         if (nodes.isEmpty()) {
             appendLine("【屏幕控件】当前界面未检测到交互节点或正在加载动画中")
         } else {
-            appendLine("【交互与可视节点】(共 ${nodes.size} 个，展示前 ${minOf(nodes.size, maxNodes)} 个)")
-            nodes.take(maxNodes).forEach { node ->
+            val shown = selectForDisplay(maxNodes)
+            appendLine("【交互与可视节点】(共 ${nodes.size} 个，展示 ${shown.size} 个；id 省略包名前缀，@x,y 为控件中心坐标可直接用于点击)")
+            shown.forEach { node ->
                 appendLine("- ${node.toCompactString()}")
             }
-            if (nodes.size > maxNodes) {
-                appendLine("[其余 ${nodes.size - maxNodes} 个节点已省略...]")
+            if (shown.size < nodes.size) {
+                appendLine("[其余 ${nodes.size - shown.size} 个节点已省略（可交互控件优先保留）...]")
             }
         }
+    }
+
+    /**
+     * 挑选要展示的节点。节点按 DFS 先序产出，直接 take(maxNodes) 会把排在后面的可交互控件
+     * （屏幕底部/右侧的发送、悬浮按钮等）整段截掉，模型看不到就不会去点。
+     * 因此先保证 editable/clickable/scrollable 控件入选，剩余名额再按原顺序补纯文本节点；
+     * 返回时仍按原顺序，保持模型对界面布局与阅读顺序的认知。
+     */
+    private fun selectForDisplay(maxNodes: Int): List<GuiNode> {
+        if (nodes.size <= maxNodes) return nodes
+        val interactive = nodes.filter { it.editable || it.clickable || it.scrollable }
+        if (interactive.size >= maxNodes) return interactive.take(maxNodes)
+        val keepIds = interactive.mapTo(HashSet()) { it.id }
+        val textBudget = maxNodes - keepIds.size
+        nodes.asSequence()
+            .filter { it.id !in keepIds }
+            .take(textBudget)
+            .forEach { keepIds.add(it.id) }
+        return nodes.filter { it.id in keepIds }
     }
 }
 
@@ -83,6 +104,32 @@ class HostGuiController(
             }
         } finally {
             hud.endScreenOp()
+        }
+    }
+
+    /**
+     * 动作执行后等待界面稳定。
+     * 有 AccessibilityService 且收到过窗口事件时：先观察一个短窗口，若期间没有窗口状态变化，
+     * 说明界面根本没动（纯文字输入、点击无效等），立即返回；若正在切换则等到事件静默，上限 maxMs。
+     * 无服务或从未收到过事件时回退固定等待，行为与改造前一致。
+     */
+    suspend fun awaitUiSettled(
+        settleWindowMs: Long = 350L,
+        quietMs: Long = 200L,
+        maxMs: Long = 1_500L,
+        fallbackMs: Long = 900L,
+    ) {
+        if (!AccessibilityGestureBridge.isAvailable() || !UiSettleSignal.hasSignal()) {
+            delay(fallbackMs)
+            return
+        }
+        val start = SystemClock.uptimeMillis()
+        val before = UiSettleSignal.lastEventAt()
+        delay(settleWindowMs)
+        if (UiSettleSignal.lastEventAt() == before) return
+        while (SystemClock.uptimeMillis() - start < maxMs) {
+            if (SystemClock.uptimeMillis() - UiSettleSignal.lastEventAt() >= quietMs) return
+            delay(40L)
         }
     }
 
