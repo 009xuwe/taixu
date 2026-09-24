@@ -132,6 +132,38 @@ class TaiXuGuiAccessibilityService : AccessibilityService() {
             val service = instance?.get() ?: return false
             return runCatching { service.performGlobalAction(action) }.getOrDefault(false)
         }
+
+        /**
+         * 对当前焦点输入框执行 ACTION_SET_TEXT，返回是否被目标控件接受。
+         * 与 input text 不同，它直接设值而非合成按键事件，因此支持任意 Unicode（中文/emoji），
+         * 也不依赖剪贴板与键盘快捷键。
+         */
+        fun setFocusedText(text: String): Boolean {
+            val service = instance?.get() ?: return false
+            return runCatching {
+                val focused = service.rootInActiveWindow
+                    ?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+                    ?: return@runCatching false
+                val args = android.os.Bundle().apply {
+                    putCharSequence(
+                        android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        text,
+                    )
+                }
+                focused.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            }.getOrDefault(false)
+        }
+
+        /** 读回当前焦点输入框的文本，用于校验文本是否真的写入；读不到返回 null */
+        fun focusedText(): String? {
+            val service = instance?.get() ?: return null
+            return runCatching {
+                service.rootInActiveWindow
+                    ?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+                    ?.text
+                    ?.toString()
+            }.getOrNull()
+        }
     }
 }
 
