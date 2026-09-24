@@ -171,9 +171,14 @@ class OperationCoordinator(
         val lane = repository.ensureLane(sessionId, laneName)
         val operationId = lane.currentOperationId ?: return
         val now = System.currentTimeMillis()
+        // faulted 必须在这里落盘：LaneManager.branches() 用它给子智能体 lane 的圆点着色
+        // （红=中断 / 绿=正常），而此前全仓库没有写入点，字段恒为 false，于是"批次汇总判失败、
+        // 每个子任务圆点却全是绿色"。每次收尾都按本轮结果整体覆盖，成功即自动清除上一轮的标记。
+        // 只把 "failed" 视为中断："aborted" 同时被用户主动停止与进程中断复用，
+        // 计入会把"用户点了停止"的主线也标成故障。
         repository.finishOperation(
             HarnessLaneResultEntity(sessionId, lane.name, operationId, outcome, finalEntryId, details, now),
-            lane.copy(currentOperationId = null, updatedAt = now),
+            lane.copy(currentOperationId = null, updatedAt = now, faulted = outcome == "failed"),
         )
         eventBus.emit(HarnessEvent.OperationFinished(sessionId, now, operationId, laneName, outcome, details))
     }

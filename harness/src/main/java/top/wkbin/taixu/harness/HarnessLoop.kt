@@ -1281,7 +1281,12 @@ class HarnessLoop(
                             "ReasoningLength=${normalized.result.reasoningContent?.length ?: 0}, " +
                             "ToolCallsCount=${normalized.result.toolCalls.size}, " +
                             "TextToolCalls=${normalized.textToolCallCount}, " +
-                            "InvalidTextMarkers=${normalized.invalidMarkerCount}",
+                            "InvalidTextMarkers=${normalized.invalidMarkerCount}, " +
+                            // 截断首部：UserPrompt / SteeringMessage 都记全文，模型输出却只留长度，
+                            // "模型到底回了什么"无从判断。全文会撑爆 5MB 上限的 Agent 日志（会话树
+                            // 里已有完整记录），因此只取首部；换行转义以维持单行事件格式，便于逐行检索。
+                            "TextHead=" + normalized.rawText.take(MODEL_RESPONSE_HEAD_CHARS)
+                                .replace("\n", "\\n"),
                     )
                 },
                 persistAssistant = { normalized ->
@@ -1683,6 +1688,12 @@ class HarnessLoop(
         const val RETRY_BACKOFF_SEC = 2L
 
         const val MAX_ROUNDS = 200
+
+        /**
+         * ModelResponse 事件里记录的模型输出首部长度。只取首部是刻意的：Agent 日志上限 5 MB、
+         * 超限即轮转，长回答全文写入会用一次响应挤掉整段历史；诊断只需"开头说了什么"。
+         */
+        internal const val MODEL_RESPONSE_HEAD_CHARS = 500
 
         /** 软收敛提示阈值：连续 N 轮工具全失败即注入一次 steering 提示（须低于硬熔断默认值）。 */
         internal const val STORM_HINT_THRESHOLD = 3

@@ -153,6 +153,19 @@ class SubagentOrchestrator(
                     "suspectedShellWrites=${outcome.suspectedShellWrites.joinToString("|")}"
             },
         )
+        // 失败原因必须与上面的批次日志同等、无门控地落盘：子智能体的终止原因原先只经
+        // AgentEventLogger（受 agentLoggingEnabled 门控，默认关闭），批次行里也只有一句
+        // termination=FAILED，于是"派发的子智能体总是全部失败"既拿不到具体异常，也无法
+        // 区分不可重试 4xx / 限流耗尽 / 上下文超限 / 超时 / 轮数耗尽。摘要是唯一的线索来源。
+        orderedResults.filterNot { it.isSuccess }.forEach { outcome ->
+            logger.logAgent(
+                parentSessionId,
+                "SubagentFailure",
+                "task=${outcome.spec.taskName}, termination=${outcome.termination}, " +
+                    "toolCalls=${outcome.toolCallCount}, reason=" +
+                    outcome.summary.lineSequence().firstOrNull()?.take(300).orEmpty(),
+            )
+        }
         // 整批工具结果只有在每个子任务都确认完成时才算成功。用 anySuccess 会让"1 成功 5 失败"
         // 在父会话里显示为成功工具调用，模型据此继续往下走，正文里的部分失败说明形同虚设。
         val allSucceeded = orderedResults.all { it.isSuccess }
