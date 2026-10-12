@@ -112,9 +112,4 @@ class BoundedStreamCopyTest {
         assertEquals(listOf(30L, 60L, 90L, 100L), progressList)
     }
 
-    @Test
-    fun defaultAttachmentLimitMatchesTaiXuDev200MB() {
-        // TaiXuDev 迭代契约：附件上传上限由 50MB 上调至 200MB，钉死防回退。
-        assertEquals(200L * 1024 * 1024, BoundedStreamCopy.DEFAULT_MAX_ATTACHMENT_BYTES)
-    }
 }

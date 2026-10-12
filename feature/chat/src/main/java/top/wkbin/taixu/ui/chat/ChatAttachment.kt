@@ -96,7 +96,7 @@ object AttachmentHelper {
 
         // 预检：cursor 能拿到真实大小时，超限直接拦截，避免先复制再中止浪费 IO。
         val limit = BoundedStreamCopy.DEFAULT_MAX_ATTACHMENT_BYTES
-        if (size > limit) {
+        if (exceedsLimit(size, limit)) {
             return AttachmentProcessResult.TooLarge(name, size, limit)
         }
 
@@ -184,24 +184,38 @@ object AttachmentHelper {
         }
     }
 
+    /** 纯判定：sizeBytes 是否超过 maxBytes（0 表示未知大小，不拦截，交给拷贝后兜底） */
+    internal fun exceedsLimit(sizeBytes: Long, maxBytes: Long = BoundedStreamCopy.DEFAULT_MAX_ATTACHMENT_BYTES): Boolean =
+        sizeBytes > maxBytes
+
+    /** 纯聚合：按 TooLarge/Failed 计数拼装提示；无异常时返回 null（保持单测不依赖 Context） */
+    internal fun buildAttachmentNotice(
+        tooLargeCount: Int,
+        failedCount: Int,
+        limitLabel: String,
+        tooLargeMessage: (count: Int, limitLabel: String) -> String,
+        failedMessage: (count: Int) -> String,
+    ): String? {
+        if (tooLargeCount <= 0 && failedCount <= 0) return null
+        return buildList {
+            if (tooLargeCount > 0) add(tooLargeMessage(tooLargeCount, limitLabel))
+            if (failedCount > 0) add(failedMessage(failedCount))
+        }.joinToString("；")
+    }
+
     /** 批量处理附件并聚合超限/失败提示；通知文案在此拼装，保持 ViewModel 精简 */
     fun processPicked(context: Context, uris: List<Uri>, isImage: Boolean): AttachmentProcessOutcome {
         val results = uris.map { processUri(context, it, isImage) }
         val items = results.mapNotNull { (it as? AttachmentProcessResult.Success)?.attachment }
         val tooLargeCount = results.count { it is AttachmentProcessResult.TooLarge }
         val failedCount = results.count { it is AttachmentProcessResult.Failed }
-        val notice = if (tooLargeCount > 0 || failedCount > 0) {
-            val parts = buildList {
-                if (tooLargeCount > 0) {
-                    val limit = results.filterIsInstance<AttachmentProcessResult.TooLarge>().first().maxBytes
-                    add(context.getString(R.string.chat_attachment_too_large, tooLargeCount, formatFileSize(limit)))
-                }
-                if (failedCount > 0) {
-                    add(context.getString(R.string.chat_attachment_process_failed, failedCount))
-                }
-            }
-            parts.joinToString("；")
-        } else null
+        val notice = buildAttachmentNotice(
+            tooLargeCount = tooLargeCount,
+            failedCount = failedCount,
+            limitLabel = formatFileSize(results.filterIsInstance<AttachmentProcessResult.TooLarge>().firstOrNull()?.maxBytes ?: BoundedStreamCopy.DEFAULT_MAX_ATTACHMENT_BYTES),
+            tooLargeMessage = { count, label -> context.getString(R.string.chat_attachment_too_large, count, label) },
+            failedMessage = { count -> context.getString(R.string.chat_attachment_process_failed, count) },
+        )
         return AttachmentProcessOutcome(items, notice)
     }
 
