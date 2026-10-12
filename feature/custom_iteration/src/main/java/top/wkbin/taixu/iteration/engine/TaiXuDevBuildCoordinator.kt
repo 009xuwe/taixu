@@ -12,7 +12,7 @@ object TaiXuDevBuildCoordinator {
 
     sealed interface BuildStatus {
         data object Idle : BuildStatus
-        data class Dispathing(val branch: String) : BuildStatus
+        data class Dispatching(val branch: String) : BuildStatus
         data class Running(val runId: String, val statusText: String) : BuildStatus
         data class Downloading(val runId: String, val progress: Int) : BuildStatus
         data class Success(val apkPath: String, val sha256: String) : BuildStatus
