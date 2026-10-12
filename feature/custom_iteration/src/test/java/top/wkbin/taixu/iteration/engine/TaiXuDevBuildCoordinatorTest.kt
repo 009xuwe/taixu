@@ -1,6 +1,7 @@
 package top.wkbin.taixu.iteration.engine
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -58,9 +59,20 @@ class TaiXuDevBuildCoordinatorTest {
 
     @Test
     fun dispatchingStatusCarriesBranch() {
+        // 注意：不要把变量标注为父类型 BuildStatus，否则拿不到 Dispatching 的 branch 属性
+        val status = TaiXuDevBuildCoordinator.BuildStatus.Dispatching("feature/demo")
+
+        assertEquals("feature/demo", status.branch)
+    }
+
+    @Test
+    fun dispatchingIsStillAValidBuildStatus() {
         val status: TaiXuDevBuildCoordinator.BuildStatus =
             TaiXuDevBuildCoordinator.BuildStatus.Dispatching("feature/demo")
 
-        assertEquals("feature/demo", status.branch)
+        assertTrue(
+            "Dispatching 必须仍是 BuildStatus 的实现",
+            status is TaiXuDevBuildCoordinator.BuildStatus.Dispatching,
+        )
     }
 }
