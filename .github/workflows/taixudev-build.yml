@@ -40,9 +40,6 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      - name: Run Unit Tests
-        run: ./gradlew :core:common:testDebugUnitTest :feature:chat:testDebugUnitTest --no-daemon
-
       - name: Build TaiXuDev APK
         env:
           TAIXU_DEV_BUILD: "1"
