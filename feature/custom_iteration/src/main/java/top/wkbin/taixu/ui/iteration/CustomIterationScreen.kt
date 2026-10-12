@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,15 +30,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.taixu.feature.custom_iteration.R
 import top.wkbin.taixu.iteration.engine.TaiXuDevBuildCoordinator
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeOutlinedTextField
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
 
@@ -153,16 +155,19 @@ fun CustomIterationScreen(
             Spacer(Modifier.height(8.dp))
 
             // 云端构建区块：触发 taixudev-build.yml 并跟踪状态
-            SectionHeader(title = "云端构建 TaiXuDev", subtitle = "触发 GitHub Actions 自动编译独立 APK")
+            SectionHeader(
+                title = stringResource(R.string.iteration_build_section_title),
+                subtitle = stringResource(R.string.iteration_build_section_subtitle),
+            )
 
-            var branchText by remember { mutableStateOf("feature/ci-build-coordinator") }
+            var branchText by remember { mutableStateOf("main") }
 
             RuntimeCard(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
+                    RuntimeOutlinedTextField(
                         value = branchText,
                         onValueChange = { branchText = it },
-                        label = { Text("特性分支") },
+                        label = { Text(stringResource(R.string.iteration_build_branch_label)) },
                         singleLine = true,
                         enabled = !isBuildPipelineActive(buildState),
                         modifier = Modifier.fillMaxWidth()
@@ -198,10 +203,10 @@ fun CustomIterationScreen(
                                 strokeWidth = 2.dp,
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("构建流水线进行中…")
+                            Text(stringResource(R.string.iteration_build_in_progress))
                         } else {
                             Text(
-                                text = "触发云端构建",
+                                text = stringResource(R.string.iteration_build_trigger),
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -226,14 +231,18 @@ private fun isBuildPipelineActive(state: TaiXuDevBuildCoordinator.BuildStatus): 
     }
 
 /** 把构建状态机渲染为用户可读的单行文案。 */
+@Composable
 private fun describeBuildStatus(state: TaiXuDevBuildCoordinator.BuildStatus): String = when (state) {
-    TaiXuDevBuildCoordinator.BuildStatus.Idle -> "尚未触发云端构建。构建产物将与正式版独立共存（top.wkbin.taixu.dev）。"
-    is TaiXuDevBuildCoordinator.BuildStatus.Dispatching -> "正在触发 taixudev-build.yml（分支 ${state.branch}）…"
-    is TaiXuDevBuildCoordinator.BuildStatus.Running -> "构建运行中（run #${state.runId} · ${state.statusText}），手机息屏也不受影响。"
-    is TaiXuDevBuildCoordinator.BuildStatus.Downloading -> "构建成功，正在下载 TaiXuDev-arm64-debug.apk…"
+    TaiXuDevBuildCoordinator.BuildStatus.Idle -> stringResource(R.string.iteration_build_idle)
+    is TaiXuDevBuildCoordinator.BuildStatus.Dispatching ->
+        stringResource(R.string.iteration_build_dispatching, state.branch)
+    is TaiXuDevBuildCoordinator.BuildStatus.Running ->
+        stringResource(R.string.iteration_build_running, state.runId.toString(), state.statusText)
+    is TaiXuDevBuildCoordinator.BuildStatus.Downloading -> stringResource(R.string.iteration_build_downloading)
     is TaiXuDevBuildCoordinator.BuildStatus.Success ->
-        "构建完成：${state.apkPath}\nSHA-256 校验通过：${state.sha256.take(16)}…"
-    is TaiXuDevBuildCoordinator.BuildStatus.Failed -> "构建失败：${state.error}"
+        stringResource(R.string.iteration_build_success, state.apkPath, state.sha256.take(16))
+    is TaiXuDevBuildCoordinator.BuildStatus.Failed ->
+        stringResource(R.string.iteration_build_failed, state.error)
 }
 
 @Composable
