@@ -37,6 +37,7 @@ dependencies {
     // Termux VT100 emulator + PTY JNI (GPL-3.0). Exported so feature/terminal can attach TerminalView.
     api(libs.termux.terminal.emulator)
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation("org.apache.sshd:sshd-core:2.16.0")
     testImplementation("org.apache.sshd:sshd-sftp:2.16.0")
 }
