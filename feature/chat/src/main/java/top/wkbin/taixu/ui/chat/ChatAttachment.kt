@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import top.wkbin.taixu.core.common.files.BoundedStreamCopy
+import top.wkbin.taixu.core.common.files.PayloadTooLargeException
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -61,10 +62,17 @@ data class ChatAttachment(
     val localFilePath: String get() = guestFilePath ?: hostFilePath.orEmpty()
 }
 
+/** 附件处理结果：成功 / 超限（附实际大小与上限，用于大小范围提示）/ 其他失败 */
+sealed interface AttachmentProcessResult {
+    data class Success(val attachment: ChatAttachment) : AttachmentProcessResult
+    data class TooLarge(val name: String, val sizeBytes: Long, val maxBytes: Long) : AttachmentProcessResult
+    data class Failed(val name: String) : AttachmentProcessResult
+}
+
 object AttachmentHelper {
     private const val TAG = "AttachmentHelper"
 
-    fun processUri(context: Context, uri: Uri, isImage: Boolean): ChatAttachment? {
+    fun processUri(context: Context, uri: Uri, isImage: Boolean): AttachmentProcessResult {
         val contentResolver = context.contentResolver
         var name = if (isImage) "image_${System.currentTimeMillis()}.jpg" else "file_${System.currentTimeMillis()}"
         var size = 0L
@@ -80,6 +88,12 @@ object AttachmentHelper {
             }
         }
 
+        // 预检：cursor 能拿到真实大小时，超限直接拦截，避免先复制再中止浪费 IO。
+        val limit = BoundedStreamCopy.DEFAULT_MAX_ATTACHMENT_BYTES
+        if (size > limit) {
+            return AttachmentProcessResult.TooLarge(name, size, limit)
+        }
+
         // 统一复制到所有发行版共用的 Runtime 目录，PRoot 固定挂载为 /attachments。
         val attachmentsDir = File(context.filesDir, "linux-runtime/attachments").apply { mkdirs() }
         val safeName = name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
@@ -93,7 +107,7 @@ object AttachmentHelper {
                     maxBytes = BoundedStreamCopy.DEFAULT_MAX_ATTACHMENT_BYTES,
                     policy = BoundedStreamCopy.OverflowPolicy.ABORT,
                 )
-            } ?: return null
+            } ?: return AttachmentProcessResult.Failed(name)
             if (size == 0L) size = targetFile.length()
 
             val guestPath = "/attachments/${targetFile.name}"
@@ -142,19 +156,25 @@ object AttachmentHelper {
                 }.getOrNull()
             } else null
 
-            ChatAttachment(
-                name = name,
-                isImage = isImage,
-                sizeBytes = size,
-                uri = uri,
-                hostFilePath = targetFile.absolutePath,
-                guestFilePath = guestPath,
-                base64DataUrl = base64,
+            AttachmentProcessResult.Success(
+                ChatAttachment(
+                    name = name,
+                    isImage = isImage,
+                    sizeBytes = size,
+                    uri = uri,
+                    hostFilePath = targetFile.absolutePath,
+                    guestFilePath = guestPath,
+                    base64DataUrl = base64,
+                ),
             )
+        } catch (e: PayloadTooLargeException) {
+            // 流式拷贝中触发超限：以实际观测大小构造提示，保证"大小范围"信息完整
+            Log.w(TAG, "附件超限 uri=$uri size=${e.actualBytesObserved} max=${e.maxBytes}")
+            AttachmentProcessResult.TooLarge(name, e.actualBytesObserved, e.maxBytes)
         } catch (e: Exception) {
             // 失败不能静默：记录日志并由 ChatViewModel 统计后以 Toast 上抛给用户
             Log.w(TAG, "附件处理失败 uri=$uri", e)
-            null
+            AttachmentProcessResult.Failed(name)
         }
     }
 

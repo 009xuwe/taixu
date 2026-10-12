@@ -983,10 +983,21 @@ class ChatViewModel(
         if (uris.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             _attachmentsProcessing.value = true
-            val items = uris.mapNotNull { AttachmentHelper.processUri(context, it, isImage) }
-            val failed = uris.size - items.size
-            if (failed > 0) {
-                _notice.value = context.getString(R.string.chat_attachment_process_failed, failed)
+            val results = uris.map { AttachmentHelper.processUri(context, it, isImage) }
+            val items = results.mapNotNull { (it as? AttachmentProcessResult.Success)?.attachment }
+            val tooLargeCount = results.count { it is AttachmentProcessResult.TooLarge }
+            val failedCount = results.count { it is AttachmentProcessResult.Failed }
+            if (tooLargeCount > 0 || failedCount > 0) {
+                val parts = buildList {
+                    if (tooLargeCount > 0) {
+                        val limit = (results.filterIsInstance<AttachmentProcessResult.TooLarge>().first()).maxBytes
+                        add(context.getString(R.string.chat_attachment_too_large, tooLargeCount, AttachmentHelper.formatFileSize(limit)))
+                    }
+                    if (failedCount > 0) {
+                        add(context.getString(R.string.chat_attachment_process_failed, failedCount))
+                    }
+                }
+                _notice.value = parts.joinToString("；")
             }
             _pendingAttachments.update { it + items }
             _attachmentsProcessing.value = false
