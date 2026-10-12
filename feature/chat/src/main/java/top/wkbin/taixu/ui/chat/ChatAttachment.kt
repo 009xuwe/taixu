@@ -69,6 +69,12 @@ sealed interface AttachmentProcessResult {
     data class Failed(val name: String) : AttachmentProcessResult
 }
 
+/** 附件批量处理结果：成功项 + 需要 Toast 上抛的提示（含超限大小范围） */
+data class AttachmentProcessOutcome(
+    val items: List<ChatAttachment>,
+    val notice: String?,
+)
+
 object AttachmentHelper {
     private const val TAG = "AttachmentHelper"
 
@@ -176,6 +182,27 @@ object AttachmentHelper {
             Log.w(TAG, "附件处理失败 uri=$uri", e)
             AttachmentProcessResult.Failed(name)
         }
+    }
+
+    /** 批量处理附件并聚合超限/失败提示；通知文案在此拼装，保持 ViewModel 精简 */
+    fun processPicked(context: Context, uris: List<Uri>, isImage: Boolean): AttachmentProcessOutcome {
+        val results = uris.map { processUri(context, it, isImage) }
+        val items = results.mapNotNull { (it as? AttachmentProcessResult.Success)?.attachment }
+        val tooLargeCount = results.count { it is AttachmentProcessResult.TooLarge }
+        val failedCount = results.count { it is AttachmentProcessResult.Failed }
+        val notice = if (tooLargeCount > 0 || failedCount > 0) {
+            val parts = buildList {
+                if (tooLargeCount > 0) {
+                    val limit = results.filterIsInstance<AttachmentProcessResult.TooLarge>().first().maxBytes
+                    add(context.getString(R.string.chat_attachment_too_large, tooLargeCount, formatFileSize(limit)))
+                }
+                if (failedCount > 0) {
+                    add(context.getString(R.string.chat_attachment_process_failed, failedCount))
+                }
+            }
+            parts.joinToString("；")
+        } else null
+        return AttachmentProcessOutcome(items, notice)
     }
 
     fun formatFileSize(bytes: Long): String {
