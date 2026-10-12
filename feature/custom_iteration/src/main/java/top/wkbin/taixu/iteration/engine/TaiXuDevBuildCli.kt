@@ -87,8 +87,16 @@ internal object TaiXuDevBuildCli {
         repo: String = DEFAULT_REPO,
     ): String = "gh run download $runId -n ${q(ARTIFACT)} -D ${q(outputDir)} -R ${q(repo)}"
 
-    fun ensureOutputDir(outputDir: String = DEFAULT_OUTPUT_DIR): String =
-        "mkdir -p ${q(outputDir)}"
+    /**
+     * 每次构建单独一个目录。`gh run download` 拒绝覆盖已有文件，
+     * 旧 run 留在父目录里的 apk / .sha256 也不会被拿来和新产物比对。
+     */
+    fun runDownloadDir(outputDir: String, runId: Long): String =
+        outputDir.trim().trimEnd('/') + "/taixudev-" + runId
+
+    /** 只删除这一次 run 的目录，再重建。父目录里其他文件不动。 */
+    fun prepareRunDownloadDir(runDir: String): String =
+        "rm -rf ${q(runDir)} && mkdir -p ${q(runDir)}"
 
     fun computeChecksum(apkName: String = APK_NAME): String =
         "sha256sum ${q(apkName)}"

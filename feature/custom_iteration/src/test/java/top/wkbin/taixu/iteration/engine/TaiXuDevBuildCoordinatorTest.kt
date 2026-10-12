@@ -47,7 +47,7 @@ class TaiXuDevBuildCoordinatorTest {
                 line.startsWith("gh run view") -> runStatusResults.removeFirstOrNull()
                     ?: CommandResult(0, """{"status":"completed","conclusion":"success"}""", "", 0)
                 line.startsWith("gh run download") -> downloadResult
-                line.startsWith("mkdir ") -> mkdirResult
+                line.startsWith("rm ") || line.startsWith("mkdir ") -> mkdirResult
                 line.startsWith("sha256sum") -> checksumResult
                 line.startsWith("cat ") -> checksumFileResult
                 else -> CommandResult(1, "", "unexpected: $line", 0)
@@ -152,7 +152,14 @@ class TaiXuDevBuildCoordinatorTest {
         assertTrue(TaiXuDevBuildCli.checkFailedLog(42L).contains("--log-failed -R 'wkbin/taixu'"))
         assertEquals("sha256sum 'TaiXuDev-arm64-debug.apk'", TaiXuDevBuildCli.computeChecksum())
         assertEquals("cat 'TaiXuDev-arm64-debug.apk.sha256'", TaiXuDevBuildCli.readChecksumFile())
-        assertEquals("mkdir -p '/sdcard/Download'", TaiXuDevBuildCli.ensureOutputDir())
+        assertEquals(
+            "/sdcard/Download/taixudev-42",
+            TaiXuDevBuildCli.runDownloadDir("/sdcard/Download", 42L),
+        )
+        assertEquals(
+            "rm -rf '/sdcard/Download/taixudev-42' && mkdir -p '/sdcard/Download/taixudev-42'",
+            TaiXuDevBuildCli.prepareRunDownloadDir("/sdcard/Download/taixudev-42"),
+        )
         assertEquals("/sdcard/Download", TaiXuDevBuildCli.DEFAULT_OUTPUT_DIR)
     }
 
@@ -168,7 +175,7 @@ class TaiXuDevBuildCoordinatorTest {
 
         assertTrue(final is BuildStatus.Success)
         final as BuildStatus.Success
-        assertEquals("/sdcard/Download/TaiXuDev-arm64-debug.apk", final.apkPath)
+        assertEquals("/sdcard/Download/taixudev-42/TaiXuDev-arm64-debug.apk", final.apkPath)
         assertEquals(SHA_OK, final.sha256)
         assertTrue(states.first() is BuildStatus.Dispatching)
         assertTrue(states.any { it is BuildStatus.Running && it.runId == NEW_RUN_ID })
@@ -313,9 +320,9 @@ class TaiXuDevBuildCoordinatorTest {
         val final = coordinator(fake).runFast(outputDir = outputDir)
 
         assertTrue(final is BuildStatus.Success)
-        val quoted = "'/sdcard/Download/o'\\''brien'"
+        val quoted = "'/sdcard/Download/o'\\''brien/taixudev-42'"
         val lines = fake.commands.map { it.commandLine }
-        assertTrue(lines.any { it.startsWith("mkdir -p $quoted") })
+        assertTrue(lines.any { it == "rm -rf $quoted && mkdir -p $quoted" })
         assertTrue(lines.any { it.contains("-D $quoted") })
         assertTrue(lines.any { it == "sha256sum 'TaiXuDev-arm64-debug.apk'" })
         assertTrue(lines.any { it == "cat 'TaiXuDev-arm64-debug.apk.sha256'" })
@@ -442,12 +449,32 @@ class TaiXuDevBuildCoordinatorTest {
         coordinator(fake).runFast()
 
         val lines = fake.commands.map { it.commandLine }
-        val mkdirAt = lines.indexOfFirst { it.startsWith("mkdir ") }
+        val prepareAt = lines.indexOfFirst { it.startsWith("rm -rf ") }
         val downloadAt = lines.indexOfFirst { it.startsWith("gh run download") }
-        assertTrue(mkdirAt >= 0 && downloadAt > mkdirAt)
+        assertTrue(prepareAt >= 0 && downloadAt > prepareAt)
+        val runDir = "/sdcard/Download/taixudev-42"
         val checksumCall = fake.commands.last { it.commandLine.startsWith("sha256sum") }
-        assertEquals("/sdcard/Download", checksumCall.workingDirectory)
+        assertEquals(runDir, checksumCall.workingDirectory)
         val catCall = fake.commands.last { it.commandLine.startsWith("cat ") }
-        assertEquals("/sdcard/Download", catCall.workingDirectory)
+        assertEquals(runDir, catCall.workingDirectory)
+    }
+
+    @Test
+    fun `download and checksum use a fresh per-run directory`() = runTest {
+        val fake = FakeShellRunner().apply { seedNewRun("feature/x") }
+        val final = coordinator(fake).runFast()
+
+        assertTrue(final is BuildStatus.Success)
+        val runDir = "/sdcard/Download/taixudev-42"
+        val quoted = "'$runDir'"
+        val lines = fake.commands.map { it.commandLine }
+        assertEquals("rm -rf $quoted && mkdir -p $quoted", lines.single { it.startsWith("rm ") })
+        assertEquals(
+            "gh run download 42 -n 'taixudev-apk' -D $quoted -R 'wkbin/taixu'",
+            lines.single { it.startsWith("gh run download") },
+        )
+        assertEquals(runDir, fake.commands.single { it.commandLine.startsWith("sha256sum") }.workingDirectory)
+        assertEquals(runDir, fake.commands.single { it.commandLine.startsWith("cat ") }.workingDirectory)
+        assertEquals("$runDir/TaiXuDev-arm64-debug.apk", (final as BuildStatus.Success).apkPath)
     }
 }

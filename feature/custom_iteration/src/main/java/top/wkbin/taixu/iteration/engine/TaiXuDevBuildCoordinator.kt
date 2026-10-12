@@ -110,15 +110,17 @@ class TaiXuDevBuildCoordinator(
             )
         }
 
+        val runDir = TaiXuDevBuildCli.runDownloadDir(normalizedDir, run.databaseId)
+        TaiXuDevBuildCli.outputDirRejection(runDir)?.let { return BuildStatus.Failed(it) }
         onStatus(BuildStatus.Downloading(run.databaseId, 0))
-        val mkdir = execute(TaiXuDevBuildCli.ensureOutputDir(normalizedDir), timeoutMs = 30_000L)
-        if (!mkdir.isSuccess) {
+        val prepared = execute(TaiXuDevBuildCli.prepareRunDownloadDir(runDir), timeoutMs = 30_000L)
+        if (!prepared.isSuccess) {
             return BuildStatus.Failed(
-                error = "创建下载目录失败（exit=${mkdir.exitCode}）：${mkdir.stderr.trim().take(300)}",
+                error = "创建下载目录失败（exit=${prepared.exitCode}）：${prepared.stderr.trim().take(300)}",
             )
         }
         val download = execute(
-            commandLine = TaiXuDevBuildCli.downloadArtifact(run.databaseId, normalizedDir, repo),
+            commandLine = TaiXuDevBuildCli.downloadArtifact(run.databaseId, runDir, repo),
             timeoutMs = 600_000L,
         )
         if (!download.isSuccess) {
@@ -129,19 +131,19 @@ class TaiXuDevBuildCoordinator(
 
         val expected = execute(
             commandLine = TaiXuDevBuildCli.readChecksumFile(),
-            workingDirectory = normalizedDir,
+            workingDirectory = runDir,
             timeoutMs = 30_000L,
         ).stdout.trim().substringBefore(" ").take(64)
         val actual = execute(
             commandLine = TaiXuDevBuildCli.computeChecksum(),
-            workingDirectory = normalizedDir,
+            workingDirectory = runDir,
             timeoutMs = 120_000L,
         ).stdout.trim().substringBefore(" ").take(64)
         if (expected.length != 64 || actual.length != 64 || !expected.equals(actual, ignoreCase = true)) {
             return BuildStatus.Failed(error = "APK SHA-256 校验失败：期望 $expected，实际 $actual")
         }
 
-        val apkPath = "${normalizedDir.trimEnd('/')}/${TaiXuDevBuildCli.APK_NAME}"
+        val apkPath = "$runDir/${TaiXuDevBuildCli.APK_NAME}"
         val success = BuildStatus.Success(apkPath = apkPath, sha256 = actual)
         onStatus(success)
         return success
