@@ -188,6 +188,13 @@ object AttachmentHelper {
     internal fun exceedsLimit(sizeBytes: Long, maxBytes: Long = BoundedStreamCopy.DEFAULT_MAX_ATTACHMENT_BYTES): Boolean =
         sizeBytes > maxBytes
 
+    /** 清理 host 侧已拷贝文件；移除附件时调用，避免 200MB 上限下撑满 filesDir */
+    fun deleteHostFile(path: String?) {
+        if (path == null) return
+        runCatching { File(path).delete() }
+            .onFailure { Log.w(TAG, "删除附件 host 文件失败 path=$path", it) }
+    }
+
     /** 纯聚合：按 TooLarge/Failed 计数拼装提示；无异常时返回 null（保持单测不依赖 Context） */
     internal fun buildAttachmentNotice(
         tooLargeCount: Int,

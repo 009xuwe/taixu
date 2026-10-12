@@ -992,11 +992,7 @@ class ChatViewModel(
 
     fun removeAttachment(attachment: ChatAttachment) {
         _pendingAttachments.update { list -> list.filter { it.id != attachment.id } }
-        // 清理 host 侧已拷贝文件，避免 200MB 上限下撑满 filesDir/attachments 目录
-        attachment.hostFilePath?.let { path ->
-            runCatching { File(path).delete() }
-                .onFailure { Log.w(TAG, "删除附件 host 文件失败 path=$path", it) }
-        }
+        AttachmentHelper.deleteHostFile(attachment.hostFilePath)
     }
 
     /** 组装附件挂载说明并委托 send() 发送；View 只需在输入框非空或有附件时触发 */
