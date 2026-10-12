@@ -19,6 +19,7 @@
 | Koin | 依赖注入 | Maven Central，版本见 `gradle/libs.versions.toml` | Apache-2.0 |
 | Room | 本地数据库 | Google Maven，版本见 `gradle/libs.versions.toml` | 按上游许可证与 NOTICE 要求分发 |
 | Agency Agents（软件研发精选目录） | 内置子智能体人格与专业工作流；按 9 个研发部门提供 136 个角色 | `msitarzewski/agency-agents`，固定提交 `3c9588880b7cafaec325a104899fd8bbe27e7d72` | MIT；原始 Markdown 与完整许可证随 APK 置于 `agency_agents/` assets，应用仅精选软件研发相关角色 |
+| Termux `terminal-emulator`（fork） | 终端 VT100 模拟 + PTY JNI（`libtermux.so`），供本地与远程 SSH 终端渲染复用 | `termux/termux-app` tag `v0.118.0`（[上游](https://github.com/termux/termux-app)）；源码 vendored 至 `termux-terminal-emulator/`；`libtermux.so` 从 `repo/com/termux/terminal-emulator/0.118.0/terminal-emulator-0.118.0.aar` 提取（arm64-v8a，SHA-256 `8ed70880d8fd4d708d564c0d1dea61379668ac899a88cee0f54ad17a5344e917`，记录于 `termux-native.properties`） | GPL-3.0；本仓库新增 `TerminalSessionBackend` 并补充远程生命周期处理；原有公共 API 保持兼容，完整 GPL-3.0 文本见模块 `COPYING`；发布时随 GPL-3.0 分发并保留源码获取地址 |
 
 ## 工具安装器的上游来源
 

@@ -32,6 +32,8 @@ interface ExecutionCommands {
 
 interface ExecutionEnvironment : ExecutionCommands {
     val id: ExecutionEnvironmentId
+    /** Logical file-tool alias mapped onto id.workspace (may equal the physical path). */
+    val logicalWorkspace: String get() = id.workspace
     /** 人类可读的环境标识（远程=主机，本地=发行版），仅用于诊断与错误提示。 */
     val label: String get() = id.distribution
     val files: ExecutionFiles
@@ -52,6 +54,13 @@ interface ExecutionEnvironment : ExecutionCommands {
 }
 
 fun interface ExecutionEnvironmentFactory {
+    /** Serializable identity captured before a new session awaits persistence/model lookup. */
+    fun capture(workspace: String): String? = null
+    fun capture(workspace: String, distribution: String?): String? = capture(workspace)
+    /** Restore an explicitly saved standalone identity before allocating resources. */
+    suspend fun restore(owner: String, workspace: String, targetJson: String) = Unit
+    /** Capture the selected identity without starting a connection or executing commands. */
+    suspend fun bind(owner: String, workspace: String) = Unit
     /** Failed/cancelled setup must roll back allocations before throwing; success transfers ownership. */
     suspend fun open(owner: String, workspace: String, distribution: String?): ExecutionEnvironment
 }

@@ -23,9 +23,14 @@ internal val toolBackendModule = module {
     single<top.wkbin.taixu.runtime.environment.ExecutionEnvironmentFactory>(org.koin.core.qualifier.named("local-execution")) {
         top.wkbin.taixu.harness.environment.LocalExecutionEnvironmentFactory(get(), get(), get(), get(), get(), get())
     }
+    single {
+        val runtime = get<top.wkbin.taixu.runtime.LinuxRuntime>()
+        top.wkbin.taixu.harness.environment.SessionExecutionTargets(get(), get()) { runtime.activeDistroId.value }
+    }
     single<top.wkbin.taixu.runtime.environment.ExecutionEnvironmentFactory> {
         top.wkbin.taixu.harness.environment.SelectedExecutionEnvironmentFactory(
             get(org.koin.core.qualifier.named("local-execution")), get(), get(),
+            get(),
         )
     }
     single { top.wkbin.taixu.harness.environment.SessionExecutionEnvironments(get()) }

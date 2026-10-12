@@ -18,6 +18,7 @@ import java.io.File
 interface RemoteServerRepository {
     val servers: StateFlow<List<RemoteServer>>
     val activeId: StateFlow<String?>
+    val configurationError: StateFlow<String?> get() = MutableStateFlow(null)
     suspend fun credentials(id: String): SshCredentials
     suspend fun connection(id: String): Pair<RemoteServer, SshCredentials> =
         checkNotNull(servers.value.singleOrNull { it.id == id }) { "服务器配置已移除" } to credentials(id)
@@ -27,22 +28,26 @@ interface RemoteServerRepository {
 }
 
 /** Whole snapshot is encrypted, atomically replaced and excluded from Android backup. */
-class EncryptedRemoteServerRepository(context: Context, private val secrets: SecretManager) : RemoteServerRepository {
+class EncryptedRemoteServerRepository internal constructor(private val file: AtomicFile,
+    private val encrypt: (String) -> String, private val decrypt: (String) -> String?) : RemoteServerRepository {
+    constructor(context: Context, secrets: SecretManager) : this(AtomicFile(File(context.noBackupFilesDir, "remote-servers.enc")), secrets::encrypt, secrets::decrypt)
     @Serializable private data class Entry(val server: RemoteServer, val credentials: SshCredentials)
     @Serializable private data class Snapshot(val entries: List<Entry> = emptyList(), val active: String? = null)
-    private val file = AtomicFile(File(context.noBackupFilesDir, "remote-servers.enc"))
     private val mutex = Mutex()
     private val json = Json
-    private var snapshot: Snapshot = if (file.baseFile.exists()) {
-        // 该单例首次注入发生在首页/工坊首帧组合时：密钥失效或存档损坏不能抛异常拖垮启动，
-        // 降级为空快照（保留原存档，重新添加连接后会覆盖）。
-        val encrypted = file.openRead().use { String(it.readBytes(), Charsets.UTF_8) }
-        secrets.decrypt(encrypted)
-            ?.let { plaintext -> runCatching { json.decodeFromString(Snapshot.serializer(), plaintext) }.getOrNull() }
-            ?: Snapshot()
-    } else Snapshot()
+    private val loaded = if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists()) loadRemoteArchive(
+        read = { file.openRead().use { require(it.available() <= 2 * 1024 * 1024); String(it.readBytes(), Charsets.UTF_8) } },
+        decode = { encrypted -> json.decodeFromString(Snapshot.serializer(), checkNotNull(decrypt(encrypted))).also {
+            require(it.entries.map { entry -> entry.server.id }.distinct().size == it.entries.size)
+            it.entries.forEach { entry -> entry.server.validate(); require(entry.server.fingerprint.startsWith("SHA256:")) }
+            require(it.active == null || it.entries.any { entry -> entry.server.id == it.active })
+        } },
+    ) else RemoteArchiveLoad(Snapshot(), null)
+    private var snapshot: Snapshot = loaded.snapshot ?: Snapshot()
+    private val errorState = MutableStateFlow(loaded.error)
+    override val configurationError: StateFlow<String?> = errorState
     private val serverState = MutableStateFlow(snapshot.entries.map { it.server })
-    private val activeState = MutableStateFlow(snapshot.active)
+    private val activeState = MutableStateFlow(if (loaded.error != null) REMOTE_CONFIGURATION_UNAVAILABLE else snapshot.active)
     override val servers: StateFlow<List<RemoteServer>> = serverState
     override val activeId: StateFlow<String?> = activeState
 
@@ -59,21 +64,28 @@ class EncryptedRemoteServerRepository(context: Context, private val secrets: Sec
         require(credentials.secret.isNotBlank()) { "请输入密码或私钥" }
         copy(entries = entries.filterNot { it.server.id == server.id } + Entry(server, credentials))
     }
-    override suspend fun select(id: String?) = mutate {
+    override suspend fun select(id: String?) = mutate(recover = id == null) {
         require(id == null || entries.any { it.server.id == id }) { "服务器不存在" }
         copy(active = id)
     }
     override suspend fun remove(id: String) = mutate {
         copy(entries = entries.filterNot { it.server.id == id }, active = active.takeUnless { it == id })
     }
-    private suspend fun mutate(update: Snapshot.() -> Snapshot) = withContext(Dispatchers.IO) {
+    private suspend fun mutate(recover: Boolean = false, update: Snapshot.() -> Snapshot) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            check(errorState.value == null || recover) { "连接存档不可用，请先明确选择本地系统" }
+            if (errorState.value != null) {
+                // An explicit local selection unlocks recovery; preserve the damaged encrypted archive.
+                if (file.baseFile.exists()) file.baseFile.copyTo(File(file.baseFile.path + ".unreadable-${System.nanoTime()}"))
+            }
             val next = snapshot.update()
-            val bytes = secrets.encrypt(json.encodeToString(Snapshot.serializer(), next)).toByteArray(Charsets.UTF_8)
+            val bytes = encrypt(json.encodeToString(Snapshot.serializer(), next)).toByteArray(Charsets.UTF_8)
+            require(bytes.size <= 2 * 1024 * 1024) { "连接存档超过大小上限" }
             val stream = file.startWrite()
             try { stream.write(bytes); file.finishWrite(stream) }
             catch (t: Throwable) { file.failWrite(stream); throw t }
             snapshot = next
+            errorState.value = null
             serverState.value = next.entries.map { it.server }
             activeState.value = next.active
         }

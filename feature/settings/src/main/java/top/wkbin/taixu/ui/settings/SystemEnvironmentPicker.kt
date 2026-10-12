@@ -18,6 +18,7 @@ import top.wkbin.taixu.ui.components.*
 internal fun SystemEnvironmentPicker(localCount: Int, onInstallLocal: () -> Unit, viewModel: RemoteServerViewModel = koinViewModel()) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val active by viewModel.activeId.collectAsStateWithLifecycle()
+    val configurationError by viewModel.configurationError.collectAsStateWithLifecycle()
     val connection by viewModel.connectionState.collectAsStateWithLifecycle()
     var addRemote by remember { mutableStateOf(false) }
     var remove by remember { mutableStateOf<RemoteServer?>(null) }
@@ -25,6 +26,7 @@ internal fun SystemEnvironmentPicker(localCount: Int, onInstallLocal: () -> Unit
     var chooseRemote by remember { mutableStateOf(false) }
     var choose by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        configurationError?.let { NoticeBanner(text = it, isError = true) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("运行后端", style = MaterialTheme.typography.titleMedium)
             RuntimeButton(onClick = { choose = true }) { Text("添加系统") }

@@ -34,8 +34,8 @@ dependencies {
     implementation(libs.kadb)
     // Shower 虚拟屏客户端库（LGPL-3.0 来源）：虚拟屏 + shell 级输入注入 + H.264 视频回传
     implementation(project(":showerclient"))
-    // Termux VT100 emulator + PTY JNI (GPL-3.0). Exported so feature/terminal can attach TerminalView.
-    api(libs.termux.terminal.emulator)
+    // Termux VT100 emulator + PTY JNI fork (GPL-3.0). Exported so feature/terminal can attach TerminalView.
+    api(project(":termux-terminal-emulator"))
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation("org.apache.sshd:sshd-core:2.16.0")

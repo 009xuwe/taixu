@@ -16,6 +16,19 @@ internal class SshLinuxSession private constructor(private val channel: ChannelE
     private val input = channel.outputStream
     override val isAlive get() = channel.isConnected && !channel.isClosed
     val exitCode get() = channel.exitStatus
+    /** PTY renderer consumes bytes directly, preserving escape sequences and split UTF-8. */
+    val terminalBytes: Flow<ByteArray> = channelFlow {
+        suspend fun read(stream: InputStream) {
+            val buffer = ByteArray(4096)
+            while (true) {
+                val size = runInterruptible(Dispatchers.IO) { stream.read(buffer) }
+                if (size < 0) break
+                if (size > 0) send(buffer.copyOf(size))
+            }
+        }
+        launch { read(stdout) }
+        launch { read(stderr) }
+    }
     override val output: Flow<TerminalOutput> = channelFlow {
         suspend fun read(stream: InputStream, kind: TerminalStream) {
             val reader = stream.reader(StandardCharsets.UTF_8)

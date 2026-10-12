@@ -30,8 +30,8 @@ class RemoteSystemService(private val repository: RemoteServerRepository, privat
     private suspend fun <T> access(serverId: String, expected: RemoteServer? = null, operation: suspend (ExecutionEnvironment) -> T): T =
         gates.computeIfAbsent(serverId) { Mutex() }.withLock {
         val owned = pending.computeIfAbsent(serverId) { linkedSetOf() }
-        // 旧环境清理失败（远端未确认退出）不阻塞本次访问：连接已在 close 中断开，尽力关闭后继续。
-        for (previous in owned.toList()) { runCatching { previous.close() }; owned.remove(previous) }
+        // Failed disposal stays owned; retry it before allocating another connection.
+        for (previous in owned.toList()) { previous.close(); owned.remove(previous) }
         val (target, credentials) = repository.connection(serverId)
         check(expected == null || target == expected) { "连接档案已更改，请刷新后重试" }
         val world = connector.openEnvironment(target, credentials,

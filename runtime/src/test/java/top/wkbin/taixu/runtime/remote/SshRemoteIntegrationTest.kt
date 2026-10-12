@@ -24,6 +24,7 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
 import top.wkbin.taixu.core.datastore.RemoteServerRepository
 
 /** Local protocol fixture: no remote machine, paid provider, API key or host shell involved. */
@@ -49,7 +50,7 @@ class SshRemoteIntegrationTest {
             subsystemFactories = listOf(SftpSubsystemFactory.Builder().build())
             setCommandFactory { _, command ->
                 lastCommand = command
-                FixtureCommand(command.contains("hold-open"), command.contains("memoryTotal"))
+                FixtureCommand(command.contains("hold-open"), command.contains("memoryTotal"), command.contains("terminal-bytes"))
             }
             start()
         }
@@ -118,6 +119,17 @@ class SshRemoteIntegrationTest {
             assertTrue(lastCommand.contains("export TEST='a'\"'\"'b';"))
         } finally { world.close() }
     }
+    @Test fun `PTY byte stream preserves UTF8 and terminal control sequences`() = runBlocking {
+        val credentials = SshCredentials("test-password")
+        val trusted = pin(server(), credentials)
+        val world = connector.openEnvironment(trusted, credentials, ExecutionEnvironmentId("ssh", trusted.distributionId, "/workspace", "pty-bytes"))
+        try {
+            val pty = world.openTerminal(top.wkbin.taixu.runtime.shell.SessionConfig(commandLine = "terminal-bytes", workingDirectory = world.workingDirectory())) as SshLinuxSession
+            val output = ByteArrayOutputStream()
+            withTimeout(5_000) { pty.terminalBytes.collect { output.write(it) } }
+            assertArrayEquals("\u001b[31m中文😀\u001b[0m".toByteArray(Charsets.UTF_8), output.toByteArray())
+        } finally { world.close() }
+    }
     @Test fun `background stop and timeout request remote process termination`() = runBlocking {
         val credentials = SshCredentials("test-password")
         val trusted = pin(server(), credentials)
@@ -170,7 +182,7 @@ class SshRemoteIntegrationTest {
         catch (e: IllegalStateException) { assertTrue(e.message!!.contains("档案")) }
         assertEquals("external edit", file.readText())
     }
-    private inner class FixtureCommand(private val hold: Boolean, private val metrics: Boolean = false) : Command {
+    private inner class FixtureCommand(private val hold: Boolean, private val metrics: Boolean = false, private val terminalBytes: Boolean = false) : Command {
         private lateinit var stdout: OutputStream
         private lateinit var stderr: OutputStream
         private lateinit var exit: ExitCallback
@@ -180,6 +192,10 @@ class SshRemoteIntegrationTest {
         override fun setExitCallback(callback: ExitCallback) { exit = callback }
         override fun start(channel: ChannelSession, environment: Environment) {
             environment.addSignalListener({ _, _ -> exit.onExit(143) })
+            if (terminalBytes) {
+                "\u001b[31m中文😀\u001b[0m".toByteArray(Charsets.UTF_8).forEach { stdout.write(it.toInt() and 255); stdout.flush() }
+                exit.onExit(0); return
+            }
             if (metrics) {
                 stdout.write(("distribution\tFixture Linux\narchitecture\tx86_64\nkernel\t6.8\n" +
                     "memoryTotal\t8192\nmemoryUsed\t1024\ndiskTotal\t107374182400\ndiskUsed\t10737418240\n" +

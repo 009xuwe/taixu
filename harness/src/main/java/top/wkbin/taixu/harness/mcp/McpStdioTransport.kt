@@ -40,6 +40,7 @@ class McpStdioTransport(
     private val json: Json,
     private val commandBuilder: McpCommandBuilder,
     private val channelFactory: McpStdioChannelFactory,
+    internal val standaloneScope: StandaloneMcpScope? = null,
 ) : McpTransport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connections = ConcurrentHashMap<String, Connection>()
@@ -162,12 +163,11 @@ class McpStdioTransport(
     }
 
     private suspend fun connection(server: McpServerConfig, bypassCooldown: Boolean = false): Connection {
-        val scoped = server.forExecutionEnvironment()
+        val scoped = server.copy(id = scopedMcpKey(server, standaloneScope))
         return startupMutexes.getOrPut(server.id) { Mutex() }.withLock {
             connectionLocked(scoped, bypassCooldown)
         }
     }
-
     private suspend fun connectionLocked(server: McpServerConfig, bypassCooldown: Boolean): Connection {
         connections[server.id]?.takeIf { it.dead == null && it.channel.isAlive && it.fingerprint == commandBuilder.fingerprint(server) }?.let {
             it.markActive()

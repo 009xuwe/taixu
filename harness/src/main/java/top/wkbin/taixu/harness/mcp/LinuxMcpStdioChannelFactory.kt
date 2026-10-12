@@ -29,8 +29,7 @@ class LinuxMcpStdioChannelFactory(
     private val acquisitions = ConcurrentHashMap<Key, McpChannelAcquisition>()
 
     override suspend fun open(server: McpServerConfig): McpStdioChannel {
-        val config = SessionConfig(workingDirectory = "/root", environment = server.env,
-            commandLine = commandBuilder.commandLine(server), allowSttyResize = false)
+        commandBuilder.commandLine(server) // Validate before acquiring resources.
         val binding = currentCoroutineContext()[ExecutionEnvironmentContext]
         val key = Key(server.id, binding?.environment?.id)
         return locks.getOrPut(key) { Mutex() }.withLock {
@@ -52,7 +51,10 @@ class LinuxMcpStdioChannelFactory(
                         val environment = binding?.environment ?: environments?.open("mcp:${server.id}", "", null)
                         if (binding == null) owned.environment = environment
                         checkCreation(owned)
-                        requireMcpExecutable(environment, server)
+                        val prepared = mcpExecutionConfig(server, environment)
+                        val config = SessionConfig(workingDirectory = environment?.workingDirectory() ?: "/root", environment = prepared.env,
+                            commandLine = commandBuilder.commandLine(prepared, configureTty = environment?.id?.backend != REMOTE_BACKEND), allowSttyResize = false)
+                        requireMcpExecutable(environment, prepared)
                         checkCreation(owned)
                         owned.session = environment?.openSession(config) ?: linuxRuntime.startSession(config)
                         checkCreation(owned)
@@ -79,7 +81,7 @@ class LinuxMcpStdioChannelFactory(
     private suspend fun requireMcpExecutable(environment: ExecutionEnvironment?, server: McpServerConfig) {
         if (environment == null || environment.id.backend != REMOTE_BACKEND) return
         val probe = environment.execute(
-            ShellCommand(commandLine = "command -v " + ShellQuote.of(server.command), environment = server.env),
+            ShellCommand(commandLine = "command -v " + ShellQuote.of(server.command), workingDirectory = environment.workingDirectory(), environment = server.env),
         )
         if (probe.exitCode != 0) {
             error(

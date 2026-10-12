@@ -30,6 +30,7 @@ val featureSettingsModule = module {
         CcSwitchViewModel(
             toolManager = get(),
             ccSwitchClient = get(),
+            localAccess = get(),
             aiModelDao = get(),
             providerRepository = get(),
             toolSettingsRepository = get(),

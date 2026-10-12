@@ -21,7 +21,7 @@ class McpEnvironmentTest {
     private val json = Json { ignoreUnknownKeys = true }
     private val server = McpServerConfig("server", "server", transportType = McpTransportType.STDIO, command = "mcp")
     private fun registry() = SessionExecutionEnvironments(ExecutionEnvironmentFactory { owner, workspace, _ ->
-        FakeWorld(ExecutionEnvironmentId("remote", "linux", workspace, owner))
+        FakeWorld(ExecutionEnvironmentId("ssh", "linux", workspace, owner))
     })
     private fun unusedRuntime() = Proxy.newProxyInstance(LinuxRuntime::class.java.classLoader,
         arrayOf(LinuxRuntime::class.java)) { _, method, _ -> error("local fallback: ${method.name}") } as LinuxRuntime
@@ -35,7 +35,7 @@ class McpEnvironmentTest {
         val factory = LinuxMcpStdioChannelFactory(unusedRuntime(), McpCommandBuilder())
         registry.activity("one", "/workspace/p") {
             val channel = factory.open(server)
-            assertEquals(listOf("stdio:/root"), world.events)
+            assertEquals(listOf("command:/workspace/p", "stdio:/workspace/p"), world.events)
             channel.close()
         }
         assertEquals(0, world.closes)

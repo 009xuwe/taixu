@@ -15,7 +15,7 @@ internal class SshExecutionEnvironment(
     private val connection: Session,
     override val id: ExecutionEnvironmentId,
     private val credentials: SshCredentials,
-    private val logicalWorkspace: String = "/workspace",
+    override val logicalWorkspace: String = "/workspace",
 ) : ExecutionEnvironment {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
@@ -105,11 +105,12 @@ internal class SshExecutionEnvironment(
             for (session in sessions.toList()) {
                 try { session.close(); sessions.remove(session) } catch (t: Throwable) { collected.add(t) }
             }
-            // 即便有子会话未确认退出，也必须断开底层 SSH 连接：否则连接泄漏，且按服务器串行
-            // 访问的 UI 后续每次操作都会在关闭旧环境时再次失败。未退出的远端进程由服务器回收。
-            connection.disconnect()
-            scope.coroutineContext[Job]?.cancelAndJoin()
-            background.clear()
+            // Keep failed channels reachable for a later stop retry; only confirmed disposal releases transport.
+            if (collected.isEmpty()) {
+                connection.disconnect()
+                scope.coroutineContext[Job]?.cancelAndJoin()
+                background.clear()
+            }
             collected
         }
         if (failures.isNotEmpty()) throw ProcessCleanupException(failures)

@@ -21,6 +21,8 @@ class TerminalSessionHandle internal constructor(
     val workingDirectory: String,
     val distributionId: String = "ubuntu",
     internal val process: TerminalProcess,
+    /** 人类可读的环境标识（远程=主机名）；本地终端为 null。 */
+    val environmentLabel: String? = null,
 ) {
     val termuxSession: TerminalSession get() = process.session
     val isAlive: Boolean get() = process.isAlive
@@ -33,6 +35,7 @@ class TerminalSessionManager(
     private val sessionClientRouter: TerminalSessionClientRouter,
     private val environmentFactory: ExecutionEnvironmentFactory? = null,
     private val processFactory: TerminalProcessFactory = TermuxTerminalProcessFactory(),
+    private val remoteProcessFactory: RemoteTerminalProcessFactory = TermuxRemoteTerminalProcessFactory(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val stateLock = Any()
@@ -62,10 +65,11 @@ class TerminalSessionManager(
             try {
                 val rows = terminalSessionDao.listAll()
                 for (row in rows) {
+                    if (row.distributionId.startsWith("ssh:") && row.executionTargetJson == null) continue
                     if (_handles.value.none { it.id == row.id }) createSession(row.label, row.workingDirectory, row.distributionId, row.id)
                 }
                 restoredOnce = true
-                if (rows.isNotEmpty()) {
+                if (_handles.value.isNotEmpty()) {
                     _activeId.value = _handles.value.firstOrNull()?.id ?: _activeId.value
                     return
                 }
@@ -80,6 +84,7 @@ class TerminalSessionManager(
         distributionId: String? = null,
         id: String = UUID.randomUUID().toString(),
     ): TerminalSessionHandle = coroutineScope {
+        val capturedTarget = environmentFactory?.capture("", distributionId)
         val owned = TerminalOwnedResources(id, currentCoroutineContext().job)
         synchronized(stateLock) {
             check(!closingAll) { "Terminal sessions are closing" }
@@ -88,25 +93,36 @@ class TerminalSessionManager(
         }
         try {
             val previous = terminalSessionDao.listAll().firstOrNull { it.id == id }
+            check(previous?.distributionId?.startsWith("ssh:") != true || previous.executionTargetJson != null) {
+                "旧远程终端未记录主机身份，请关闭后新建终端"
+            }
+            val targetJson = previous?.executionTargetJson ?: capturedTarget
+            if (targetJson != null) environmentFactory?.restore("terminal:$id", "", targetJson)
             owned.environment = environmentFactory?.open("terminal:$id", "", distributionId)
             checkCreation(owned)
             val environment = owned.environment
             val targetDistro = environment?.id?.distribution ?: distributionId ?: linuxRuntime.activeDistroId.value
-            val config = SessionConfig(workingDirectory = workingDirectory, showBanner = true)
-            val launch = if (environment != null) {
-                (environment as? LocalTerminalLaunch)?.terminalLaunch(config)
-                    ?: error("当前执行环境需要远程 PTY 渲染适配器；禁止启动本地终端。")
-            } else linuxRuntime.buildInteractiveLaunch(config, targetDistro)
+            val cwd = if (environment != null && environment !is LocalTerminalLaunch)
+                environment.workingDirectory(workingDirectory.takeUnless { it == DEFAULT_CWD }) else workingDirectory
+            val storedDirectory = if (workingDirectory == DEFAULT_CWD) cwd else workingDirectory
+            val config = SessionConfig(workingDirectory = cwd, showBanner = true)
             checkCreation(owned)
-            owned.process = processFactory.create(launch, sessionClientRouter)
+            owned.process = when (environment) {
+                null -> processFactory.create(linuxRuntime.buildInteractiveLaunch(config, targetDistro), sessionClientRouter)
+                is LocalTerminalLaunch -> processFactory.create(environment.terminalLaunch(config), sessionClientRouter)
+                else -> remoteProcessFactory.create(
+                    LinuxSessionTerminalBackend(environment.openTerminal(config), scope), label, sessionClientRouter)
+            }
             checkCreation(owned)
             owned.rollback = {
                 if (previous == null) terminalSessionDao.delete(id) else terminalSessionDao.upsert(previous)
             }
-            terminalSessionDao.upsert(TerminalSessionEntity(id = id, label = label, workingDirectory = workingDirectory,
-                distributionId = targetDistro, createdAt = System.currentTimeMillis(), sortOrder = terminalSessionDao.nextOrder()))
+            terminalSessionDao.upsert(TerminalSessionEntity(id = id, label = label, workingDirectory = storedDirectory,
+                distributionId = targetDistro, createdAt = System.currentTimeMillis(), sortOrder = terminalSessionDao.nextOrder(),
+                executionTargetJson = targetJson))
             checkCreation(owned)
-            val handle = TerminalSessionHandle(id, label, workingDirectory, targetDistro, owned.process!!)
+            val handle = TerminalSessionHandle(id, label, storedDirectory, targetDistro, owned.process!!,
+                environment?.takeUnless { it is LocalTerminalLaunch }?.label)
             synchronized(stateLock) {
                 check(!owned.closing && !closingAll && resources[id] === owned) { "Terminal session was disposed during creation" }
                 _handles.update { it + handle }
@@ -130,7 +146,8 @@ class TerminalSessionManager(
 
     suspend fun openOrSwitchToProject(project: String, workingDirectory: String, distributionId: String? = null): TerminalSessionHandle {
         ensureActive()
-        val existing = _handles.value.firstOrNull { it.workingDirectory == workingDirectory }
+        val existing = _handles.value.firstOrNull { it.workingDirectory == workingDirectory &&
+            (distributionId == null || it.distributionId == distributionId) }
         if (existing != null) { _activeId.value = existing.id; return existing }
         return createSession(project.ifBlank { "工作区" }, workingDirectory, distributionId)
     }

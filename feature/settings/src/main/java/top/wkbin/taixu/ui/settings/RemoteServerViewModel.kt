@@ -17,6 +17,7 @@ data class RemoteConnectionState(val busy: Boolean = false, val fingerprint: Str
 class RemoteServerViewModel(private val repository: RemoteServerRepository, private val connector: SshConnectionTester) : ViewModel() {
     val servers = repository.servers
     val activeId = repository.activeId
+    val configurationError = repository.configurationError
     suspend fun credentials(id: String): SshCredentials = repository.credentials(id)
     private val state = MutableStateFlow(RemoteConnectionState())
     val connectionState: StateFlow<RemoteConnectionState> = state
