@@ -20,8 +20,13 @@ import top.wkbin.taixu.harness.core.ToolCheckpoints
 import top.wkbin.taixu.harness.directory.CapabilityToolGateway
 
 internal val toolBackendModule = module {
-    single<top.wkbin.taixu.runtime.environment.ExecutionEnvironmentFactory> {
+    single<top.wkbin.taixu.runtime.environment.ExecutionEnvironmentFactory>(org.koin.core.qualifier.named("local-execution")) {
         top.wkbin.taixu.harness.environment.LocalExecutionEnvironmentFactory(get(), get(), get(), get(), get(), get())
+    }
+    single<top.wkbin.taixu.runtime.environment.ExecutionEnvironmentFactory> {
+        top.wkbin.taixu.harness.environment.SelectedExecutionEnvironmentFactory(
+            get(org.koin.core.qualifier.named("local-execution")), get(), get(),
+        )
     }
     single { top.wkbin.taixu.harness.environment.SessionExecutionEnvironments(get()) }
     single { ToolCheckpoints<ToolExecutionRequest, ToolResult>() }

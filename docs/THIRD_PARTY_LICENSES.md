@@ -30,6 +30,14 @@ OpenAI Codex、OpenClaw 和 Hermes Agent 默认由用户在初始化 Linux 后�
 
 因此，工具的许可证、商标、服务条款和网络安装脚本变更应在每次发布前重新审查。应用不允许远程 Registry 直接下发任意 shell 命令；Registry 只提供数据，实际安装行为由 APK 内置且受 allow-list 约束的 Adapter 执行。
 
+## 远程 SSH 依赖
+
+| 组件 | 用途 | 来源/版本 | 许可证与分发备注 |
+|---|---|---|---|
+| JSch（mwiede fork） | 远程 SSH exec / PTY / SFTP，密码与私钥认证 | `com.github.mwiede:jsch:2.28.0`，[上游](https://github.com/mwiede/jsch) | BSD-style；发布时保留上游 LICENSE.txt / LICENSE.JZlib.txt / LICENSE.jBCrypt.txt |
+| Bouncy Castle | Android 上的 SSH Ed25519 / 曲线及密钥算法实现 | `org.bouncycastle:bcprov-jdk18on:1.84`，[上游](https://www.bouncycastle.org/download/bouncy-castle-java/) | Bouncy Castle License（MIT-style）；保留 JAR 内许可证与版权说明 |
+| Apache MINA SSHD | 仅 JVM 测试中的本机 SSH / SFTP 服务 | `org.apache.sshd:sshd-core/sshd-sftp:2.16.0` | Apache-2.0；仅 testImplementation，不进入 APK |
+
 ## 发布前检查
 
 - 锁定并记录 APK 中每个 AAR/JAR/native 文件的准确版本、SHA-256、许可证和 NOTICE。

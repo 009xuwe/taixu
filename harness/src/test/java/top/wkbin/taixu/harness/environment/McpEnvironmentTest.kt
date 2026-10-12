@@ -51,13 +51,13 @@ class McpEnvironmentTest {
             owners += currentCoroutineContext()[ExecutionEnvironmentContext]!!.environment.id.owner
             ReplyChannel().also { channels += it }
         })
-        repeat(2) { registry.activity("one", "/workspace/p") { assertTrue(transport.check(server)) } }
-        registry.activity("two", "/workspace/p") { assertTrue(transport.check(server)) }
+        repeat(2) { registry.activity("one", "/workspace/p") { assertTrue(transport.check(server).online) } }
+        registry.activity("two", "/workspace/p") { assertTrue(transport.check(server).online) }
         assertEquals(listOf("one", "two"), owners)
         registry.closeSession("one")
         assertFalse(channels[0].isAlive)
         assertTrue(channels[1].isAlive)
-        registry.activity("two", "/workspace/p") { assertTrue(transport.check(server)) }
+        registry.activity("two", "/workspace/p") { assertTrue(transport.check(server).online) }
         assertEquals(2, channels.size)
         registry.closeSession("two")
         assertFalse(channels[1].isAlive)
@@ -69,8 +69,8 @@ class McpEnvironmentTest {
         val transport = McpStdioTransport(json, McpCommandBuilder(), factory {
             ReplyChannel().also { channels += it }
         })
-        registry.activity("one", "/workspace/p") { assertTrue(transport.check(server)) }
-        registry.activity("two", "/workspace/p") { assertTrue(transport.check(server)) }
+        registry.activity("one", "/workspace/p") { assertTrue(transport.check(server).online) }
+        registry.activity("two", "/workspace/p") { assertTrue(transport.check(server).online) }
         transport.closeConnection(server.id)
         assertTrue(channels.none { it.isAlive })
         registry.closeSession("one"); registry.closeSession("two")
@@ -98,7 +98,7 @@ class McpEnvironmentTest {
         val registry = registry()
         val channel = ReplyChannel()
         val transport = McpStdioTransport(json, McpCommandBuilder(), factory { channel })
-        registry.activity("one", "/workspace/p") { assertTrue(transport.check(server)) }
+        registry.activity("one", "/workspace/p") { assertTrue(transport.check(server).online) }
         channel.failCloseOnce = true
         try { transport.closeConnection(server.id); fail("cleanup failure was swallowed") }
         catch (_: IllegalStateException) { }
@@ -114,7 +114,7 @@ class McpEnvironmentTest {
             ReplyChannel().also { channels += it }
         })
         for (owner in listOf("one", "two", "three")) {
-            registry.activity(owner, "/workspace/p") { assertTrue(transport.check(server)) }
+            registry.activity(owner, "/workspace/p") { assertTrue(transport.check(server).online) }
         }
         channels[0].failCloseOnce = true
         channels[1].failCloseOnce = true
@@ -133,7 +133,7 @@ class McpEnvironmentTest {
     @Test fun `standalone invalidation retains failed close for retry without a session owner`() = runBlocking {
         val channel = ReplyChannel()
         val transport = McpStdioTransport(json, McpCommandBuilder(), factory { channel })
-        assertTrue(transport.check(server))
+        assertTrue(transport.check(server).online)
         channel.failCloseOnce = true
         try { transport.closeConnection(server.id); fail("failure swallowed") }
         catch (_: IllegalStateException) { }
@@ -147,15 +147,15 @@ class McpEnvironmentTest {
         val transport = McpStdioTransport(json, McpCommandBuilder(), factory {
             ReplyChannel().also { channels += it }
         })
-        assertTrue(transport.check(server))
+        assertTrue(transport.check(server).online)
         val old = channels.single()
         old.failCloseOnce = true
         try { transport.closeConnection(server.id); fail("failure swallowed") }
         catch (_: IllegalStateException) { }
         old.failCloseOnce = true
-        assertFalse(transport.check(server))
+        assertFalse(transport.check(server).online)
         assertEquals(1, channels.size)
-        assertTrue(transport.check(server))
+        assertTrue(transport.check(server).online)
         assertFalse(old.isAlive)
         assertEquals(3, old.closeAttempts)
         assertEquals(2, channels.size)
@@ -166,7 +166,7 @@ class McpEnvironmentTest {
         val registry = registry()
         val channel = ReplyChannel()
         val transport = McpStdioTransport(json, McpCommandBuilder(), factory { channel })
-        registry.activity("one", "/workspace/p") { assertTrue(transport.check(server)) }
+        registry.activity("one", "/workspace/p") { assertTrue(transport.check(server).online) }
         listOf(async { transport.closeConnection(server.id) }, async { registry.closeSession("one") }).awaitAll()
         assertEquals(1, channel.closeAttempts)
         assertFalse(channel.isAlive)

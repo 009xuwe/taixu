@@ -21,6 +21,7 @@ import top.wkbin.taixu.ui.settings.LocalBackupViewModel
 
 /** Dependency registrations owned by the feature:settings module. */
 val featureSettingsModule = module {
+    viewModel { top.wkbin.taixu.ui.settings.RemoteServerViewModel(get(), get()) }
     viewModel { LocalBackupViewModel(context = get(), service = get()) }
     viewModel<AppManagementViewModel> { AppManagementViewModel(repository = get(), appManager = get()) }
     viewModel { PhoneAgentSettingsViewModel(preferences = get(), connectionTester = get()) }
@@ -129,6 +130,7 @@ val featureSettingsModule = module {
             linuxRuntime = get(),
             firstUseGuidePreferences = get(),
             logger = get(),
+            remoteServers = get(),
         )
     }
 

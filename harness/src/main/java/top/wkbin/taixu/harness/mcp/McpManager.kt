@@ -71,10 +71,12 @@ class McpManager(
     }
 
     suspend fun checkConnection(server: McpServerConfig): Boolean = withContext(Dispatchers.IO) {
-        // B1: 与 executeTool 一致先做 workspace 绑定再建 transport，
-        // 保证 check 与执行路径看到相同 fingerprint，避免误判连接失效而重启进程
+        // B1: 与 executeTool 一致先做 workspace 绑定，避免 fingerprint 乒乓导致进程反复重启；
+        // 在线清掉旧错误、离线记录原因：状态点在线却仍挂旧故障描述会误导用户反复手动刷新。
         val bound = boundConfig(server)
-        withTimeoutOrNull(DISCOVERY_TIMEOUT_MS.milliseconds) { transport(bound).check(bound) } ?: false
+        val result = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS.milliseconds) { transport(bound).check(bound) }
+        if (result?.online == true) lastErrors.remove(server.id) else result?.error?.let { lastErrors[server.id] = it }
+        result?.online == true
     }
 
     suspend fun invalidateServer(serverId: String) {
@@ -102,9 +104,6 @@ class McpManager(
                     val online = checkConnection(server)
                     val state = if (online) McpConnectionState.ONLINE else McpConnectionState.OFFLINE
                     _connectionStates.update { it + (server.id to state) }
-                    // 恢复在线必须清掉旧错误：否则状态点显示在线、错误栏仍挂着故障描述，
-                    // 用户会被误导反复手动刷新。
-                    if (online) lastErrors.remove(server.id)
                 }
             }.joinAll()
         }
@@ -125,7 +124,6 @@ class McpManager(
         clearDiscoveryCooldown(serverId)
         _connectionStates.update { it + (serverId to McpConnectionState.CHECKING) }
         val online = checkConnection(server)
-        if (online) lastErrors.remove(serverId)
         _connectionStates.update {
             it + (serverId to if (online) McpConnectionState.ONLINE else McpConnectionState.OFFLINE)
         }

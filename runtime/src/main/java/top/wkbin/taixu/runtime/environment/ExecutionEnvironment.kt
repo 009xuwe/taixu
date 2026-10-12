@@ -7,8 +7,11 @@ import top.wkbin.taixu.runtime.shell.*
 data class ExecutionEnvironmentId(val backend: String, val distribution: String, val workspace: String, val owner: String)
 
 data class WorkspaceEditOutcome(val strategy: String, val replacements: Int, val diff: String?)
+data class ExecutionFileEntry(val name: String, val directory: Boolean, val size: Long, val modifiedAt: Long)
 
 interface ExecutionFiles {
+    suspend fun listEntries(path: String): AppResult<List<ExecutionFileEntry>> = AppResult.Failure(
+        top.wkbin.taixu.core.common.result.AppError(top.wkbin.taixu.core.common.result.ErrorCode.IO, "当前环境不支持目录浏览"))
     suspend fun read(path: String, offset: Int? = null, limit: Int? = null): AppResult<String>
     suspend fun readRawBytes(path: String): AppResult<ByteArray>
     suspend fun write(path: String, content: String): AppResult<Unit>
@@ -29,6 +32,8 @@ interface ExecutionCommands {
 
 interface ExecutionEnvironment : ExecutionCommands {
     val id: ExecutionEnvironmentId
+    /** 人类可读的环境标识（远程=主机，本地=发行版），仅用于诊断与错误提示。 */
+    val label: String get() = id.distribution
     val files: ExecutionFiles
     val artifacts: ExecutionArtifacts? get() = null
     val downloads: ExecutionDownloads? get() = null

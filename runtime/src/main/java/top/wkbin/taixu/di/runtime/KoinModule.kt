@@ -54,6 +54,9 @@ import top.wkbin.taixu.runtime.webchat.WebChatBridgeServer
 
 /** Dependency registrations owned by the runtime module. */
 val runtimeModule = module {
+    single { top.wkbin.taixu.runtime.remote.SshConnector() }
+    single<top.wkbin.taixu.runtime.remote.SshConnectionTester> { get<top.wkbin.taixu.runtime.remote.SshConnector>() }
+    single { top.wkbin.taixu.runtime.remote.RemoteSystemService(get(), get()) }
     single<ProotCommandBuilder> { ProotCommandBuilder(environmentResolver = get(), logger = get()) }
 
     single<BackgroundTaskRegistry> { BackgroundTaskRegistry() }
@@ -307,7 +310,7 @@ val runtimeModule = module {
             linuxRuntime = get(),
             terminalSessionDao = get(),
             sessionClientRouter = get(),
-            environmentFactory = get(),
+            environmentFactory = get(org.koin.core.qualifier.named("local-execution")),
             processFactory = get(),
         )
     }

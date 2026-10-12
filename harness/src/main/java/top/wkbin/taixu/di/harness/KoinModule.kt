@@ -409,8 +409,7 @@ val harnessModule = module {
             mcpServerRepository = get(),
             promptAssets = get(),
             fileAccess = get(),
-            privilegeRenderer = get(),
-            promptRouter = get(),
+            privilegeRenderer = get(), promptRouter = get(), environments = get(),
         )
     }
 

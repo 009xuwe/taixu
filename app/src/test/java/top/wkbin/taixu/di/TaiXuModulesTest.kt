@@ -50,6 +50,10 @@ class TaiXuModulesTest {
                 definition<SubagentLaneRunner>(Function0::class),
                 definition<BrowserMcpTools>(List::class, Function1::class, BrowserPreferences::class),
                 definition<BrowserMcpResources>(Function0::class),
+                // The build coordinator's adapter and default callbacks are constructed by its lambda.
+                definition<top.wkbin.taixu.iteration.engine.TaiXuDevBuildCoordinator>(
+                    top.wkbin.taixu.iteration.engine.TaiXuDevBuildCoordinator.ShellRunner::class, Function2::class, Function0::class, String::class,
+                ),
             ),
             extraTypes = listOf(Context::class, Application::class, SavedStateHandle::class, WorkerParameters::class),
         )

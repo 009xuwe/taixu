@@ -4,6 +4,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.runtime"
+    defaultConfig { consumerProguardFiles("ssh-consumer-rules.pro") }
 
     buildFeatures {
         aidl = true
@@ -11,6 +12,8 @@ android {
 }
 
 dependencies {
+    implementation("com.github.mwiede:jsch:2.28.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
     api(project(":core:common"))
     api(project(":core:model"))
     implementation(project(":project-template"))
@@ -34,4 +37,6 @@ dependencies {
     // Termux VT100 emulator + PTY JNI (GPL-3.0). Exported so feature/terminal can attach TerminalView.
     api(libs.termux.terminal.emulator)
     testImplementation(libs.junit)
+    testImplementation("org.apache.sshd:sshd-core:2.16.0")
+    testImplementation("org.apache.sshd:sshd-sftp:2.16.0")
 }
