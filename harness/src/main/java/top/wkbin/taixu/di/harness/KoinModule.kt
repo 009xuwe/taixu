@@ -292,7 +292,7 @@ val harnessModule = module {
     }
 
     single<HarnessEventBus> { HarnessEventBus() }
-    single<LinuxMcpStdioChannelFactory> { LinuxMcpStdioChannelFactory(linuxRuntime = get(), commandBuilder = get(), environments = get()) }
+    single<LinuxMcpStdioChannelFactory> { LinuxMcpStdioChannelFactory(linuxRuntime = get(), commandBuilder = get(), environments = get(), spillDirectory = File(get<Context>().cacheDir, "taixu_mcp_spills")) }
 
     single<McpCommandBuilder> { McpCommandBuilder() }
 

@@ -23,6 +23,8 @@ class LinuxMcpStdioChannelFactory(
     private val linuxRuntime: LinuxRuntime,
     private val commandBuilder: McpCommandBuilder,
     private val environments: ExecutionEnvironmentFactory? = null,
+    /** 超长行落盘转存目录；与 McpHttpTransport 共用 cacheDir/taixu_mcp_spills。 */
+    private val spillDirectory: java.io.File? = null,
 ) : McpStdioChannelFactory {
     private data class Key(val server: String, val environment: ExecutionEnvironmentId?)
     private val locks = ConcurrentHashMap<Key, Mutex>()
@@ -58,7 +60,7 @@ class LinuxMcpStdioChannelFactory(
                         checkCreation(owned)
                         owned.session = environment?.openSession(config) ?: linuxRuntime.startSession(config)
                         checkCreation(owned)
-                        val channel = LinuxMcpStdioChannel(server.id, owned.session!!, environment = owned.environment, secretValues = prepared.env.values)
+                        val channel = LinuxMcpStdioChannel(server.id, owned.session!!, environment = owned.environment, secretValues = prepared.env.values, spillDirectory = spillDirectory)
                         owned.channel = channel
                         channel.ownership = AutoCloseable { owned.detached() }
                         checkCreation(owned)
