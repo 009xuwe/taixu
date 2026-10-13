@@ -121,8 +121,7 @@ class McpStdioTransport(
     }
 
     /** 是否为传输层故障（子进程死亡 / EOF / IO 错误），只有此类失败才值得销毁重建连接 */
-    private fun isChannelFailure(t: Throwable): Boolean =
-        t is McpStdioChannelException || t is IOException
+    private fun isChannelFailure(t: Throwable): Boolean = t is McpStdioChannelException || t is IOException
 
     suspend fun closeConnection(serverId: String) = startupMutexes.getOrPut(serverId) { Mutex() }.withLock {
         val ids = (connections.keys + downUntil.keys + serverId).filter { it == serverId || it.startsWith("$serverId@environment:") }
@@ -384,9 +383,7 @@ class McpStdioTransport(
     private fun startReaderLoop(connection: Connection) {
         connection.readerJob = scope.launch {
             try {
-                while (true) {
-                    connection.route(connection.channel.incoming.receive())
-                }
+                while (true) connection.route(connection.channel.incoming.receive())
             } catch (cancellation: CancellationException) {
                 throw cancellation // close() 主动取消，等待者已由 close 收尾
             } catch (t: Throwable) {

@@ -57,6 +57,12 @@ class LinuxMcpStdioChannelFactory(
                         val config = SessionConfig(workingDirectory = environment?.workingDirectory() ?: "/root", environment = prepared.env,
                             commandLine = commandBuilder.commandLine(prepared, configureTty = false), allowSttyResize = false, usePty = false)
                         requireMcpExecutable(environment, prepared)
+                        if (server.requiresInstall) {
+                            val entry = checkNotNull(top.wkbin.taixu.core.model.McpCatalog.find(server.id.mcpServerKey()))
+                            val probe = ShellCommand(entry.probeCommand, timeoutMs = 5_000L)
+                            val result = environment?.execute(probe) ?: linuxRuntime.execute(probe)
+                            check(result.isSuccess) { "MCP ${server.name} 在当前环境未安装或安装已损坏" }
+                        }
                         checkCreation(owned)
                         owned.session = environment?.openSession(config) ?: linuxRuntime.startSession(config)
                         checkCreation(owned)
