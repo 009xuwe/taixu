@@ -49,15 +49,16 @@ class CustomIterationBootstrapTest {
     fun prepareDirectoriesReportsFailureWhenPathIsBlockedByFile() {
         val home = tempHome()
         // 用同名普通文件占位，mkdirs() 必然失败：这正是旧实现会误报成功的场景
-        File(home, CustomIterationBootstrap.WORKSPACE_NAME).writeText("not-a-directory")
+        val blocked = File(home, CustomIterationBootstrap.WORKSPACE_NAME)
+        blocked.writeText("not-a-directory")
 
         val result = CustomIterationBootstrap.prepareDirectories(home)
 
         assertFalse(result.success)
         assertEquals("", result.workspacePath)
         assertTrue(
-            "错误信息应包含具体路径",
-            result.errorMessage.orEmpty().contains("无法创建目录"),
+            "错误信息应包含被占用路径的绝对路径",
+            result.errorMessage.orEmpty().contains(blocked.absolutePath),
         )
     }
 
