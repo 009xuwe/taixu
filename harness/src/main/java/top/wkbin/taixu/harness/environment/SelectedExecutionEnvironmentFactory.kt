@@ -11,8 +11,8 @@ class SelectedExecutionEnvironmentFactory(
     private val connector: SshConnector,
     private val targets: SessionExecutionTargets = SessionExecutionTargets(servers),
 ) : ExecutionEnvironmentFactory {
-    override fun capture(workspace: String) = targets.capture(workspace)
-    override fun capture(workspace: String, distribution: String?) = targets.capture(workspace, distribution)
+    override suspend fun capture(workspace: String) = targets.capture(workspace)
+    override suspend fun capture(workspace: String, distribution: String?) = targets.capture(workspace, distribution)
     override suspend fun restore(owner: String, workspace: String, targetJson: String) = targets.restore(owner, workspace, targetJson)
     override suspend fun bind(owner: String, workspace: String) { targets.resolve(owner, workspace) }
     override suspend fun open(owner: String, workspace: String, distribution: String?): ExecutionEnvironment {

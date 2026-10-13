@@ -3,7 +3,6 @@ package top.wkbin.taixu.harness.mcp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.*
 import top.wkbin.taixu.core.model.McpConnectionState
-import top.wkbin.taixu.core.model.McpServerConfig
 
 /** Settings show the selected environment's status, never another chat owner's connection. */
 internal class McpScopedConnectionStates(private val standalone: StandaloneMcpScope?, scope: CoroutineScope) {
@@ -12,9 +11,7 @@ internal class McpScopedConnectionStates(private val standalone: StandaloneMcpSc
         val suffix = selected?.let { "@environment:$it" }.orEmpty()
         states.filterKeys { it == it.mcpServerKey() + suffix }.mapKeys { it.key.mcpServerKey() }
     }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
-    suspend fun update(serverId: String, state: McpConnectionState, key: String? = null) {
-        val scoped = key ?: scopedMcpKey(McpServerConfig(serverId, serverId), standalone)
-        all.update { it + (scoped to state) }
-    }
+    fun update(state: McpConnectionState, key: String) { all.update { it + (key to state) } }
     fun forget(serverId: String) { all.update { states -> states.filterKeys { it.mcpServerKey() != serverId } } }
+    fun forgetKey(key: String) { all.update { it - key } }
 }

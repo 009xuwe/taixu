@@ -11,12 +11,12 @@ import top.wkbin.taixu.core.model.SessionExecutionTarget
 class SessionExecutionTargets(
     private val servers: RemoteServerRepository,
     private val sessions: HarnessSessionRepository? = null,
-    private val localDistribution: () -> String = { "debian" },
+    private val localDistribution: suspend () -> String = { "debian" },
 ) {
     private val mutex = Mutex()
     private val transient = mutableMapOf<String, SessionExecutionTarget>()
-    fun capture(workspace: String): String = Json.encodeToString(SessionExecutionTarget.serializer(), selection(workspace, null))
-    fun capture(workspace: String, distribution: String?): String =
+    suspend fun capture(workspace: String): String = Json.encodeToString(SessionExecutionTarget.serializer(), selection(workspace, null))
+    suspend fun capture(workspace: String, distribution: String?): String =
         Json.encodeToString(SessionExecutionTarget.serializer(), selection(workspace, distribution))
     suspend fun restore(owner: String, workspace: String, targetJson: String) = mutex.withLock {
         require(owner.startsWith("terminal:") && "::" !in owner) { "仅独立终端可恢复此执行目标" }
@@ -26,7 +26,7 @@ class SessionExecutionTargets(
         check(transient[owner] == null || transient[owner] == target) { "终端已绑定其他执行环境" }
         transient[owner] = target
     }
-    private fun selection(workspace: String, inherited: String?): SessionExecutionTarget {
+    private suspend fun selection(workspace: String, inherited: String?): SessionExecutionTarget {
         val distribution = inherited ?: servers.activeId.value?.let { "ssh:$it" } ?: localDistribution()
         val remote = if (distribution.startsWith("ssh:")) servers.servers.value.singleOrNull { it.distributionId == distribution }
             ?: error("绑定的远程服务器不可用，请明确选择执行环境") else null

@@ -23,6 +23,30 @@ class SessionExecutionTargetsTest {
     }
     private val sessions = MemorySessions()
 
+    @Test fun `startup captures persisted local selection and restart preserves it`() = runBlocking {
+        servers.select(null)
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined)
+        val savedChoice = kotlinx.coroutines.flow.MutableSharedFlow<String>(replay = 1)
+        val active = MutableStateFlow("ubuntu")
+        val state = MutableStateFlow<RuntimeState>(RuntimeState.NotInitialized)
+        val selection = top.wkbin.taixu.runtime.environment.LocalDistributionSelection(savedChoice, active, state, scope)
+        try {
+            savedChoice.emit("debian")
+            val targets = SessionExecutionTargets(servers, sessions, selection::capture)
+            sessions.upsert(session("startup").copy(executionTargetJson = targets.capture("/workspace/demo")))
+            active.value = "oracle"; state.value = RuntimeState.Ready
+            assertEquals("debian", SessionExecutionTargets(servers, sessions, selection::capture).resolve("startup", "/workspace/demo").distribution)
+            assertEquals("oracle", targets.resolve("terminal:new", "").distribution)
+        } finally { scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel() }
+    }
+
+    @Test fun `remote capture never waits for local identity`() = runBlocking {
+        val targets = SessionExecutionTargets(servers, sessions) { error("local selection must not be read") }
+        val encoded = kotlinx.coroutines.withTimeout(2_000) { targets.capture("/workspace/demo") }
+        sessions.upsert(session("remote-startup").copy(executionTargetJson = encoded))
+        assertEquals(a, targets.resolve("remote-startup", "/workspace/demo").remote)
+    }
+
     @Test fun `restart keeps remote host even after default becomes local or another server`() = runBlocking {
         sessions.upsert(session("one"))
         SessionExecutionTargets(servers, sessions).resolve("one", "/workspace/demo")

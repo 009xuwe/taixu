@@ -66,6 +66,20 @@ class TerminalViewModel(
 
     val handles: StateFlow<List<TerminalSessionHandle>> = terminalManager.handles
     val activeId: StateFlow<String?> = terminalManager.activeId
+    val restoreFailures = terminalManager.restoreFailures
+    fun retryFailedRestorations() {
+        viewModelScope.launch {
+            runCatching { terminalManager.retryFailedRestorations() }
+                .onSuccess { _error.value = null }.onFailure { _error.value = it.message ?: "终端恢复失败" }
+        }
+    }
+    fun removeFailedRestoration(id: String) {
+        viewModelScope.launch {
+            runCatching { terminalManager.removeFailedRestoration(id) }
+                .onSuccess { if (handles.value.isNotEmpty()) _error.value = null }
+                .onFailure { _error.value = it.message ?: "无法移除终端记录" }
+        }
+    }
 
     private val activeHandle: Flow<TerminalSessionHandle?> = terminalManager.activeHandle
 
@@ -109,7 +123,7 @@ class TerminalViewModel(
                     else runCatching { workspaceManager.linuxWorkingDirectory(project) }.getOrNull() ?: "/root"
                 runCatching {
                     terminalManager.openOrSwitchToProject(project, workingDirectory,
-                        remoteServers.activeId.value?.let { "ssh:$it" } ?: activeDistroId.value)
+                        remoteServers.activeId.value?.let { "ssh:$it" })
                 }.onFailure { _error.value = it.message ?: context.getString(R.string.terminal_error_workspace_start) }
             } else {
                 runCatching {
@@ -181,6 +195,7 @@ class TerminalViewModel(
 
     fun createSession(label: String = "", workingDirectory: String = "/root", distroId: String? = null) {
         viewModelScope.launch {
+            _error.value = null
             runCatching {
                 if (remoteActive.value) {
                     // 远程目标由服务器决定：传 null 跟随当前选中环境，禁用本地发行版语义。
@@ -191,8 +206,8 @@ class TerminalViewModel(
                         distributionId = null,
                     )
                 } else {
-                    val targetDistro = distroId?.takeIf { it.isNotBlank() } ?: activeDistroId.value
-                    val distroShortName = DistributionCatalog.require(targetDistro).id.replaceFirstChar { it.uppercase() }
+                    val targetDistro = distroId?.takeIf { it.isNotBlank() }
+                    val distroShortName = targetDistro?.let { DistributionCatalog.require(it).id.replaceFirstChar { it.uppercase() } } ?: "会话"
                     val finalLabel = label.trim().ifBlank { "$distroShortName ${handles.value.size + 1}" }
                     terminalManager.createSession(
                         label = finalLabel,

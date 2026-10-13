@@ -52,7 +52,8 @@ class TaiXuModulesTest {
                 definition<BrowserMcpResources>(Function0::class),
                 // These callbacks/files are built by explicit provider lambdas or secondary constructors.
                 definition<top.wkbin.taixu.runtime.SessionWorkspaceCatalog>(Function0::class, Function2::class),
-                definition<top.wkbin.taixu.harness.environment.SessionExecutionTargets>(Function0::class),
+                definition<top.wkbin.taixu.harness.environment.SessionExecutionTargets>(Function1::class),
+                definition<top.wkbin.taixu.runtime.environment.LocalDistributionSelection>(kotlinx.coroutines.flow.Flow::class, kotlinx.coroutines.flow.StateFlow::class, kotlinx.coroutines.CoroutineScope::class),
                 definition<top.wkbin.taixu.harness.mcp.StandaloneMcpScope>(Function0::class, kotlinx.coroutines.flow.Flow::class),
                 definition<top.wkbin.taixu.core.datastore.EncryptedRemoteServerRepository>(android.util.AtomicFile::class, Function1::class),
                 // The build coordinator's adapter and default callbacks are constructed by its lambda.

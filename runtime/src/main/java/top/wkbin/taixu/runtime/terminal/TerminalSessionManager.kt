@@ -28,6 +28,8 @@ class TerminalSessionHandle internal constructor(
     val isAlive: Boolean get() = process.isAlive
 }
 
+data class TerminalRestoreFailure(val id: String, val label: String, val message: String)
+
 /** Multi-session Termux console; creation, rollback and disposal retain explicit resource ownership. */
 class TerminalSessionManager(
     private val linuxRuntime: LinuxRuntime,
@@ -41,11 +43,14 @@ class TerminalSessionManager(
     private val stateLock = Any()
     private val resources = mutableMapOf<String, TerminalOwnedResources>()
     private val closeAllMutex = Mutex()
+    private val restoreMutex = Mutex()
     private var closingAll = false
     private var generation = 0L
     private var fallbackPending = false
     private val _handles = MutableStateFlow<List<TerminalSessionHandle>>(emptyList())
     val handles: StateFlow<List<TerminalSessionHandle>> = _handles.asStateFlow()
+    private val _restoreFailures = MutableStateFlow<List<TerminalRestoreFailure>>(emptyList())
+    val restoreFailures: StateFlow<List<TerminalRestoreFailure>> = _restoreFailures.asStateFlow()
     private val _activeId = MutableStateFlow<String?>(null)
     val activeId: StateFlow<String?> = _activeId.asStateFlow()
     val activeHandle: StateFlow<TerminalSessionHandle?> =
@@ -53,7 +58,8 @@ class TerminalSessionManager(
             .stateIn(scope, SharingStarted.Eagerly, null)
     @Volatile private var restoredOnce = false
 
-    suspend fun ensureActive(initialWorkingDirectory: String = DEFAULT_CWD) {
+    suspend fun ensureActive(initialWorkingDirectory: String = DEFAULT_CWD) = restoreMutex.withLock { ensureActiveInternal(initialWorkingDirectory) }
+    private suspend fun ensureActiveInternal(initialWorkingDirectory: String) {
         val failures = mutableListOf<Throwable>()
         _handles.value.filterNot { it.isAlive }.forEach { dead ->
             val owned = synchronized(stateLock) { resources[dead.id] } ?: return@forEach
@@ -64,9 +70,19 @@ class TerminalSessionManager(
         if (!restoredOnce) {
             try {
                 val rows = terminalSessionDao.listAll()
+                _restoreFailures.value = emptyList()
                 for (row in rows) {
-                    if (row.distributionId.startsWith("ssh:") && row.executionTargetJson == null) continue
-                    if (_handles.value.none { it.id == row.id }) createSession(row.label, row.workingDirectory, row.distributionId, row.id)
+                    if (_handles.value.any { it.id == row.id }) continue
+                    try {
+                        synchronized(stateLock) { resources[row.id] }?.takeIf { it.failedCreation }?.let { release(it, deleteRow = false) }
+                        check(!row.distributionId.startsWith("ssh:") || row.executionTargetJson != null) { "旧终端未记录主机身份，请移除记录后新建" }
+                        createSession(row.label, row.workingDirectory, row.distributionId, row.id)
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        _restoreFailures.update { it + TerminalRestoreFailure(row.id, row.label, e.message?.take(180) ?: "恢复失败") }
+                        // Unconfirmed disposal must remain blocking and reachable for retry.
+                        if (synchronized(stateLock) { resources.containsKey(row.id) }) throw e
+                    }
                 }
                 restoredOnce = true
                 if (_handles.value.isNotEmpty()) {
@@ -156,6 +172,18 @@ class TerminalSessionManager(
         if (_handles.value.any { it.id == id }) _activeId.value = id
     }
 
+    suspend fun removeFailedRestoration(id: String) = restoreMutex.withLock {
+        require(_restoreFailures.value.any { it.id == id } && _handles.value.none { it.id == id }) { "此记录不是恢复失败的终端" }
+        closeSession(id)
+        terminalSessionDao.delete(id)
+        _restoreFailures.update { failures -> failures.filterNot { it.id == id } }
+    }
+
+    suspend fun retryFailedRestorations() = restoreMutex.withLock {
+        restoredOnce = false
+        ensureActiveInternal(DEFAULT_CWD)
+    }
+
     suspend fun closeSession(id: String) {
         val (owned, version) = synchronized(stateLock) { resources[id] to generation }
         if (owned == null) return
@@ -208,6 +236,7 @@ class TerminalSessionManager(
                 }
                 if (failures.isNotEmpty()) throw TerminalCleanupException(failures)
                 terminalSessionDao.deleteAll()
+                _restoreFailures.value = emptyList()
                 _handles.value = emptyList(); _activeId.value = null; restoredOnce = false
             } finally { synchronized(stateLock) { closingAll = false } }
         } }

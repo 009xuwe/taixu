@@ -54,6 +54,7 @@ import top.wkbin.taixu.runtime.webchat.WebChatBridgeServer
 
 /** Dependency registrations owned by the runtime module. */
 val runtimeModule = module {
+    single { top.wkbin.taixu.runtime.environment.LocalDistributionSelection(get<top.wkbin.taixu.core.datastore.RuntimePreferences>(), get<top.wkbin.taixu.runtime.LinuxRuntime>()) }
     single { top.wkbin.taixu.runtime.environment.LocalBackendAccess(get()) }
     single { top.wkbin.taixu.runtime.SessionWorkspaceCatalog(servers = get(), remote = get(), local = get()) }
     single { top.wkbin.taixu.runtime.remote.SshConnector() }

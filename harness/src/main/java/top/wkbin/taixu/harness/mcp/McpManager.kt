@@ -44,17 +44,14 @@ class McpManager(
     private val cache = ConcurrentHashMap<String, CachedTools>()
     private val discoveryMutexes = ConcurrentHashMap<String, Mutex>()
     private val lastErrors = ConcurrentHashMap<String, String>()
-    /**
-     * 工具发现失败冷却：server id → 冷却截止时间戳 / 连续失败次数。
-     *
-     * 失败后仅移除缓存、下一轮继续重试，会让持续故障的服务（实测某 sqlite MCP 累计 1,940 次
-     * 发现失败、其中 79 次是 8s 超时）在每一轮对话和每次子智能体初始化时都重新空耗一遍超时。
-     * 传输层各自有冷却，但 SSE/STDIO 之外的失败路径（如 tools/list 报错）不写冷却，
-     * 因此在管理器这一层统一兜底：指数退避，成功即清零。
-     */
+    /** 工具发现失败统一指数退避，成功即清零。 */
     private val discoveryCooldownUntil = ConcurrentHashMap<String, Long>()
     private val discoveryFailureStreak = ConcurrentHashMap<String, Int>()
     private val statuses = McpScopedConnectionStates(standaloneScope, scope)
+    private val metadata = McpMetadataScopes { key, owned ->
+        cache.remove(key); lastErrors.remove(key); discoveryCooldownUntil.remove(key); discoveryFailureStreak.remove(key)
+        statuses.forgetKey(key); if (owned) discoveryMutexes.remove(key)
+    }
     val connectionStates: StateFlow<Map<String, McpConnectionState>> = statuses.visible
 
     /**
@@ -180,7 +177,7 @@ class McpManager(
         val bound = boundConfig(server)
         val fingerprint = fingerprint(bound)
         cache[key]?.takeIf { it.fingerprint == fingerprint }?.tools
-            ?: discoveryMutexes.getOrPut(key) { Mutex() }.withLock {
+            ?: discoveryMutexes.getOrPut(metadata.mutexKey(key)) { Mutex() }.withLock {
                 cache[key]?.takeIf { it.fingerprint == fingerprint }?.tools
                     ?.let { return@withLock it }
                 // 退避窗口内直接跳过：持续故障的服务不该在每轮对话和每次
@@ -350,7 +347,10 @@ class McpManager(
         Result.failure(throwable)
     }
 
-    private suspend fun state(id: String, state: McpConnectionState, key: String? = null) = statuses.update(id, state, key)
+    private suspend fun state(id: String, state: McpConnectionState, key: String? = null) {
+        val scoped = key ?: discoveryKey(McpServerConfig(id, id))
+        metadata.retain(scoped) { statuses.update(state, scoped) }
+    }
 
     /** use_capability list 的单服务摘要：不启动进程，工具数为缓存命中数。 */
     data class EnabledServerSummary(
@@ -381,7 +381,7 @@ class McpManager(
         removeScoped(discoveryCooldownUntil, serverId)
         removeScoped(discoveryFailureStreak, serverId)
     }
-    private suspend fun discoveryKey(server: McpServerConfig) = scopedMcpKey(server, standaloneScope)
+    private suspend fun discoveryKey(server: McpServerConfig) = scopedMcpKey(server, standaloneScope).also { metadata.register(it) }
     private fun removeScoped(map: ConcurrentHashMap<String, *>, serverId: String) {
         map.keys.removeIf { it == serverId || it.startsWith("$serverId@environment:") }
     }

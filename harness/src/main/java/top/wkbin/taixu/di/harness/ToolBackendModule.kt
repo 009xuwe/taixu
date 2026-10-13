@@ -24,8 +24,8 @@ internal val toolBackendModule = module {
         top.wkbin.taixu.harness.environment.LocalExecutionEnvironmentFactory(get(), get(), get(), get(), get(), get())
     }
     single {
-        val runtime = get<top.wkbin.taixu.runtime.LinuxRuntime>()
-        top.wkbin.taixu.harness.environment.SessionExecutionTargets(get(), get()) { runtime.activeDistroId.value }
+        val selection = get<top.wkbin.taixu.runtime.environment.LocalDistributionSelection>()
+        top.wkbin.taixu.harness.environment.SessionExecutionTargets(get(), get(), selection::capture)
     }
     single<top.wkbin.taixu.runtime.environment.ExecutionEnvironmentFactory> {
         top.wkbin.taixu.harness.environment.SelectedExecutionEnvironmentFactory(

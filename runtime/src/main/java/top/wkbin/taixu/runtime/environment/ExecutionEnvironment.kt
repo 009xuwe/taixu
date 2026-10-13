@@ -55,8 +55,8 @@ interface ExecutionEnvironment : ExecutionCommands {
 
 fun interface ExecutionEnvironmentFactory {
     /** Serializable identity captured before a new session awaits persistence/model lookup. */
-    fun capture(workspace: String): String? = null
-    fun capture(workspace: String, distribution: String?): String? = capture(workspace)
+    suspend fun capture(workspace: String): String? = null
+    suspend fun capture(workspace: String, distribution: String?): String? = capture(workspace)
     /** Restore an explicitly saved standalone identity before allocating resources. */
     suspend fun restore(owner: String, workspace: String, targetJson: String) = Unit
     /** Capture the selected identity without starting a connection or executing commands. */
